@@ -1,0 +1,468 @@
+{
+  "entities": {
+    "users": {
+      "title": "Users",
+      "description": "User profiles and credentials",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "name": { "type": "string" },
+        "role": { "type": "string" },
+        "phone": { "type": "string" },
+        "avatar": { "type": "string" },
+        "dailyRate": { "type": "number" },
+        "projectRates": { "type": "object", "description": "Custom rates per project ID" },
+        "isAdmin": { "type": "boolean" },
+        "assignedProjectIds": { "type": "array" },
+        "createdAt": { "type": "number", "format": "timestamp" }
+      },
+      "required": ["username", "name", "role"]
+    },
+    "projects": {
+      "title": "Projects",
+      "description": "Operational projects",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["Running", "Upcoming", "Completed"] },
+        "priority": { "type": "string", "enum": ["High", "Medium", "Low"] },
+        "progress": { "type": "number" },
+        "managerId": { "type": "string" },
+        "description": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" }
+      },
+      "required": ["name", "status"]
+    },
+    "attendance": {
+      "title": "Attendance",
+      "description": "Daily clock-in/out records",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["IN", "OUT"] },
+        "timestamp": { "type": "number", "format": "timestamp" },
+        "selfieUrl": { "type": "string" },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "overtimeMinutes": { "type": "number" }
+      },
+      "required": ["userId", "type", "timestamp"]
+    },
+    "tasks": {
+      "title": "Tasks",
+      "description": "Specific tasks within projects or general ops",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "assignedTo": { "type": "string", "description": "User ID" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { "type": "string", "enum": ["Todo", "In Progress", "Done", "On Hold"] },
+        "priority": { "type": "string", "enum": ["High", "Medium", "Low"] },
+        "deadline": { "type": "number", "format": "timestamp" }
+      },
+      "required": ["title", "status"]
+    },
+    "assets": {
+      "title": "Assets",
+      "description": "Company inventory and assets",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "status": { "type": "string", "enum": ["Available", "In Use", "Maintenance", "Broken"] },
+        "userId": { "type": "string", "description": "Current responsible person" },
+        "lastMaintenance": { "type": "number" },
+        "metadata": { "type": "object" }
+      }
+    },
+    "reimbursements": {
+      "title": "Reimbursements",
+      "description": "Expense claims",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "description": { "type": "string" },
+        "receiptImg": { "type": "string" },
+        "status": { "type": "string", "enum": ["Pending", "Approved", "Rejected"] },
+        "approvedBy": { "type": "string" }
+      }
+    },
+    "quotations": {
+      "title": "Quotations",
+      "description": "Sales quotations / Price offers",
+      "type": "object",
+      "properties": {
+        "number": { "type": "string" },
+        "date": { "type": "string" },
+        "recipient": { "type": "string" },
+        "attention": { "type": "string" },
+        "jobDescription": { "type": "string" },
+        "items": { "type": "array" },
+        "subTotal": { "type": "number" },
+        "tax": { "type": "number" },
+        "grandTotal": { "type": "number" },
+        "notes": { "type": "string" },
+        "preparedBy": { "type": "string" },
+        "createdAt": { "type": "number", "format": "timestamp" }
+      },
+      "required": ["number", "recipient", "jobDescription"]
+    },
+    "departmentSettings": {
+      "title": "Department Settings",
+      "description": "Daily rates and overtime rates per department",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Department name (bagian)" },
+        "dailyRate": { "type": "number" },
+        "overtimeRate": { "type": "number" },
+        "updatedAt": { "type": "number", "format": "timestamp" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["dailyRate", "overtimeRate"]
+    },
+    "documents": {
+      "title": "Documents",
+      "description": "Archived documents and folders",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "isFolder": { "type": "boolean" },
+        "parentId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "url": { "type": "string" },
+        "fileType": { "type": "string" },
+        "size": { "type": "number" },
+        "tags": { "type": "array" },
+        "createdAt": { "type": "number", "format": "timestamp" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["name", "isFolder", "createdBy"]
+    },
+    "notifications": {
+      "title": "Notifications",
+      "description": "System and operation notifications",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "type": { "type": "string", "enum": ["INFO", "ALERT", "SUCCESS", "WARNING"] },
+        "category": { "type": "string" },
+        "read": { "type": "boolean" },
+        "createdAt": { "type": "number", "format": "timestamp" },
+        "userId": { "type": "string", "description": "Target user ID if specific" }
+      },
+      "required": ["title", "message", "type", "createdAt"]
+    },
+    "financialRecords": {
+      "title": "Financial Records",
+      "description": "Cash inflow and outflow records",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string" },
+        "type": { "type": "string", "enum": ["IN", "OUT"] },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["CASH", "TRANSFER"] },
+        "adminFee": { "type": "number" },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "recordedBy": { "type": "string" },
+        "timestamp": { "type": "number", "format": "timestamp" }
+      },
+      "required": ["date", "type", "amount", "paymentMethod", "category", "recordedBy"]
+    },
+    "announcements": {
+      "title": "Announcements",
+      "description": "Company wide broadcast messages",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "category": { "type": "string", "enum": ["UMUM", "URGENT", "PROYEK"] },
+        "createdBy": { "type": "string" },
+        "timestamp": { "type": "number", "format": "timestamp" }
+      },
+      "required": ["title", "content", "category", "timestamp"]
+    },
+    "messages": {
+      "title": "Internal Messages",
+      "description": "One-to-one internal communication",
+      "type": "object",
+      "properties": {
+        "senderId": { "type": "string" },
+        "receiverId": { "type": "string" },
+        "content": { "type": "string" },
+        "read": { "type": "boolean" },
+        "timestamp": { "type": "number", "format": "timestamp" }
+      },
+      "required": ["senderId", "receiverId", "content", "timestamp"]
+    },
+    "clients": {
+      "title": "Clients",
+      "description": "External client information",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "company": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" }
+      },
+      "required": ["name", "company"]
+    },
+    "invoices": {
+      "title": "Invoices",
+      "description": "Client billing records",
+      "type": "object",
+      "properties": {
+        "invoiceNumber": { "type": "string" },
+        "clientId": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["PENDING", "PAID", "OVERDUE"] },
+        "dueDate": { "type": "string" }
+      },
+      "required": ["invoiceNumber", "clientId", "amount", "status"]
+    },
+    "maintenanceRecords": {
+      "title": "Maintenance Records",
+      "description": "Asset maintenance history",
+      "type": "object",
+      "properties": {
+        "assetId": { "type": "string" },
+        "type": { "type": "string", "enum": ["ROUTINE", "EMERGENCY"] },
+        "cost": { "type": "number" },
+        "date": { "type": "string" },
+        "status": { "type": "string", "enum": ["COMPLETED", "IN_PROGRESS"] }
+      },
+      "required": ["assetId", "type", "cost", "date", "status"]
+    },
+    "companyProfile": {
+      "title": "Company Profile",
+      "description": "Official company details",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "vision": { "type": "string" },
+        "mission": { "type": "string" },
+        "address": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" }
+      },
+      "required": ["name"]
+    },
+    "assignments": {
+      "title": "Assignments",
+      "description": "Project task assignments",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string" },
+        "employeeIds": { "type": "array", "items": { "type": "string" } },
+        "taskDescription": { "type": "string" },
+        "deadline": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "ONGOING", "DONE"] }
+      },
+      "required": ["projectId", "employeeIds", "taskDescription", "deadline", "status"]
+    },
+    "reminders": {
+      "title": "Reminders & Calendar Events",
+      "description": "Manual calendar events like payroll dates or custom reminders",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "date": { "type": "string" },
+        "type": { "type": "string", "enum": ["PAYROLL", "EVENT", "MEETING", "OTHER"] },
+        "createdBy": { "type": "string" },
+        "createdAt": { "type": "number", "format": "timestamp" }
+      },
+      "required": ["title", "date", "type"]
+    },
+    "roles": {
+      "title": "Roles",
+      "description": "User roles and access permissions",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "permissions": { "type": "array", "items": { "type": "string" } },
+        "color": { "type": "string" },
+        "userCount": { "type": "number" }
+      },
+      "required": ["name", "permissions"]
+    },
+    "debtRecords": {
+      "title": "Debt Records",
+      "description": "Debt and receivable records",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "enum": ["HUTANG", "PIUTANG"] },
+        "title": { "type": "string" },
+        "contactName": { "type": "string" },
+        "amount": { "type": "number" },
+        "dueDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["UNPAID", "PARTIAL", "PAID"] },
+        "description": { "type": "string" },
+        "recordedBy": { "type": "string" },
+        "timestamp": { "type": "number", "format": "timestamp" },
+        "payments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "amount": { "type": "number" },
+              "date": { "type": "string" },
+              "note": { "type": "string" },
+              "financialRecordId": { "type": "string" },
+              "recordedBy": { "type": "string" }
+            }
+          }
+        }
+      },
+      "required": ["type", "title", "contactName", "amount", "dueDate", "status", "recordedBy", "timestamp"]
+    },
+    "auditLogs": {
+      "title": "Audit Logs",
+      "description": "System activity track records",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "action": { "type": "string" },
+        "module": { "type": "string" },
+        "details": { "type": "string" },
+        "timestamp": { "type": "number", "format": "timestamp" }
+      },
+      "required": ["userId", "userName", "action", "module", "timestamp"]
+    },
+    "catalog": {
+      "title": "E-Katalog",
+      "description": "Company digital catalog for equipment and services",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "sku": { "type": "string" },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "type": { "type": "string", "enum": ["barang", "jasa"] },
+        "brand": { "type": "string" },
+        "priceItem": { "type": "number" },
+        "priceService": { "type": "number" },
+        "priceInstallation": { "type": "number" },
+        "unit": { "type": "string" },
+        "description": { "type": "string" },
+        "specifications": { "type": "string" },
+        "material": { "type": "string" },
+        "capacity": { "type": "string" },
+        "dimensions": { "type": "string" },
+        "power": { "type": "string" },
+        "flowRate": { "type": "string" },
+        "pressure": { "type": "string" },
+        "warranty": { "type": "string" },
+        "stockLocation": { "type": "string" },
+        "status": { "type": "string", "enum": ["aktif", "nonaktif"] },
+        "createdBy": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdDate": { "type": "string" },
+        "lastUpdate": { "type": "string" },
+        "images": { "type": "array" },
+        "pdfUrl": { "type": "string" },
+        "pdfName": { "type": "string" },
+        "detailWork": { "type": "string" },
+        "includeWork": { "type": "string" },
+        "estimationTime": { "type": "string" },
+        "views": { "type": "number" }
+      },
+      "required": ["name", "sku", "category", "type", "brand", "priceItem", "status", "createdBy", "createdDate", "views"]
+    },
+    "suratJalan": {
+      "title": "Surat Jalan",
+      "description": "Logistics and shipping delivery letters",
+      "type": "object",
+      "properties": {
+        "number": { "type": "string" },
+        "clientId": { "type": "string" },
+        "recipient": { "type": "string" },
+        "address": { "type": "string" },
+        "date": { "type": "string" },
+        "vehicleType": { "type": "string" },
+        "vehiclePlate": { "type": "string" },
+        "notes": { "type": "string" },
+        "receivedByText": { "type": "string" },
+        "hormatKamiText": { "type": "string" },
+        "logoImage": { "type": "string" },
+        "ptName": { "type": "string" },
+        "ptAddress": { "type": "string" },
+        "ptPhone": { "type": "string" },
+        "itemsJson": { "type": "string" },
+        "items": { "type": "array" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["number", "recipient"]
+    },
+    "purchaseOrders": {
+      "title": "Purchase Orders",
+      "description": "Company purchase orders issued to suppliers",
+      "type": "object",
+      "properties": {
+        "poNo": { "type": "string" },
+        "date": { "type": "string" },
+        "vendorName": { "type": "string" },
+        "vendorAddress": { "type": "string" },
+        "buyerName": { "type": "string" },
+        "buyerAddress": { "type": "string" },
+        "buyerEmail": { "type": "string" },
+        "buyerPhone": { "type": "string" },
+        "items": { "type": "array" },
+        "note": { "type": "string" },
+        "ketentuan": { "type": "array" },
+        "signerName": { "type": "string" },
+        "signerRole": { "type": "string" },
+        "totalPrice": { "type": "number" },
+        "ppnPercent": { "type": "number" },
+        "ppnAmount": { "type": "number" },
+        "grandTotal": { "type": "number" },
+        "timestamp": { "type": "number", "format": "timestamp" },
+        "status": { "type": "string", "enum": ["DRAFT", "SENT", "COMPLETED", "CANCELLED"] }
+      },
+      "required": ["poNo", "vendorName", "date"]
+    }
+  },
+  "firestore": {
+    "users": { "schema": "users", "description": "Global users collection" },
+    "projects": { "schema": "projects", "description": "Project management" },
+    "attendance": { "schema": "attendance", "description": "Staff logs" },
+    "tasks": { "schema": "tasks", "description": "Operations tasks" },
+    "assets": { "schema": "assets", "description": "Inventory" },
+    "reimbursements": { "schema": "reimbursements", "description": "Finance claims" },
+    "leaveRequests": { "schema": "object", "description": "HR Requests" },
+    "auditLogs": { "schema": "auditLogs", "description": "System activity logs" },
+    "quotations": { "schema": "quotations", "description": "Sales offer letters" },
+    "departmentSettings": { "schema": "departmentSettings", "description": "Standard rates per department" },
+    "documents": { "schema": "documents", "description": "Project and official documents archive" },
+    "notifications": { "schema": "notifications", "description": "System alerts and notifications" },
+    "financialRecords": { "schema": "financialRecords", "description": "Company cash flow" },
+    "announcements": { "schema": "announcements", "description": "Company wide announcements" },
+    "messages": { "schema": "messages", "description": "Internal direct messages" },
+    "clients": { "schema": "clients", "description": "Client and customer directory" },
+    "invoices": { "schema": "invoices", "description": "Billing and invoicing" },
+    "purchaseOrders": { "schema": "purchaseOrders", "description": "Supplier purchase orders and tracking" },
+    "maintenanceRecords": { "schema": "maintenanceRecords", "description": "Asset maintenance history" },
+    "companyProfile": { "schema": "companyProfile", "description": "Official company information" },
+    "assignments": { "schema": "assignments", "description": "Team project assignments" },
+    "reminders": { "schema": "reminders", "description": "Manual calendar events and reminders" },
+    "roles": { "schema": "roles", "description": "System roles and permissions" },
+    "debtRecords": { "schema": "debtRecords", "description": "Debt and receivable records" },
+    "reports": { "schema": "object", "description": "Field reports" },
+    "cashAdvances": { "schema": "object", "description": "Cash advance requests" },
+    "catalog": { "schema": "catalog", "description": "E-Katalog collection" },
+    "suratJalan": { "schema": "suratJalan", "description": "Delivery shipping letters" },
+    "settings": { "schema": "object", "description": "System settings and Google Sheets configuration" }
+  }
+}

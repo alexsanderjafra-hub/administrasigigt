@@ -1,0 +1,262 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.get('email', '').lower() == 'alexsanderjafra@gmail.com' ||
+        request.auth.token.get('email', '').lower() == 'admin@workflowpro.com' ||
+        request.auth.token.get('email', '').lower() == 'admgigt@workflowpro.com' ||
+        request.auth.token.get('email', '').lower() == 'admgigt@gmail.com' ||
+        request.auth.token.get('email', '').lower() == 'owner@gigt.com' ||
+        request.auth.token.get('email', '').lower() == 'direktur@gigt.com' ||
+        request.auth.token.get('email', '').lower() == 'panjul@workflowpro.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '').lower() == 'admin' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '').lower() == 'owner' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '').lower() == 'direktur'
+        ))
+      );
+    }
+
+    function isOwner(data) {
+      return isSignedIn() && (
+        data.get('userId', '') == request.auth.uid || 
+        data.get('employeeId', '') == request.auth.uid ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         data.get('userId', '') == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('username', ''))
+      );
+    }
+
+    // Validate Catalog Item
+    function isValidCatalog(data) {
+      return data.keys().hasAll(['name', 'sku', 'category', 'type', 'brand', 'priceItem', 'status', 'createdBy', 'createdDate', 'views']) &&
+             data.get('name', '') is string && data.get('name', '').size() > 0 && data.get('name', '').size() <= 200 &&
+             data.get('sku', '') is string && data.get('sku', '').size() <= 100 &&
+             data.get('category', '') is string && data.get('category', '').size() <= 100 &&
+             (data.get('type', '') == 'barang' || data.get('type', '') == 'jasa') &&
+             data.get('brand', '') is string && data.get('brand', '').size() <= 100 &&
+             data.get('priceItem', 0) is number &&
+             (data.get('status', '') == 'aktif' || data.get('status', '') == 'nonaktif') &&
+             data.get('createdBy', '') is string &&
+             data.get('createdDate', '') is string &&
+             data.get('views', 0) is number;
+    }
+
+    // --- Collections ---
+
+    match /users/{userId} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        (userId == request.auth.uid && (
+          (incoming().get('role', 'staff').lower() in ['staff', 'karyawan', 'karyawan lapangan']) ||
+          (incoming().get('role', 'staff').lower() == 'admin' && request.auth.token.get('email', '').lower() in ['alexsanderjafra@gmail.com', 'admgigt@workflowpro.com', 'admgigt@gmail.com', 'admin@workflowpro.com']) ||
+          (incoming().get('role', 'staff').lower() == 'owner' && request.auth.token.get('email', '').lower() == 'owner@gigt.com') ||
+          (incoming().get('role', 'staff').lower() == 'direktur' && request.auth.token.get('email', '').lower() == 'direktur@gigt.com')
+        ))
+      );
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        (userId == request.auth.uid && (
+          !incoming().keys().hasAny(['role', 'isAdmin']) ||
+          (incoming().get('role', '') == existing().get('role', '') && 
+           incoming().get('isAdmin', false) == existing().get('isAdmin', false))
+        ))
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /attendance/{id} {
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.employeeId == request.auth.uid || isAdmin());
+      allow get: if isSignedIn() && (isOwner(resource.data) || isAdmin());
+      allow create: if isSignedIn() && (incoming().userId == request.auth.uid || incoming().employeeId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    match /projects/{projectId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || (isSignedIn() && existing().assignedTo == request.auth.uid);
+    }
+
+    match /assets/{assetId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /reimbursements/{id} {
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.employeeId == request.auth.uid || isAdmin());
+      allow get: if isSignedIn() && (isOwner(resource.data) || isAdmin());
+      allow create: if isSignedIn() && (incoming().userId == request.auth.uid || incoming().employeeId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    match /cashAdvances/{id} {
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.employeeId == request.auth.uid || isAdmin());
+      allow get: if isSignedIn() && (isOwner(resource.data) || isAdmin());
+      allow create: if isSignedIn() && (isOwner(incoming()) || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    match /leaveRequests/{id} {
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.employeeId == request.auth.uid || isAdmin());
+      allow get: if isSignedIn() && (isOwner(resource.data) || isAdmin());
+      allow create: if isSignedIn() && (isOwner(incoming()) || isAdmin());
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (isSignedIn() && isOwner(resource.data));
+    }
+
+    match /reports/{reportId} {
+      allow list, get: if isSignedIn();
+      allow create: if isSignedIn() && (incoming().get('userId', '') == request.auth.uid || isAdmin());
+      allow update: if isAdmin() || (
+        isSignedIn() && 
+        isOwner(resource.data) && 
+        incoming().get('status', 'PENDING') == existing().get('status', 'PENDING')
+      );
+      allow delete: if isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+    }
+
+    match /quotations/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && (isAdmin() || resource.data.get('userId', '') == request.auth.uid);
+    }
+
+    match /departmentSettings/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /documents/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (isAdmin() || resource.data.get('createdBy', '') == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    match /notifications/{id} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /financialRecords/{id} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+
+    match /announcements/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /messages/{id} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /clients/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /invoices/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /purchaseOrders/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /maintenanceRecords/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /companyProfile/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /assignments/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /reminders/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /roles/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /debtRecords/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /dailyReports/{id} {
+      allow list, get: if isSignedIn();
+      allow create: if isSignedIn() && (incoming().get('submittedBy', '') == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin();
+    }
+
+    match /catalog/{id} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidCatalog(incoming());
+      allow update: if (isAdmin() && isValidCatalog(incoming())) ||
+                     (isSignedIn() && incoming().diff(existing()).affectedKeys().hasOnly(['views']) && incoming().get('views', 0) is number);
+      allow delete: if isAdmin();
+    }
+
+    match /boq_projects/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if isSignedIn() && (isAdmin() || resource.data.get('createdBy', '') == request.auth.uid);
+    }
+
+    match /suratJalan/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /settings/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

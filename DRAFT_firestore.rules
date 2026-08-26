@@ -1,0 +1,161 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isEmailVerified() {
+      // Trust password provider or explicit verification
+      return isSignedIn() && (request.auth.token.email_verified == true || request.auth.token.firebase.sign_in_provider == 'password');
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Admin check looks for document in users collection matching UID
+    // and checks role or isAdmin flag. Also allows specific bootstrap emails.
+    function isAdmin() {
+      return isSignedIn() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.lower() == 'admin' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+        )) ||
+        request.auth.token.email == 'alexsanderjafra@gmail.com' ||
+        request.auth.token.email == 'admin@workflowpro.com'
+      );
+    }
+    
+    // Ownership check handles both Auth UID and potential username-based linking
+    function isOwner(data) {
+      return isSignedIn() && (
+        data.userId == request.auth.uid || 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+         data.userId == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username)
+      );
+    }
+
+    // Validate Catalog Item
+    function isValidCatalog(data) {
+      return data.keys().hasAll(['name', 'sku', 'category', 'type', 'brand', 'priceItem', 'status', 'createdBy', 'createdDate', 'views']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 200 &&
+             data.sku is string && data.sku.size() <= 100 &&
+             data.category is string && data.category.size() <= 100 &&
+             (data.type == 'barang' || data.type == 'jasa') &&
+             data.brand is string && data.brand.size() <= 100 &&
+             data.priceItem is number &&
+             (data.status == 'aktif' || data.status == 'nonaktif') &&
+             data.createdBy is string &&
+             data.createdDate is string &&
+             data.views is number;
+    }
+
+    // Validate User Profile
+    function isValidUser(data) {
+      return data.keys().hasAll(['name', 'role', 'email']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.role is string &&
+             data.email is string && data.email.size() < 100;
+    }
+
+    // --- Users Collection ---
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      
+      allow create: if isSignedIn() && userId == request.auth.uid && isValidUser(incoming());
+      allow update: if isSignedIn() && (
+        (userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'avatar', 'password', 'dailyRate', 'projectRates', 'assignedProjectIds', 'projectStatus', 'updatedAt'])) ||
+        isAdmin()
+      );
+      allow delete: if isAdmin();
+    }
+
+    // --- Staff Data Collections ---
+    match /attendance/{id} {
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow get: if isSignedIn() && (isOwner(resource.data) || isAdmin());
+      allow create: if isSignedIn() && isValidId(incoming().userId) && incoming().userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /reimbursements/{id} {
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow get: if isSignedIn() && (isOwner(resource.data) || isAdmin());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isAdmin() || (isSignedIn() && isOwner(resource.data) && existing().status == 'Pending' && !incoming().diff(existing()).affectedKeys().hasAny(['status', 'amount', 'userId']));
+      allow delete: if isAdmin();
+    }
+
+    match /cashAdvances/{id} {
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow get: if isSignedIn() && (isOwner(resource.data) || isAdmin());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    match /leaveRequests/{id} {
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow get: if isSignedIn() && (isOwner(resource.data) || isAdmin());
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update, delete: if isAdmin();
+    }
+
+    // --- Projects & Tasks ---
+    match /projects/{projectId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || (isSignedIn() && resource.data.assignedTo == request.auth.uid);
+    }
+    
+    match /assets/{assetId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    
+    match /reports/{reportId} {
+      allow list: if isSignedIn();
+      allow get: if isSignedIn();
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow update: if isAdmin() || (isSignedIn() && isOwner(resource.data));
+      allow delete: if isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+    }
+
+    match /catalog/{id} {
+      allow read: if isSignedIn();
+      allow create: if isAdmin() && isValidCatalog(incoming());
+      allow update: if (isAdmin() && isValidCatalog(incoming())) ||
+                     (isSignedIn() && incoming().diff(existing()).affectedKeys().hasOnly(['views']) && incoming().views is number);
+      allow delete: if isAdmin();
+    }
+
+    match /suratJalan/{id} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}
