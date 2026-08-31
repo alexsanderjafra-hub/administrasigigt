@@ -457,14 +457,16 @@ export interface DailyReport {
   staff: { jabatan: string, jumlah: number }[];
   tools: string[];
   activities: string[];
-  materials: { jenis: string, volume: string, volumeKumulatif?: string }[];
+  materials: { jenis: string, volume?: string, volumeKumulatif?: string }[];
   workHours: number[]; 
   weather: { hour: number, type: 'Cerah' | 'Hujan' | 'Mendung' }[];
   overtime: number;
-  notes: string;
-  nextPlan: string;
-  obstacles: string;
+  notes: string | string[];
+  nextPlan: string | string[];
+  obstacles: string | string[];
   photos: string[];
+  contractorLogo?: string;
+  clientLogo?: string;
   submittedBy: string;
   submittedByName: string;
   submittedByRole: string;
@@ -520,6 +522,7 @@ export type ScreenId =
   | 'task-detail'
   | 'admin-sheets'
   | 'admin-po'
+  | 'admin-daily-reports'
   | 'absen-pulang';
 
 export interface PurchaseOrderItem {

@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { execSync } from "child_process";
 
 dotenv.config();
 
@@ -36,6 +37,22 @@ const ai = new GoogleGenAI({
 // API Routes
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
+});
+
+// Direct download endpoints for clean App.tsx and project
+app.get("/api/download-app-tsx", (req, res) => {
+  const filePath = path.join(process.cwd(), "src", "App.tsx");
+  res.download(filePath, "App.tsx");
+});
+
+app.get("/api/download-clean-tar", (req, res) => {
+  const tarPath = "/tmp/clean_source.tar.gz";
+  try {
+    execSync(`cd "${process.cwd()}" && tar -czf ${tarPath} src package.json tsconfig.json vite.config.ts index.html`);
+    res.download(tarPath, "administrasigigt-clean.tar.gz");
+  } catch (err) {
+    res.status(500).send("Error creating archive: " + err.message);
+  }
 });
 
 app.post("/api/gemini/generate-boq", async (req, res) => {
