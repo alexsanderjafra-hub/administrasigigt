@@ -1,13359 +1,1 @@
-// Workspace Build Version: 2026-08-26T06:53:47.481Z - Clean UTF-8 Release
-import React, {
-  useState,
-  useEffect,
-  useMemo,
-  useRef,
-  useCallback,
-} from "react";
-import Webcam from "react-webcam";
-import { compressImage } from "./lib/utils";
-
-const WebcamComponent = Webcam as any;
-import html2canvas from "html2canvas";
-import { jsPDF } from "jspdf";
-import autoTable from "jspdf-autotable";
-import {
-  MailOpen,
-  Users,
-  Activity,
-  FileEdit,
-  FileSignature,
-  CalendarDays,
-  CalendarRange,
-  MapPin,
-  Shield,
-  Globe,
-  Monitor,
-  Mail,
-  ArrowDownRight,
-  ArrowUpRight,
-  Home as HomeIcon,
-  Fingerprint,
-  Layers,
-  CloudOff,
-  Wifi,
-  WifiOff,
-  RefreshCw,
-  FileText,
-  Bell,
-  BellOff,
-  Camera,
-  HardHat,
-  Smartphone,
-  CloudUpload,
-  Search,
-  Download,
-  Eye,
-  Phone,
-  MessageSquare,
-  AlertTriangle,
-  ChevronLeft,
-  ChevronRight,
-  Key,
-  CreditCard,
-  Wallet,
-  Wallet2,
-  Receipt,
-  LayoutDashboard,
-  ListTodo,
-  Gauge,
-  Building2,
-  PlusCircle,
-  Clock,
-  PieChart,
-  User,
-  CheckCircle2,
-  XCircle,
-  Calendar,
-  Info,
-  Layout,
-  Circle,
-  Filter,
-  LogOut,
-  Archive,
-  UserCheck,
-  UserPlus,
-  UserMinus,
-  ArrowRight,
-  Tag,
-  ArrowLeft,
-  ArrowRightLeft,
-  BarChart3,
-  ClipboardCheck,  ClipboardList,
-  Package,
-  GanttChartSquare,
-  TrendingDown,
-  Trash2,
-  Send,
-  FileSearch,
-  Network,
-  ShieldCheck,
-  History,
-  Settings,
-  Edit3,
-  X,
-  Navigation2,
-  Maximize2,
-  DollarSign,
-  TrendingUp,
-  Map as MapIcon,
-  Navigation,
-  FileBox,
-  Users2,
-  CheckSquare,
-  Briefcase,
-  Crosshair,
-  Check,
-  Save,
-  Plus,
-  Zap,
-  Coins,
-  AlertCircle,
-  CheckCircle,
-  CalendarClock,
-  BellRing,
-  Megaphone,
-  Edit,
-  Edit2,
-  Pencil,
-  ExternalLink,
-  QrCode,
-  Target,
-  Contact2,
-  Wrench,
-  Building,
-  CalendarPlus,
-  CalendarCheck,
-  Sun,
-  CloudSun,
-  Moon,
-  Settings2,
-  ShieldAlert,
-  Video,
-  Paperclip,
-  Truck,
-  Minus,
-  Printer,
-  FilePlus,
-  Menu,
-  Image,
-  Upload,
-  FileSpreadsheet,
-  Percent,
-  Power,
-} from "lucide-react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  AreaChart,
-  Area,
-  LineChart,
-  Line,
-  Legend,
-  Cell,
-  PieChart as RePieChart,
-  Pie,
-} from "recharts";
-import { motion, AnimatePresence } from "motion/react";
-import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin } from "@vis.gl/react-google-maps";
-import {
-  ScreenId,
-  Employee,
-  FieldReport,
-  Project,
-  Task,
-  Asset,
-  AuditLog,
-  Quotation,
-  QuotationItem,
-  Document,
-  FinancialRecord,
-  DebtRecord,
-  DailyReport,
-  DebtPayment,
-  Announcement,
-  Reminder,
-  Client,
-  Invoice,
-  SuratJalan,
-  MaintenanceRecord,
-  Assignment,
-  CompanyProfile,
-  RoleConfig,
-  isProjectActive,
-} from "./types";
-import { dbService } from "./services/db";
-import { seedFinancialRecords, seedDebtRecords } from "./services/seedData";
-import {
-  where,
-  orderBy,
-  doc,
-  getDocFromServer,
-  limit,
-} from "firebase/firestore";
-import { auth, db } from "./firebase";
-import {
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  onAuthStateChanged,
-  signOut,
-  updatePassword,
-  sendPasswordResetEmail,
-} from "firebase/auth";
-import { GeotagCameraModal } from "./components/GeotagCameraModal";
-import { AdminDailyReportsScreen } from "./components/AdminDailyReportsScreen";
-import { generateDailyReportPDF as generateDailyReportPDFUtil, generateBatchDailyReportsPDF, formatIndonesianDateUpper } from "./utils/dailyReportPdf";
-import { EKatalog } from "./components/EKatalog";
-import { AdminPurchaseOrderScreen } from "./components/AdminPurchaseOrderScreen";
-import AdminKasbonScreen from "./components/AdminKasbonScreen";
-import { DocumentPreviewModal } from "./components/DocumentPreviewModal";
-import SheetsDashboard from "./components/SheetsDashboard";
-import { getGoogleAccessToken, setGoogleAccessToken, syncAllDataToGoogleSheets } from "./services/sheets";
-import { calculateKasbonBalances, simulateKasbonAllocation, extractKasbonRecipient } from "./utils/kasbonHelper";
-
-export const isReimbursementOrDebtRepayment = (r: any) => {
-  if (r.flowType === "PERSONAL_TALANGAN_REIMBURSE") return true;
-  if (
-    r.type === "OUT" &&
-    r.sumberDana === "REKENING PT" &&
-    (r.category === "HUTANG" || 
-     r.category === "Pembayaran Hutang" ||
-     r.category === "Pelunasan Hutang" ||
-     r.linkedDebtId)
-  ) {
-    return true;
-  }
-  return false;
-};
-
-const AdminAuditLogsScreen = ({
-  auditLogs,
-  onNavigate,
-  user,
-  roles,
-}: {
-  auditLogs: AuditLog[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-}) => {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [filterModule, setFilterModule] = useState("ALL");
-
-  const filteredLogs = auditLogs.filter((log) => {
-    const matchesSearch =
-      log.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.details.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      log.action.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesModule = filterModule === "ALL" || log.module === filterModule;
-    return matchesSearch && matchesModule;
-  });
-
-  const modules = ["ALL", ...new Set(auditLogs.map((l) => l.module))];
-
-  return (
-    <AdminLayout
-      activeScreen="admin-audit"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      <div className="space-y-8 pb-32">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div>
-            <h2 className="text-4xl font-black text-slate-900 tracking-tight">
-              Audit Log
-            </h2>
-            <p className="text-slate-500 font-bold text-sm mt-1">
-              Rekaman jejak seluruh aktivitas administratif sistem.
-            </p>
-          </div>
-          {user?.role === "admin" && filteredLogs.length > 0 && (
-            <button
-              onClick={async () => {
-                if (
-                  window.confirm(
-                    "Hapus seluruh catatan audit log? Tindakan ini tidak dapat dibatalkan.",
-                  )
-                ) {
-                  for (const log of auditLogs) {
-                    await dbService.deleteDocument("auditLogs", log.id);
-                  }
-                  alert("Audit log telah dikosongkan.");
-                }
-              }}
-              className="px-6 py-3 bg-rose-50 text-rose-600 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-rose-100 transition-all border border-rose-100 flex items-center gap-2"
-            >
-              <Trash2 size={14} />
-              Kosongkan Log
-            </button>
-          )}
-        </div>
-
-        <div className="bg-slate-100/50 p-6 rounded-[3rem] border border-slate-100 flex flex-col md:flex-row gap-4">
-          <div className="relative flex-1">
-            <Search
-              className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400"
-              size={18}
-            />
-            <input
-              type="text"
-              placeholder="Cari user, aksi, atau detail..."
-              className="w-full pl-14 pr-6 py-4 bg-white border border-slate-200 rounded-[2rem] text-sm font-bold focus:ring-4 focus:ring-primary/5 transition-all outline-none"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <select
-            className="px-8 py-4 bg-white border border-slate-200 rounded-[2rem] text-sm font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all"
-            value={filterModule}
-            onChange={(e) => setFilterModule(e.target.value)}
-          >
-            {modules.map((m) => (
-              <option key={m} value={m}>
-                {m === "ALL" ? "Semua Modul" : m}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div className="relative space-y-6 before:absolute before:left-8 before:top-8 before:bottom-8 before:w-px before:bg-slate-200">
-          {filteredLogs.map((log, idx) => {
-            // Identify if details contain currency to highlight it
-            const detailParts = log.details.split(/(Rp [\d.]+)/g);
-
-            return (
-              <motion.div
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: idx * 0.05 }}
-                key={log.id}
-                className="relative pl-16 group"
-              >
-                <div className="absolute left-4 top-0 w-8 h-8 bg-blue-50 border-2 border-white rounded-full flex items-center justify-center text-blue-600 shadow-sm z-10 group-hover:scale-110 transition-transform">
-                  <Shield size={14} />
-                </div>
-
-                <div className="bg-white p-8 rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-md transition-shadow">
-                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-4">
-                    <h3 className="text-lg font-black text-slate-800 tracking-tight">
-                      {log.action === "UPDATE" && log.module === "PAYROLL"
-                        ? "Perubahan Konfigurasi Gaji"
-                        : `${log.module}: ${log.action}`}
-                    </h3>
-                    <div className="flex items-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      <span>
-                        {new Date(log.timestamp).toLocaleTimeString("id-ID", {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                      <span>‚Ä¢</span>
-                      <span>
-                        {new Date(log.timestamp)
-                          .toLocaleDateString("id-ID", {
-                            day: "2-digit",
-                            month: "long",
-                            year: "numeric",
-                          })
-                          .toUpperCase()}
-                      </span>
-                    </div>
-                  </div>
-
-                  <p className="text-slate-600 font-bold text-sm leading-relaxed mb-6">
-                    User{" "}
-                    <span className="text-blue-600">
-                      {log.userName} (Admin)
-                    </span>{" "}
-                    {detailParts.map((part, i) =>
-                      part.startsWith("Rp ") ? (
-                        <span
-                          key={i}
-                          className="text-emerald-500 underline decoration-2 underline-offset-4"
-                        >
-                          {part}
-                        </span>
-                      ) : (
-                        <span key={i}>{part}</span>
-                      ),
-                    )}
-                  </p>
-
-                  <div className="flex flex-wrap items-center gap-6 pt-4 border-t border-slate-50">
-                    <div className="flex items-center gap-2 text-slate-400">
-                      <Globe size={14} />
-                      <span className="text-[10px] font-bold uppercase tracking-widest">
-                        IP: {log.ipAddress || "127.0.0.1"}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2 text-slate-400">
-                      <Monitor size={14} />
-                      <span className="text-[10px] font-bold uppercase tracking-widest">
-                        {log.device || "Admin UI"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            );
-          })}
-
-          {filteredLogs.length === 0 && (
-            <div className="py-32 text-center flex flex-col items-center gap-6 bg-white rounded-[3rem] border border-slate-100 border-dashed ml-16">
-              <div className="w-20 h-20 bg-slate-50 rounded-full flex items-center justify-center text-slate-300">
-                <History size={32} />
-              </div>
-              <p className="text-slate-400 font-bold uppercase text-[10px] tracking-[0.2em]">
-                Data Audit Log Kosong
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-    </AdminLayout>
-  );
-};
-
-const AdminAnnouncementsScreen = ({
-  announcements,
-  onNavigate,
-  user,
-  roles,
-  logActivity,
-}: {
-  announcements: Announcement[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-  logActivity: (m: string, a: string, d: string) => Promise<void>;
-}) => {
-  const [showAdd, setShowAdd] = useState(false);
-  const [activeTab, setActiveTab] = useState<"SEMUA" | "URGENT" | "PROYEK" | "MEETING" | "LIBUR" | "UMUM">("SEMUA");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [formData, setFormData] = useState({
-    title: "",
-    content: "",
-    category: "UMUM" as any,
-    integrateCalendar: false,
-    eventDate: new Date().toISOString().split("T")[0],
-    eventType: "OTHER" as any,
-  });
-
-  const isAdmin =
-    user?.role === "admin" ||
-    user?.role === "owner" ||
-    user?.role === "direktur";
-
-  // Filter announcements dynamically based on active tab and search query
-  const filteredAnnouncements = useMemo(() => {
-    return announcements
-      .filter((a) => {
-        const matchTab = activeTab === "SEMUA" || a.category === activeTab;
-        const matchQuery =
-          a.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          a.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (a.createdBy && a.createdBy.toLowerCase().includes(searchQuery.toLowerCase()));
-        return matchTab && matchQuery;
-      })
-      .sort((a, b) => b.timestamp - a.timestamp);
-  }, [announcements, activeTab, searchQuery]);
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    try {
-      let reminderId = "";
-      if (formData.integrateCalendar && formData.eventDate) {
-        const reminderData = {
-          title: `[${formData.category}] ${formData.title}`,
-          description: formData.content,
-          date: formData.eventDate,
-          type: "OTHER",
-          recurrence: "NONE",
-          createdBy: user.name || "Admin",
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
-        reminderId = await dbService.createDocument("reminders", reminderData);
-      }
-
-      const announcementData = {
-        title: formData.title,
-        content: formData.content,
-        category: formData.category,
-        integrateCalendar: formData.integrateCalendar,
-        eventDate: formData.integrateCalendar ? formData.eventDate : "",
-        eventType: formData.integrateCalendar ? formData.eventType : "",
-        reminderId: reminderId,
-        createdBy: user.name,
-        timestamp: Date.now(),
-      };
-
-      await dbService.createDocument("announcements", announcementData);
-      
-      await logActivity(
-        "ANNOUNCEMENTS",
-        "CREATE",
-        `Membuat informasi/agenda baru: ${formData.title}`,
-      );
-
-      // Create notifications for all employees
-      const employees = await dbService.getCollection<Employee>("employees");
-      for (const emp of employees) {
-        if (emp.id !== user.uid) {
-          await dbService.createDocument("notifications", {
-            userId: emp.id,
-            title: `Informasi Baru: ${formData.title}`,
-            message:
-              formData.content.substring(0, 50) +
-              (formData.content.length > 50 ? "..." : ""),
-            type: "ANNOUNCEMENT",
-            read: false,
-            timestamp: Date.now(),
-            link: "admin-announcements",
-          });
-        }
-      }
-
-      setShowAdd(false);
-      setFormData({
-        title: "",
-        content: "",
-        category: "UMUM",
-        integrateCalendar: false,
-        eventDate: new Date().toISOString().split("T")[0],
-        eventType: "OTHER",
-      });
-    } catch (err) {
-      console.error("Create announcement error:", err);
-      alert("Gagal mempublikasikan informasi.");
-    }
-  };
-
-  const handleDelete = async (id: string, title: string, reminderId?: string) => {
-    if (!confirm(`Apakah Anda yakin ingin menghapus informasi "${title}"?`)) return;
-    try {
-      await dbService.deleteDocument("announcements", id);
-      if (reminderId) {
-        await dbService.deleteDocument("reminders", reminderId);
-      }
-      await logActivity(
-        "ANNOUNCEMENTS",
-        "DELETE",
-        `Menghapus informasi: ${title}`,
-      );
-    } catch (err) {
-      console.error("Delete announcement error:", err);
-      alert("Gagal menghapus informasi.");
-    }
-  };
-
-  return (
-    <AdminLayout
-      activeScreen="admin-announcements"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      <div className="space-y-8 pb-24">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
-          <div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight italic uppercase">
-              Pusat Informasi STP
-            </h1>
-            <p className="text-slate-500 font-medium">
-              Informasi terkini, pengumuman penting, jadwal meeting, dan libur nasional terintegrasi dengan kalender.
-            </p>
-          </div>
-          {isAdmin && (
-            <button
-              onClick={() => setShowAdd(true)}
-              className="bg-slate-900 text-white px-6 py-4 rounded-[1.5rem] font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-slate-800 transition-all cursor-pointer"
-            >
-              <Plus size={16} /> Publikasi Informasi
-            </button>
-          )}
-        </div>
-
-        {/* Search & Tabs Filter Section */}
-        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-xl shadow-slate-150/10 space-y-4">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input
-              type="text"
-              placeholder="Cari pengumuman, judul, instruksi, atau pengirim..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-black outline-none focus:ring-4 focus:ring-indigo-100 transition-all"
-            />
-          </div>
-
-          <div className="flex gap-1.5 overflow-x-auto pb-1 custom-scrollbar -mx-2 px-2">
-            {[
-              { id: "SEMUA", label: "Semua Info ‚ú®", count: announcements.length },
-              { id: "URGENT", label: "Penting üö®", count: announcements.filter(a => a.category === "URGENT").length },
-              { id: "PROYEK", label: "Proyek üèóÔ∏è", count: announcements.filter(a => a.category === "PROYEK").length },
-              { id: "MEETING", label: "Meeting üë•", count: announcements.filter(a => a.category === "MEETING").length },
-              { id: "LIBUR", label: "Libur üèùÔ∏è", count: announcements.filter(a => a.category === "LIBUR").length },
-              { id: "UMUM", label: "Umum ‚ÑπÔ∏è", count: announcements.filter(a => a.category === "UMUM").length },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`px-4 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all whitespace-nowrap shrink-0 flex items-center gap-2 ${
-                  activeTab === tab.id
-                    ? "bg-slate-900 text-white shadow-xl shadow-slate-900/10 scale-[1.03]"
-                    : "bg-slate-50 text-slate-500 hover:bg-slate-100"
-                }`}
-              >
-                <span>{tab.label}</span>
-                <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded-full ${activeTab === tab.id ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600"}`}>
-                  {tab.count}
-                </span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {filteredAnnouncements.map((a) => {
-            const catColors: Record<string, { badge: string; border: string; bg: string; icon: string }> = {
-              URGENT: {
-                badge: "bg-rose-100 text-rose-700 border-rose-200",
-                border: "border-rose-200 hover:border-rose-400",
-                bg: "bg-rose-50/10",
-                icon: "üö®",
-              },
-              UMUM: {
-                badge: "bg-slate-100 text-slate-700 border-slate-200",
-                border: "border-slate-100 hover:border-slate-300",
-                bg: "bg-white",
-                icon: "üì¢",
-              },
-              PROYEK: {
-                badge: "bg-blue-100 text-blue-700 border-blue-200",
-                border: "border-blue-200 hover:border-blue-400",
-                bg: "bg-blue-50/10",
-                icon: "üèóÔ∏è",
-              },
-              MEETING: {
-                badge: "bg-indigo-100 text-indigo-700 border-indigo-200",
-                border: "border-indigo-200 hover:border-indigo-400",
-                bg: "bg-indigo-50/10",
-                icon: "üë•",
-              },
-              LIBUR: {
-                badge: "bg-amber-100 text-amber-700 border-amber-200",
-                border: "border-amber-200 hover:border-amber-400",
-                bg: "bg-amber-50/10",
-                icon: "üèùÔ∏è",
-              },
-            };
-            
-            const config = catColors[a.category] || catColors.UMUM;
-
-            return (
-              <motion.div
-                key={a.id}
-                initial={{ opacity: 0, scale: 0.98 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className={`p-8 rounded-[2.5rem] border ${config.border} ${config.bg} shadow-xl shadow-slate-100/50 relative overflow-hidden group transition-all duration-300`}
-              >
-                <div
-                  className={`absolute top-0 right-0 w-32 h-32 blur-3xl opacity-10 pointer-events-none ${
-                    a.category === "URGENT" ? "bg-rose-500" : "bg-primary"
-                  }`}
-                />
-                <div className="flex justify-between items-start mb-6">
-                  <span className={`text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest border ${config.badge}`}>
-                    {config.icon} {a.category}
-                  </span>
-                  <div className="flex items-center gap-3">
-                    <span className="text-[10px] font-black text-slate-400 bg-slate-100/50 px-2.5 py-1 rounded-full border border-slate-100">
-                      {new Date(a.timestamp).toLocaleDateString("id-ID", {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
-                    </span>
-                    {isAdmin && (
-                      <button
-                        onClick={() => handleDelete(a.id, a.title, a.reminderId)}
-                        className="text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition-all"
-                        title="Hapus Informasi"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                <h3 className="text-lg font-black text-slate-900 mb-3 tracking-tight group-hover:text-primary transition-colors leading-snug">
-                  {a.title}
-                </h3>
-                <p className="text-xs text-slate-500 leading-relaxed font-semibold whitespace-pre-wrap">
-                  {a.content}
-                </p>
-                
-                {a.integrateCalendar && a.eventDate && (
-                  <div className="mt-5 p-4 bg-indigo-50/50 border border-indigo-100/50 rounded-2xl flex items-center gap-3 text-slate-700">
-                    <CalendarClock size={20} className="text-indigo-600 shrink-0" />
-                    <div className="text-xs">
-                      <span className="font-black uppercase text-[8px] text-indigo-500 block tracking-wider leading-none mb-1">Terintegrasi Kalender STP</span>
-                      <span className="font-extrabold text-slate-800">
-                        {new Date(a.eventDate).toLocaleDateString("id-ID", {
-                          weekday: "long",
-                          day: "numeric",
-                          month: "long",
-                          year: "numeric",
-                        })}
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                <div className="mt-6 pt-5 border-t border-slate-100 flex justify-between items-center">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center border border-slate-200">
-                      <User size={14} className="text-slate-500" />
-                    </div>
-                    <div className="text-left">
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-none mb-0.5">Diterbitkan Oleh</p>
-                      <p className="text-[10px] font-black text-slate-700 leading-none">{a.createdBy}</p>
-                    </div>
-                  </div>
-
-                  <span className="flex items-center gap-1.5 text-[8px] font-black text-emerald-600 bg-emerald-50 border border-emerald-100 px-2.5 py-1 rounded-full uppercase tracking-wider">
-                    <span className="w-1 h-1 rounded-full bg-emerald-500 animate-ping" />
-                    Aktif
-                  </span>
-                </div>
-              </motion.div>
-            );
-          })}
-
-          {filteredAnnouncements.length === 0 && (
-            <div className="md:col-span-2 py-20 bg-white border border-slate-100 rounded-[3rem] text-center shadow-lg shadow-slate-100/50 flex flex-col justify-center items-center">
-              <div className="h-16 w-16 bg-slate-50 rounded-full flex items-center justify-center text-slate-300 mb-4 border border-slate-100">
-                <Search size={28} />
-              </div>
-              <p className="text-xs font-black text-slate-500 uppercase tracking-widest">Tidak ada pengumuman ditemukan</p>
-              <p className="text-[10px] font-bold text-slate-400 mt-1">Coba sesuaikan tab kategori atau kata kunci pencarian Anda.</p>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {showAdd && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-6 sm:p-12 overflow-y-auto">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white w-full max-w-xl rounded-[3rem] shadow-2xl p-8 sm:p-12 my-auto"
-          >
-            <div className="flex justify-between items-center mb-8">
-              <h3 className="text-2xl font-black tracking-tight text-slate-900">Publikasi Informasi</h3>
-              <button
-                onClick={() => setShowAdd(false)}
-                className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-600 transition-colors"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <form onSubmit={handleCreate} className="space-y-6">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                  Kategori Informasi
-                </label>
-                <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
-                  {["UMUM", "URGENT", "PROYEK", "MEETING", "LIBUR"].map((c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() =>
-                        setFormData({ ...formData, category: c as any })
-                      }
-                      className={`py-3.5 rounded-xl text-[9px] font-black uppercase tracking-wider border transition-all text-center ${
-                        formData.category === c
-                          ? "bg-slate-900 text-white border-slate-900 shadow-md shadow-slate-900/10"
-                          : "bg-white text-slate-400 border-slate-150 hover:bg-slate-50"
-                      }`}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                  Judul Informasi
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="Masukkan judul (contoh: Rapat Koordinasi Mingguan)"
-                  value={formData.title}
-                  onChange={(e) =>
-                    setFormData({ ...formData, title: e.target.value })
-                  }
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                  Konten / Detail Pengumuman
-                </label>
-                <textarea
-                  required
-                  rows={4}
-                  placeholder="Tuliskan isi pengumuman atau instruksi di sini..."
-                  value={formData.content}
-                  onChange={(e) =>
-                    setFormData({ ...formData, content: e.target.value })
-                  }
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none resize-none"
-                />
-              </div>
-
-              {/* INTEGRASI KALENDER */}
-              <div className="bg-slate-50 border border-slate-100 p-6 rounded-[2rem] space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <label className="text-xs font-black text-slate-800 block">
-                      Integrasikan ke Kalender Perusahaan
-                    </label>
-                    <p className="text-[10px] font-bold text-slate-400 tracking-tight">
-                      Otomatis jadwalkan pengumuman ini pada tanggal tertentu
-                    </p>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={formData.integrateCalendar}
-                    onChange={(e) =>
-                      setFormData({ ...formData, integrateCalendar: e.target.checked })
-                    }
-                    className="w-5 h-5 accent-blue-600 rounded-md cursor-pointer-large cursor-pointer"
-                  />
-                </div>
-
-                {formData.integrateCalendar && (
-                  <div className="space-y-4 pt-2 border-t border-slate-200/50">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                        Pilih Tanggal Agenda
-                      </label>
-                      <input
-                        type="date"
-                        required={formData.integrateCalendar}
-                        value={formData.eventDate}
-                        onChange={(e) =>
-                          setFormData({ ...formData, eventDate: e.target.value })
-                        }
-                        className="w-full px-6 py-3.5 bg-white border border-slate-150 rounded-xl text-sm font-bold outline-none"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              <button
-                type="submit"
-                className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-xl cursor-pointer hover:bg-slate-800 transition-all active:scale-95"
-              >
-                Siarkan &amp; Jadwalkan Sekarang
-              </button>
-            </form>
-          </motion.div>
-        </div>
-      )}
-    </AdminLayout>
-  );
-};
-
-const AdminClientsScreen = ({
-  clients,
-  onNavigate,
-  user,
-  roles,
-  logActivity,
-}: {
-  clients: Client[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-  logActivity: (m: string, a: string, d: string) => Promise<void>;
-}) => {
-  const [showAdd, setShowAdd] = useState(false);
-  const [formData, setFormData] = useState({
-    name: "",
-    company: "",
-    email: "",
-    phone: "",
-    address: "",
-  });
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await dbService.createDocument("clients", { ...formData, projects: [] });
-    await logActivity(
-      "CLIENTS",
-      "CREATE",
-      `Menambah klien baru: ${formData.name} (${formData.company})`,
-    );
-    setShowAdd(false);
-    setFormData({ name: "", company: "", email: "", phone: "", address: "" });
-  };
-
-  return (
-    <AdminLayout
-      activeScreen="admin-clients"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      <div className="space-y-8 pb-24">
-        <div className="flex justify-between items-end">
-          <div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight">
-              Klien & Pelanggan
-            </h1>
-            <p className="text-slate-500 font-medium">
-              Rekanan bisnis dan daftar kontak perusahaan.
-            </p>
-          </div>
-          <button
-            onClick={() => setShowAdd(true)}
-            className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2"
-          >
-            <Plus size={16} /> Tambah Klien
-          </button>
-        </div>
-
-        <div className="bg-white rounded-3xl lg:rounded-[40px] border border-slate-100 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left min-w-[600px]">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Nama / Perusahaan
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Kontak
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Alamat
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Aksi
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {clients.map((c) => (
-                <tr
-                  key={c.id}
-                  className="hover:bg-slate-50/50 transition-colors"
-                >
-                  <td className="p-8">
-                    <p className="font-black text-slate-900">{c.name}</p>
-                    <p className="text-xs font-bold text-slate-400">
-                      {c.company}
-                    </p>
-                  </td>
-                  <td className="p-8">
-                    <p className="text-xs font-bold text-slate-900">
-                      {c.email}
-                    </p>
-                    <p className="text-xs font-medium text-slate-400">
-                      {c.phone}
-                    </p>
-                  </td>
-                  <td className="p-8">
-                    <p className="text-xs font-medium text-slate-500 max-w-xs truncate">
-                      {c.address}
-                    </p>
-                  </td>
-                  <td className="p-8">
-                    <button className="text-[10px] font-black text-primary uppercase tracking-widest">
-                      Detail
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        </div>
-      </div>
-
-      {showAdd && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-6">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white w-full max-w-3xl rounded-[48px] shadow-2xl p-10"
-          >
-            <div className="flex justify-between items-center mb-8">
-              <h3 className="text-2xl font-black">Tambah Klien Baru</h3>
-              <button
-                onClick={() => setShowAdd(false)}
-                className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <input
-                placeholder="Nama Lengkap"
-                required
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-              />
-              <input
-                placeholder="Nama Perusahaan"
-                required
-                value={formData.company}
-                onChange={(e) =>
-                  setFormData({ ...formData, company: e.target.value })
-                }
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-              />
-              <input
-                placeholder="Email"
-                type="email"
-                value={formData.email}
-                onChange={(e) =>
-                  setFormData({ ...formData, email: e.target.value })
-                }
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-              />
-              <input
-                placeholder="Nomor Telepon"
-                value={formData.phone}
-                onChange={(e) =>
-                  setFormData({ ...formData, phone: e.target.value })
-                }
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-              />
-              <textarea
-                placeholder="Alamat Lengkap"
-                rows={3}
-                value={formData.address}
-                onChange={(e) =>
-                  setFormData({ ...formData, address: e.target.value })
-                }
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none resize-none"
-              />
-              <button
-                type="submit"
-                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl mt-4"
-              >
-                Simpan Klien
-              </button>
-            </form>
-          </motion.div>
-        </div>
-      )}
-    </AdminLayout>
-  );
-};
-
-const AdminInvoicesScreen = ({
-  invoices,
-  clients,
-  onNavigate,
-  user,
-  roles,
-  logActivity,
-  selectedInvoiceForEdit,
-  setSelectedInvoiceForEdit,
-}: {
-  invoices: Invoice[];
-  clients: Client[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-  logActivity: (m: string, a: string, d: string) => Promise<void>;
-  selectedInvoiceForEdit?: any;
-  setSelectedInvoiceForEdit?: (inv: any | null) => void;
-}) => {
-  const [view, setView] = useState<"list" | "build">("list");
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("ALL");
-  const [isExporting, setIsExporting] = useState(false);
-  const [windowWidth, setWindowWidth] = useState(
-    typeof window !== "undefined" ? window.innerWidth : 1200,
-  );
-
-  useEffect(() => {
-    const handleResize = () => setWindowWidth(window.innerWidth);
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-
-  useEffect(() => {
-    if (selectedInvoiceForEdit) {
-      handleEditInvoice(selectedInvoiceForEdit);
-      if (setSelectedInvoiceForEdit) {
-        setSelectedInvoiceForEdit(null);
-      }
-    }
-  }, [selectedInvoiceForEdit, setSelectedInvoiceForEdit]);
-
-  // Builder States
-  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
-  const [invoiceNumber, setInvoiceNumber] = useState("");
-  const [clientId, setClientId] = useState("");
-  const [recipientName, setRecipientName] = useState("");
-  const [recipientUp, setRecipientUp] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [jobName, setJobName] = useState("");
-  const [status, setStatus] = useState<"PENDING" | "PAID" | "OVERDUE">("PENDING");
-
-  // PT / Company Kop Surat Details
-  const [companyName, setCompanyName] = useState("PT. GARDA INOVASI GLOBALTECH");
-  const [companyAddress, setCompanyAddress] = useState(
-    "Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09\nDs. Pisangan Jaya, Kec. Sepatan, Kab Tangerang\nBanten, 15525"
-  );
-  const [companyPhone, setCompanyPhone] = useState("0888-1687-794");
-  const [companyEmail, setCompanyEmail] = useState("info@gardainovasiglobaltech.id");
-  const [logoImage, setLogoImage] = useState<string | null>(null);
-
-  // Table items state
-  const [items, setItems] = useState<
-    Array<{ description: string; qty: string | number; unit: string; price: string | number }>
-  >([
-    { description: "Penggantian Pompa Set Submersible", qty: 1, unit: "Set", price: 8000000 },
-    { description: "Perbaikan Water Meter 2 Inch", qty: 1, unit: "ls", price: 1000000 },
-  ]);
-
-  // Tax and Bank details states
-  const [enablePPN, setEnablePPN] = useState(true);
-  const [taxPercentage, setTaxPercentage] = useState(11);
-  const [bankName, setBankName] = useState("Mandiri");
-  const [bankAccountName, setBankAccountName] = useState("Garda Inovasi Globaltech");
-  const [bankAccountNumber, setBankAccountNumber] = useState("1550014117173");
-  const [signatoryName, setSignatoryName] = useState("JIDAN RAMADHAN");
-  const [overrideTerbilang, setOverrideTerbilang] = useState("");
-
-  // Indonesian spelling of numbers (Terbilang)
-  const numberToTerbilang = (num: number): string => {
-    if (num === 0) return "nol";
-    const units = [
-      "",
-      "satu",
-      "dua",
-      "tiga",
-      "empat",
-      "lima",
-      "enam",
-      "tujuh",
-      "delapan",
-      "sembilan",
-      "sepuluh",
-      "sebelas"
-    ];
-
-    const helper = (n: number): string => {
-      let result = "";
-      if (n < 12) {
-        result = units[n];
-      } else if (n < 20) {
-        result = units[n - 10] + " belas";
-      } else if (n < 100) {
-        result = units[Math.floor(n / 10)] + " puluh " + helper(n % 10);
-      } else if (n < 200) {
-        result = "seratus " + helper(n - 100);
-      } else if (n < 1000) {
-        result = units[Math.floor(n / 100)] + " ratus " + helper(n % 100);
-      } else if (n < 2000) {
-        result = "seribu " + helper(n - 1000);
-      } else if (n < 1000000) {
-        result = helper(Math.floor(n / 1000)) + " ribu " + helper(n % 1000);
-      } else if (n < 1000000000) {
-        result = helper(Math.floor(n / 1000000)) + " juta " + helper(n % 1000000);
-      } else if (n < 1000000000000) {
-        result = helper(Math.floor(n / 1000000000)) + " milyar " + helper(n % 1000000000);
-      }
-      return result.trim();
-    };
-
-    return helper(num).replace(/\s+/g, " ") + " rupiah";
-  };
-
-  // Math Auto Calculations
-  const subTotal = items.reduce((acc, item) => {
-    const q = Number(item.qty) || 0;
-    const p = Number(item.price) || 0;
-    return acc + q * p;
-  }, 0);
-
-  const taxAmount = enablePPN ? Math.round((subTotal * taxPercentage) / 100) : 0;
-  const grandTotal = subTotal + taxAmount;
-  const computedTerbilang = numberToTerbilang(grandTotal);
-
-  // File structure helpers
-  const addItem = () =>
-    setItems([...items, { description: "", qty: 1, unit: "ls", price: 0 }]);
-
-  const removeItem = (index: number) => {
-    if (items.length > 1) {
-      setItems(items.filter((_, i) => i !== index));
-    }
-  };
-
-  const updateItem = (index: number, field: string, value: any) => {
-    const newItems = [...items];
-    (newItems[index] as any)[field] = value;
-    setItems(newItems);
-  };
-
-  const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setLogoImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  // Link selected Client with standard client list
-  const handleClientChange = (selectedClientId: string) => {
-    setClientId(selectedClientId);
-    const linkedClient = clients.find((c) => c.id === selectedClientId);
-    if (linkedClient) {
-      setRecipientName(linkedClient.company || linkedClient.name);
-      setRecipientUp(linkedClient.name || "");
-    }
-  };
-
-  // Open invoice editor
-  const handleEditInvoice = (inv: any) => {
-    setEditingInvoiceId(inv.id);
-    setInvoiceNumber(inv.invoiceNumber || "");
-    setClientId(inv.clientId || "");
-    setRecipientName(inv.clientName || "");
-    setRecipientUp(inv.recipientUp || "");
-    setInvoiceDate(
-      inv.invoiceDate ||
-        (inv.createdAt ? inv.createdAt.split("T")[0] : new Date().toISOString().split("T")[0])
-    );
-    setDueDate(inv.dueDate || "");
-    setJobName(inv.jobName || "");
-    setStatus(inv.status || "PENDING");
-
-    if (inv.companyLogo) setLogoImage(inv.companyLogo);
-    if (inv.companyName) setCompanyName(inv.companyName);
-    if (inv.companyAddress) setCompanyAddress(inv.companyAddress);
-    if (inv.companyPhone) setCompanyPhone(inv.companyPhone);
-    if (inv.companyEmail) setCompanyEmail(inv.companyEmail);
-
-    if (inv.itemsJson) {
-      try {
-        setItems(JSON.parse(inv.itemsJson));
-      } catch (e) {
-        setItems([{ description: "", qty: 1, unit: "ls", price: inv.amount || 0 }]);
-      }
-    } else {
-      setItems([{ description: "Uraian Pekerjaan", qty: 1, unit: "ls", price: inv.amount || 0 }]);
-    }
-
-    setEnablePPN(inv.taxPercentage !== undefined ? Number(inv.taxPercentage) > 0 : true);
-    setTaxPercentage(inv.taxPercentage !== undefined ? inv.taxPercentage : 11);
-    setBankName(inv.bankName || "Mandiri");
-    setBankAccountName(inv.bankAccountName || "Garda Inovasi Globaltech");
-    setBankAccountNumber(inv.bankAccountNumber || "1550014117173");
-    setSignatoryName(inv.signatoryName || "JIDAN RAMADHAN");
-    setOverrideTerbilang(inv.overrideTerbilang || "");
-
-    setView("build");
-  };
-
-  const initNewInvoice = () => {
-    setEditingInvoiceId(null);
-    setInvoiceNumber(
-      `INV/${new Date().getFullYear()}/${Math.floor(1000 + Math.random() * 9000)}`
-    );
-    setClientId("");
-    setRecipientName("");
-    setRecipientUp("");
-    setInvoiceDate(new Date().toISOString().split("T")[0]);
-    setDueDate("");
-    setJobName("Pemeliharaan IPAL");
-    setStatus("PENDING");
-    setItems([
-      { description: "Penggantian Pompa Set Submersible", qty: 1, unit: "Set", price: 8000000 },
-      { description: "Perbaikan Water Meter 2 Inch", qty: 1, unit: "ls", price: 1000000 }
-    ]);
-    setEnablePPN(true);
-    setTaxPercentage(11);
-    setBankName("Mandiri");
-    setBankAccountName("Garda Inovasi Globaltech");
-    setBankAccountNumber("1550014117173");
-    setSignatoryName("JIDAN RAMADHAN");
-    setOverrideTerbilang("");
-    setView("build");
-  };
-
-  const handleSaveInvoice = async () => {
-    if (!recipientName) {
-      alert("Masukkan nama penerima / klien.");
-      return;
-    }
-    if (!invoiceNumber) {
-      alert("Masukkan nomor invoice.");
-      return;
-    }
-
-    const payload = {
-      invoiceNumber,
-      clientId,
-      clientName: recipientName,
-      amount: Number(grandTotal),
-      total: Number(grandTotal),
-      status,
-      dueDate,
-      createdAt: editingInvoiceId
-        ? invoices.find((v) => v.id === editingInvoiceId)?.createdAt || new Date().toISOString()
-        : new Date().toISOString(),
-
-      // Extended detailed fields
-      companyLogo: logoImage,
-      companyName,
-      companyAddress,
-      companyPhone,
-      companyEmail,
-      recipientUp,
-      invoiceDate,
-      jobName,
-      taxPercentage: enablePPN ? taxPercentage : 0,
-      itemsJson: JSON.stringify(items),
-      bankName,
-      bankAccountName,
-      bankAccountNumber,
-      signatoryName,
-      overrideTerbilang: overrideTerbilang || computedTerbilang,
-    };
-
-    try {
-      if (editingInvoiceId) {
-        await dbService.updateDocument("invoices", editingInvoiceId, payload);
-        await logActivity(
-          "INVOICES",
-          "UPDATE",
-          `Melakukan update Invoice ${invoiceNumber} untuk ${recipientName} senilai Rp ${grandTotal.toLocaleString("id-ID")}`
-        );
-        alert("Invoice berhasil diperbarui!");
-      } else {
-        await dbService.createDocument("invoices", payload);
-        await logActivity(
-          "INVOICES",
-          "CREATE",
-          `Menerbitkan Invoice Baru ${invoiceNumber} untuk ${recipientName} senilai Rp ${grandTotal.toLocaleString("id-ID")}`
-        );
-        alert("Invoice baru berhasil disimpan!");
-      }
-      setView("list");
-    } catch (e) {
-      console.error(e);
-      alert("Gagal menyimpan invoice.");
-    }
-  };
-
-  const handleDeleteInvoice = async (invId: string, numberStr: string) => {
-    if (confirm(`Apakah Anda yakin ingin menghapus Invoice ${numberStr} dari sistem?`)) {
-      try {
-        await dbService.deleteDocument("invoices", invId);
-        await logActivity(
-          "INVOICES",
-          "DELETE",
-          `Menghapus Invoice ${numberStr}`
-        );
-        alert("Invoice telah berhasil di hapus.");
-      } catch (err) {
-        alert("Gagal menghapus invoice.");
-      }
-    }
-  };
-
-  const exportPDF = async () => {
-    setIsExporting(true);
-    const element = document.getElementById("invoice-preview-capture");
-    if (!element) {
-      setIsExporting(false);
-      return;
-    }
-
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
-      const canvas = await html2canvas(element, {
-        scale: 2,
-        useCORS: true,
-        logging: true,
-        allowTaint: true,
-        backgroundColor: "#ffffff",
-        onclone: (clonedDoc) => {
-          const clonedElement = clonedDoc.getElementById("invoice-preview-capture");
-          if (clonedElement) {
-            clonedElement.style.display = "block";
-            clonedElement.style.visibility = "visible";
-            clonedElement.style.boxShadow = "none";
-            clonedElement.style.transform = "none";
-            clonedElement.style.scale = "1";
-            clonedElement.style.margin = "0";
-            clonedElement.style.position = "relative";
-            clonedElement.style.top = "0";
-            clonedElement.style.left = "0";
-          }
-
-          const styles = clonedDoc.getElementsByTagName("style");
-          for (let i = styles.length - 1; i >= 0; i--) {
-            styles[i].remove();
-          }
-
-          const links = clonedDoc.getElementsByTagName("link");
-          for (let i = links.length - 1; i >= 0; i--) {
-            if (links[i].rel === "stylesheet") {
-              links[i].remove();
-            }
-          }
-        },
-      });
-
-      const imgData = canvas.toDataURL("image/png", 1.0);
-      const pdf = new jsPDF("p", "mm", "a4");
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-
-      pdf.addImage(
-        imgData,
-        "PNG",
-        0,
-        0,
-        pdfWidth,
-        Math.min(pdfHeight, pdf.internal.pageSize.getHeight()),
-      );
-      pdf.save(`Invoice_${invoiceNumber.replace(/\//g, "_")}.pdf`);
-    } catch (err: any) {
-      console.error("PDF Export Error Details:", err);
-      alert(`Gagal download PDF: ${err.message || "Error tidak dikenal"}`);
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const uniqueInvoicesMap = new Map<string, Invoice>();
-  invoices.forEach((inv) => {
-    if (inv) {
-      const key = inv.invoiceNumber || inv.id;
-      if (key && !uniqueInvoicesMap.has(key)) {
-        uniqueInvoicesMap.set(key, inv);
-      }
-    }
-  });
-  const dedupedInvoices: Invoice[] = Array.from(uniqueInvoicesMap.values());
-
-  const filteredInvoices = dedupedInvoices.filter((inv) => {
-    const matchSearch =
-      inv.invoiceNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      inv.clientName?.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchStatus = statusFilter === "ALL" || inv.status === statusFilter;
-    return matchSearch && matchStatus;
-  });
-
-  return (
-    <AdminLayout
-      activeScreen="admin-invoices"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      {view === "list" ? (
-        <div className="space-y-8 pb-24">
-          <div className="flex justify-between items-end">
-            <div>
-              <h1 className="text-3xl font-black text-slate-900 tracking-tight">
-                Invoice & Penagihan
-              </h1>
-              <p className="text-slate-500 font-medium">
-                Kelola invoice klien, cetak format PDF resmi dan status pembayaran.
-              </p>
-            </div>
-            <button
-              onClick={initNewInvoice}
-              className="bg-emerald-500 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-emerald-600 transition-all active:scale-95 translate-y-[-2px]"
-            >
-              <Plus size={16} /> Buat Invoice Builder
-            </button>
-          </div>
-
-          {/* Quick Metrics */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm transition-all hover:shadow-xl">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 font-sans">
-                Total Tertagih
-              </p>
-              <h3 className="text-3xl font-black text-slate-900 font-mono">
-                Rp {invoices.reduce((a, b) => a + b.amount, 0).toLocaleString("id-ID")}
-              </h3>
-            </div>
-            <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm transition-all hover:shadow-xl">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 font-sans">
-                Belum Dibayar
-              </p>
-              <h3 className="text-3xl font-black text-rose-500 font-mono">
-                Rp{" "}
-                {invoices
-                  .filter((i) => i.status !== "PAID")
-                  .reduce((a, b) => a + b.amount, 0)
-                  .toLocaleString("id-ID")}
-              </h3>
-            </div>
-            <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm transition-all hover:shadow-xl">
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 font-sans">
-                Sudah Lunas
-              </p>
-              <h3 className="text-3xl font-black text-emerald-500 font-mono">
-                Rp{" "}
-                {invoices
-                  .filter((i) => i.status === "PAID")
-                  .reduce((a, b) => a + b.amount, 0)
-                  .toLocaleString("id-ID")}
-              </h3>
-            </div>
-          </div>
-
-          {/* Search and Filters */}
-          <div className="flex flex-col sm:flex-row gap-4 items-center justify-between pt-2">
-            <div className="relative w-full sm:max-w-md">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-              <input
-                type="text"
-                placeholder="Cari nomor invoice / nama klien..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-12 pr-6 py-3.5 bg-white border border-slate-200/80 rounded-2xl text-sm font-bold placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-primary/5 focus:border-primary transition-all"
-              />
-            </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto overflow-x-auto pb-1 sm:pb-0">
-              {["ALL", "PENDING", "PAID", "OVERDUE"].map((st) => (
-                <button
-                  key={st}
-                  onClick={() => setStatusFilter(st)}
-                  className={`px-4 py-2.5 rounded-xl font-black text-[10px] uppercase tracking-wider transition-all border shrink-0 ${statusFilter === st ? "bg-slate-900 text-white border-slate-900 shadow-md" : "bg-white text-slate-500 border-slate-100 hover:bg-slate-50"}`}
-                >
-                  {st === "ALL" ? "Semua Status" : st}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Table list */}
-          <div className="bg-white rounded-[40px] border border-slate-100 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left min-w-[800px]">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest pl-10">
-                      Nomor Invoice
-                    </th>
-                    <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      Klien
-                    </th>
-                    <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      Jatuh Tempo
-                    </th>
-                    <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      Jumlah
-                    </th>
-                    <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      Status
-                    </th>
-                    <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right pr-10">
-                      Aksi
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-50">
-                  {filteredInvoices.length > 0 ? (
-                    filteredInvoices.map((inv) => (
-                      <tr
-                        key={inv.id}
-                        className="hover:bg-slate-50/50 transition-colors group"
-                      >
-                        <td className="p-8 pl-10">
-                          <span className="font-black text-slate-900">
-                            {inv.invoiceNumber}
-                          </span>
-                        </td>
-                        <td className="p-8">
-                          <p className="font-bold text-slate-700">{inv.clientName}</p>
-                          {inv.projectId && (
-                            <p className="text-[10px] font-medium text-slate-400 mt-0.5">
-                              Pekerjaan: {(inv as any).jobName || "Konstruksi IPAL"}
-                            </p>
-                          )}
-                        </td>
-                        <td className="p-8 text-xs font-bold text-slate-500 font-mono">
-                          {inv.dueDate || "-"}
-                        </td>
-                        <td className="p-8 font-black text-slate-900 font-mono">
-                          Rp {inv.amount.toLocaleString("id-ID")}
-                        </td>
-                        <td className="p-8">
-                          <span
-                            className={`px-4 py-2 rounded-full text-[8px] font-black uppercase tracking-widest ${inv.status === "PAID" ? "bg-emerald-50 text-emerald-500" : inv.status === "OVERDUE" ? "bg-rose-50 text-rose-500" : "bg-amber-50 text-amber-500"}`}
-                          >
-                            {inv.status}
-                          </span>
-                        </td>
-                        <td className="p-8 text-right pr-10 whitespace-nowrap">
-                          <div className="flex justify-end gap-2 text-slate-400">
-                            <button
-                              onClick={() => handleEditInvoice(inv)}
-                              className="p-2.5 hover:bg-indigo-50 hover:text-indigo-600 rounded-xl transition-all font-sans text-xs font-bold flex items-center gap-1.5"
-                              title="Buka Builder (Edit & Print)"
-                            >
-                              <FileEdit size={16} />
-                              <span>Format PDF</span>
-                            </button>
-                            <button
-                              onClick={() => handleDeleteInvoice(inv.id, inv.invoiceNumber)}
-                              className="p-2.5 hover:bg-rose-50 hover:text-rose-500 rounded-xl transition-all"
-                              title="Hapus"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="p-20 text-center">
-                        <Receipt size={40} className="text-slate-300 mx-auto mb-4" />
-                        <p className="text-slate-400 font-bold">Belum ada invoice yang diterbitkan.</p>
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      ) : (
-        /* Builder View (Dual Pane) */
-        <div className="space-y-6 pb-28">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <button
-              onClick={() => setView("list")}
-              className="flex items-center gap-2 text-slate-400 hover:text-slate-900 transition-all font-black text-[10px] uppercase tracking-widest hover:translate-x-[-2px]"
-            >
-              <ChevronLeft size={16} /> Kembali ke Daftar Invoice
-            </button>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleSaveInvoice}
-                className="bg-emerald-500 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-emerald-600 transition-all"
-              >
-                <Save size={16} />
-                <span>Simpan di Aplikasi</span>
-              </button>
-              <button
-                onClick={exportPDF}
-                disabled={isExporting}
-                className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-slate-800 transition-all disabled:opacity-50"
-              >
-                {isExporting ? <RefreshCw className="animate-spin" size={16} /> : <Printer size={16} />}
-                <span>Download PDF Invoice</span>
-              </button>
-            </div>
-          </div>
-
-          <div className="grid lg:grid-cols-2 gap-10">
-            {/* Editor Pane */}
-            <div className="space-y-8">
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <h3 className="text-lg font-black text-slate-900">1. Profil Pengirim & Logo</h3>
-                
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Logo Perusahaan
-                    </label>
-                    <div className="relative group">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleLogoUpload}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                      />
-                      <div className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold flex items-center gap-3 transition-all group-hover:bg-slate-100">
-                        <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
-                          {logoImage ? (
-                            <img src={logoImage} alt="Logo" className="w-full h-full object-contain" />
-                          ) : (
-                            <Plus size={16} className="text-slate-400" />
-                          )}
-                        </div>
-                        <span className="text-slate-500 truncate">
-                          {logoImage ? "Ganti Logo" : "Upload Logo (.png, .jpg)"}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nama Perusahaan Pengirim
-                    </label>
-                    <input
-                      type="text"
-                      value={companyName}
-                      onChange={(e) => setCompanyName(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Alamat Lengkap Pengirim (Kop Surat Kanan)
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={companyAddress}
-                    onChange={(e) => setCompanyAddress(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-3xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                  />
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nomor Telepon
-                    </label>
-                    <input
-                      type="text"
-                      value={companyPhone}
-                      onChange={(e) => setCompanyPhone(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Email Bisnis
-                    </label>
-                    <input
-                      type="text"
-                      value={companyEmail}
-                      onChange={(e) => setCompanyEmail(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <h3 className="text-lg font-black text-slate-900">2. Detail Penerima & Pekerjaan</h3>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Hubungkan dengan Klien Terdaftar (Opsional)
-                  </label>
-                  <select
-                    value={clientId}
-                    onChange={(e) => handleClientChange(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                  >
-                    <option value="">Pilih Klien</option>
-                    {clients.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.company || c.name} ({c.name})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Kepada (Instansi / Nama Klien)
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Puskesmas Sindang Jaya"
-                      value={recipientName}
-                      onChange={(e) => setRecipientName(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Up (Nama Jabatan / Penerima)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Kepala Puskesmas Sindang Jaya"
-                      value={recipientUp}
-                      onChange={(e) => setRecipientUp(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nomor Surat Invoice
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. 17/INV/GIGT/VI/2026"
-                      value={invoiceNumber}
-                      onChange={(e) => setInvoiceNumber(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nama Pekerjaan / Projek
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Pemeliharaan IPAL"
-                      value={jobName}
-                      onChange={(e) => setJobName(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Tanggal Cetak
-                    </label>
-                    <input
-                      type="date"
-                      value={invoiceDate}
-                      onChange={(e) => setInvoiceDate(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-[18px] text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Tanggal Jatuh Tempo (Due Date)
-                    </label>
-                    <input
-                      type="date"
-                      value={dueDate}
-                      onChange={(e) => setDueDate(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-[18px] text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Status Dokumen (Database)
-                  </label>
-                  <select
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value as any)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                  >
-                    <option value="PENDING">PENDING (Beli / Belum Bayar)</option>
-                    <option value="PAID">PAID (Lunas)</option>
-                    <option value="OVERDUE">OVERDUE (Terlambat)</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Rincian item */}
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-black text-slate-900">3. Rincian Pekerjaan / Item</h3>
-                  <button
-                    onClick={addItem}
-                    className="flex items-center gap-1.5 text-[10px] font-black text-emerald-500 uppercase tracking-widest bg-emerald-50 px-3 py-1.5 rounded-full hover:bg-emerald-100 transition-all"
-                  >
-                    <Plus size={14} /> Add Item
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  {items.map((item, idx) => (
-                    <div key={idx} className="p-4 bg-slate-50/50 rounded-3xl border border-slate-100 space-y-3 relative group">
-                      <button
-                        onClick={() => removeItem(idx)}
-                        disabled={items.length === 1}
-                        className="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-rose-500 disabled:opacity-0 transition-all rounded-lg"
-                        title="Hapus baris"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider pl-1 font-sans">
-                          Uraian Pekerjaan / Deskripsi
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={item.description}
-                          placeholder="Nama Barang atau Jenis Pekerjaan"
-                          onChange={(e) => updateItem(idx, "description", e.target.value)}
-                          className="w-full px-4 py-2.5 bg-white border border-slate-150 rounded-xl text-xs font-bold outline-none"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider pl-1">
-                            Vol / Qty
-                          </label>
-                          <input
-                            type="number"
-                            value={item.qty}
-                            onChange={(e) => updateItem(idx, "qty", e.target.value)}
-                            className="w-full px-3 py-2.5 bg-white border border-slate-150 rounded-xl text-xs font-bold text-center outline-none"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider pl-1 font-sans">
-                            Satuan
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="Set / ls / Pcs"
-                            value={item.unit}
-                            onChange={(e) => updateItem(idx, "unit", e.target.value)}
-                            className="w-full px-3 py-2.5 bg-white border border-slate-150 rounded-xl text-xs font-bold text-center outline-none"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider pl-1">
-                            Harga Satuan (Rp)
-                          </label>
-                          <input
-                            type="number"
-                            value={item.price}
-                            onChange={(e) => updateItem(idx, "price", e.target.value)}
-                            className="w-full px-3 py-2.5 bg-white border border-slate-150 rounded-xl text-xs font-bold text-center outline-none font-mono"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Pajak & Bank */}
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <h3 className="text-lg font-black text-slate-900">4. Pajak & Rekening Pembayaran</h3>
-
-                <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl">
-                  <input
-                    type="checkbox"
-                    id="enable-ppn"
-                    checked={enablePPN}
-                    onChange={(e) => setEnablePPN(e.target.checked)}
-                    className="w-4 h-4 rounded text-emerald-500 focus:ring-emerald-500 border-slate-300"
-                  />
-                  <label htmlFor="enable-ppn" className="text-xs font-bold text-slate-700 cursor-pointer select-none">
-                    Kenakan PPN (Pajak Pertambahan Nilai)
-                  </label>
-                </div>
-
-                {enablePPN && (
-                  <div className="space-y-2 pl-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      Persentase PPN (%)
-                    </label>
-                    <input
-                      type="number"
-                      value={taxPercentage}
-                      onChange={(e) => setTaxPercentage(Number(e.target.value))}
-                      className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-black outline-none"
-                    />
-                  </div>
-                )}
-
-                <div className="grid md:grid-cols-2 gap-6 pt-2">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nama Bank Penerima
-                    </label>
-                    <input
-                      type="text"
-                      value={bankName}
-                      onChange={(e) => setBankName(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Atas Nama Rekening
-                    </label>
-                    <input
-                      type="text"
-                      value={bankAccountName}
-                      onChange={(e) => setBankAccountName(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Nomor Rekening
-                  </label>
-                  <input
-                    type="text"
-                    value={bankAccountNumber}
-                    onChange={(e) => setBankAccountNumber(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none font-mono"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Nama Penandatangan (Hormat Kami)
-                  </label>
-                  <input
-                    type="text"
-                    value={signatoryName}
-                    onChange={(e) => setSignatoryName(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none"
-                  />
-                </div>
-
-                <div className="space-y-2 pt-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Override Teks Terbilang (Kosongkan Untuk Otomatis)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={overrideTerbilang}
-                    placeholder={computedTerbilang}
-                    onChange={(e) => setOverrideTerbilang(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none italic placeholder:text-slate-300"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Document Live Preview Pane */}
-            <div className="space-y-6 overflow-hidden">
-              <h2 className="text-xl font-black text-slate-900 tracking-tight text-center">
-                Live Document Preview (A4 format)
-              </h2>
-
-              <div className="w-full overflow-x-auto overflow-y-auto max-h-[850px] flex justify-center bg-slate-200 border border-slate-300 rounded-[32px] p-6 shadow-inner">
-                {/* Simulated A4 document page wrapper */}
-                <div
-                  id="invoice-preview-capture"
-                  className="bg-white"
-                  style={{
-                    width: "210mm",
-                    minHeight: "297mm",
-                    padding: "45px 55px",
-                    backgroundColor: "#ffffff",
-                    color: "#000000",
-                    position: "relative",
-                    fontFamily: "Arial, sans-serif",
-                    margin: "0 auto",
-                    boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
-                    transform:
-                      windowWidth < 768
-                        ? `scale(${Math.min(0.42, (windowWidth - 40) / 794)})`
-                        : windowWidth < 1024
-                          ? `scale(${Math.min(0.7, (windowWidth - 40) / 794)})`
-                          : "scale(1)",
-                    transformOrigin: "top center",
-                  }}
-                >
-                  {/* Kop Surat Header */}
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "flex-start",
-                      borderBottom: "1px solid #1e293b",
-                      paddingBottom: "15px",
-                      marginBottom: "20px",
-                    }}
-                  >
-                    {/* Left: Logo & Logo Text */}
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      <div
-                        style={{
-                          width: "80px",
-                          height: "80px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          overflow: "hidden",
-                        }}
-                      >
-                        {logoImage ? (
-                          <img
-                            src={logoImage}
-                            alt="Logo"
-                            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-                          />
-                        ) : (
-                          <div
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              border: "1px dashed #cccccc",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              fontSize: "9px",
-                              color: "#888888",
-                              textAlign: "center",
-                            }}
-                          >
-                            Upload Logo
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column" }}>
-                        <p style={{ margin: 0, fontSize: "11px", fontWeight: "bold", color: "#1e3a8a" }}>
-                          PT. GARDA INOVASI GLOBALTECH
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Right: Company Address Details */}
-                    <div style={{ textAlign: "right", maxWidth: "340px" }}>
-                      <h4
-                        style={{
-                          margin: "0 0 4px 0",
-                          fontSize: "12px",
-                          fontWeight: "bold",
-                          letterSpacing: "0.05em",
-                          color: "#0f172a",
-                        }}
-                      >
-                        {companyName}
-                      </h4>
-                      <p
-                        style={{
-                          margin: 0,
-                          fontSize: "9px",
-                          lineHeight: "1.4",
-                          color: "#334155",
-                          whiteSpace: "pre-wrap",
-                        }}
-                      >
-                        {companyAddress}
-                      </p>
-                      <p style={{ margin: "4px 0 0 0", fontSize: "9px", color: "#475569" }}>
-                        Telp: {companyPhone}
-                      </p>
-                      <p style={{ margin: 0, fontSize: "9px", color: "#2563eb", textDecoration: "underline" }}>
-                        {companyEmail}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Title Centered */}
-                  <div style={{ textAlign: "center", margin: "25px 0" }}>
-                    <h2
-                      style={{
-                        margin: 0,
-                        fontSize: "20px",
-                        fontWeight: "bold",
-                        letterSpacing: "0.2em",
-                        textDecoration: "underline",
-                        color: "#000000",
-                      }}
-                    >
-                      INVOICE
-                    </h2>
-                  </div>
-
-                  {/* Dual Column Info Section */}
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontSize: "11px",
-                      marginBottom: "30px",
-                      lineHeight: "1.7",
-                    }}
-                  >
-                    {/* Left Column: Recipient Details */}
-                    <div style={{ width: "45%" }}>
-                      <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                        <tbody>
-                          <tr>
-                            <td style={{ width: "70px", fontWeight: "normal", verticalAlign: "top" }}>Kepada</td>
-                            <td style={{ width: "10px", verticalAlign: "top" }}>:</td>
-                            <td style={{ fontWeight: "bold", verticalAlign: "top" }}>{recipientName || "-"}</td>
-                          </tr>
-                          <tr>
-                            <td style={{ fontWeight: "normal", verticalAlign: "top" }}>Up</td>
-                            <td style={{ verticalAlign: "top" }}>:</td>
-                            <td style={{ verticalAlign: "top" }}>{recipientUp || "-"}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Right Column: Invoicing Metadata */}
-                    <div style={{ width: "45%" }}>
-                      <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                        <tbody>
-                          <tr>
-                            <td style={{ width: "80px", fontWeight: "normal", verticalAlign: "top" }}>Nomor</td>
-                            <td style={{ width: "10px", verticalAlign: "top" }}>:</td>
-                            <td style={{ fontWeight: "bold", verticalAlign: "top" }}>{invoiceNumber || "-"}</td>
-                          </tr>
-                          <tr>
-                            <td style={{ fontWeight: "normal", verticalAlign: "top" }}>Tanggal</td>
-                            <td style={{ verticalAlign: "top" }}>:</td>
-                            <td style={{ verticalAlign: "top" }}>
-                              {invoiceDate
-                                ? new Date(invoiceDate).toLocaleDateString("id-ID", {
-                                    day: "2-digit",
-                                    month: "long",
-                                    year: "numeric"
-                                  })
-                                : "-"}
-                            </td>
-                          </tr>
-                          {dueDate && (
-                            <tr>
-                              <td style={{ fontWeight: "normal", verticalAlign: "top" }}>Jatuh Tempo</td>
-                              <td style={{ verticalAlign: "top" }}>:</td>
-                              <td style={{ verticalAlign: "top" }}>
-                                {new Date(dueDate).toLocaleDateString("id-ID", {
-                                  day: "2-digit",
-                                  month: "long",
-                                  year: "numeric"
-                                })}
-                              </td>
-                            </tr>
-                          )}
-                          <tr>
-                            <td style={{ fontWeight: "normal", verticalAlign: "top" }}>Pekerjaan</td>
-                            <td style={{ verticalAlign: "top" }}>:</td>
-                            <td style={{ verticalAlign: "top" }}>{jobName || "-"}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* High Quality Black Bordered Table */}
-                  <table
-                    style={{
-                      width: "100%",
-                      borderCollapse: "collapse",
-                      fontSize: "11px",
-                      marginBottom: "20px",
-                    }}
-                  >
-                    <thead>
-                      <tr style={{ borderTop: "2px solid #000000", borderBottom: "2px solid #000000" }}>
-                        <th style={{ padding: "8px 5px", borderBottom: "2px solid #000000", textAlign: "center", width: "35px" }}>NO</th>
-                        <th style={{ padding: "8px 10px", borderBottom: "2px solid #000000", textAlign: "left" }}>URAIAN PEKERJAAN</th>
-                        <th style={{ padding: "8px 5px", borderBottom: "2px solid #000000", textAlign: "center", width: "50px" }}>VOL</th>
-                        <th style={{ padding: "8px 5px", borderBottom: "2px solid #000000", textAlign: "center", width: "60px" }}>SATUAN</th>
-                        <th style={{ padding: "8px 10px", borderBottom: "2px solid #000000", textAlign: "right", width: "115px" }}>HARGA SATUAN</th>
-                        <th style={{ padding: "8px 10px", borderBottom: "2px solid #000000", textAlign: "right", width: "120px" }}>JUMLAH</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((item, idx) => {
-                        const amount = (Number(item.qty) || 0) * (Number(item.price) || 0);
-                        return (
-                          <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                            <td style={{ padding: "8px 5px", textAlign: "center", verticalAlign: "top" }}>{idx + 1}</td>
-                            <td style={{ padding: "8px 10px", textAlign: "left", verticalAlign: "top", whiteSpace: "pre-line" }}>
-                              {item.description || "-"}
-                            </td>
-                            <td style={{ padding: "8px 5px", textAlign: "center", verticalAlign: "top" }}>{item.qty}</td>
-                            <td style={{ padding: "8px 5px", textAlign: "center", verticalAlign: "top" }}>{item.unit || "-"}</td>
-                            <td style={{ padding: "8px 10px", textAlign: "right", verticalAlign: "top" }}>
-                              Rp {(Number(item.price) || 0).toLocaleString("id-ID")}
-                            </td>
-                            <td style={{ padding: "8px 10px", textAlign: "right", verticalAlign: "top", fontWeight: "bold" }}>
-                              Rp {amount.toLocaleString("id-ID")}
-                            </td>
-                          </tr>
-                        );
-                      })}
-
-                      {/* Summary Section Rows */}
-                      <tr style={{ borderTop: "2px solid #000000" }}>
-                        <td colSpan={4} style={{ border: "none" }}></td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "bold" }}>SUB TOTAL</td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "bold" }}>
-                          Rp {subTotal.toLocaleString("id-ID")}
-                        </td>
-                      </tr>
-                      {enablePPN && (
-                        <tr>
-                          <td colSpan={4} style={{ border: "none" }}></td>
-                          <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "bold" }}>PPN {taxPercentage}%</td>
-                          <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "bold" }}>
-                            Rp {taxAmount.toLocaleString("id-ID")}
-                          </td>
-                        </tr>
-                      )}
-                      <tr>
-                        <td colSpan={4} style={{ border: "none" }}></td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "bold", borderTop: "1px solid #000000", borderBottom: "2px solid #000000" }}>
-                          GRAND TOTAL
-                        </td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "black", borderTop: "1px solid #000000", borderBottom: "2px solid #000000", fontSize: "12px", backgroundColor: "#f8fafc" }}>
-                          Rp {grandTotal.toLocaleString("id-ID")}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-
-                  {/* Terbilang block */}
-                  <div style={{ margin: "25px 0", fontSize: "11px", fontStyle: "italic", fontWeight: "bold" }}>
-                    *Terbilang : {overrideTerbilang || computedTerbilang}
-                  </div>
-
-                  {/* Payment Info */}
-                  <div style={{ margin: "40px 0 20px 0", fontSize: "11px", lineHeight: "1.6" }}>
-                    <p style={{ margin: "0 0 6px 0", fontWeight: "bold", textDecoration: "underline" }}>
-                      Cara Pembayaran Melalui Transfer Ke Rekening
-                    </p>
-                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "11px" }}>
-                      <tbody>
-                        <tr>
-                          <td style={{ width: "110px", padding: "2px 0" }}>Nama Bank</td>
-                          <td style={{ width: "15px" }}>:</td>
-                          <td style={{ fontWeight: "bold" }}>{bankName}</td>
-                        </tr>
-                        <tr>
-                          <td style={{ padding: "2px 0" }}>Atas nama</td>
-                          <td>:</td>
-                          <td style={{ fontWeight: "bold" }}>{bankAccountName}</td>
-                        </tr>
-                        <tr>
-                          <td style={{ padding: "2px 0" }}>No Rekening</td>
-                          <td>:</td>
-                          <td style={{ fontWeight: "bold", fontFamily: "monospace" }}>{bankAccountNumber}</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Demikian text */}
-                  <p style={{ fontSize: "11px", margin: "30px 0 50px 0", lineHeight: "1.5" }}>
-                    Demikian invoice ini kami sampaikan. Atas perhatian dan kerjasamanya kami ucapkan terimakasih.
-                  </p>
-
-                  {/* Signature Section */}
-                  <div style={{ display: "flex", justifyContent: "flex-end", paddingRight: "30px" }}>
-                    <div style={{ textAlign: "center", width: "200px" }}>
-                      <p style={{ fontSize: "12px", margin: "0 0 70px 0", fontWeight: "normal" }}>
-                        Hormat kami,
-                      </p>
-                      
-                      {/* Interactive Sign Stamp Logo optionally overlaying a little bit of the text */}
-                      <div style={{ position: "relative" }}>
-                        {logoImage && (
-                          <img
-                            src={logoImage}
-                            alt="Stamp"
-                            style={{
-                              position: "absolute",
-                              width: "70px",
-                              height: "70px",
-                              top: "-60px",
-                              left: "65px",
-                              opacity: "0.25",
-                              mixBlendMode: "multiply",
-                            }}
-                          />
-                        )}
-                        <p style={{ fontSize: "12px", margin: 0, fontWeight: "bold", textDecoration: "underline" }}>
-                          {signatoryName}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </AdminLayout>
-  );
-};
-
-const AdminMaintenanceScreen = ({
-  assets,
-  maintenanceRecords,
-  onNavigate,
-  user,
-  roles,
-  logActivity,
-}: {
-  assets: Asset[];
-  maintenanceRecords: MaintenanceRecord[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-  logActivity: (m: string, a: string, d: string) => Promise<void>;
-}) => {
-  const [showAdd, setShowAdd] = useState(false);
-  const [formData, setFormData] = useState({
-    assetId: "",
-    type: "ROUTINE" as any,
-    description: "",
-    cost: "",
-    date: new Date().toISOString().split("T")[0],
-    status: "IN_PROGRESS" as any,
-  });
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const asset = assets.find((a) => a.id === formData.assetId);
-    await dbService.createDocument("maintenanceRecords", {
-      ...formData,
-      assetName: asset?.name || "Unknown",
-      cost: Number(formData.cost),
-      performedBy: user.name,
-    });
-    await logActivity(
-      "MAINTENANCE",
-      "CREATE",
-      `Mencatat riwayat servis aset ${asset?.name || "Unknown"}: ${formData.description}`,
-    );
-    setShowAdd(false);
-  };
-
-  return (
-    <AdminLayout
-      activeScreen="admin-maintenance"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      <div className="space-y-8 pb-24">
-        <div className="flex justify-between items-end">
-          <div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight">
-              Pemeliharaan Aset
-            </h1>
-            <p className="text-slate-500 font-medium">
-              Jadwal servis rutin dan perbaikan aset perusahaan.
-            </p>
-          </div>
-          <button
-            onClick={() => setShowAdd(true)}
-            className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2"
-          >
-            <Plus size={16} /> Catat Servis
-          </button>
-        </div>
-
-        <div className="bg-white rounded-3xl lg:rounded-[40px] border border-slate-100 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left min-w-[600px]">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Aset
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Tipe & Deskripsi
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Biaya
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {maintenanceRecords.map((rec) => (
-                <tr
-                  key={rec.id}
-                  className="hover:bg-slate-50/50 transition-colors"
-                >
-                  <td className="p-8">
-                    <p className="font-black text-slate-900">{rec.assetName}</p>
-                    <p className="text-[10px] font-bold text-slate-400">
-                      {rec.date}
-                    </p>
-                  </td>
-                  <td className="p-8">
-                    <span
-                      className={`text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${rec.type === "EMERGENCY" ? "bg-rose-50 text-rose-500" : "bg-blue-50 text-blue-500"}`}
-                    >
-                      {rec.type}
-                    </span>
-                    <p className="text-xs font-medium text-slate-500 mt-2">
-                      {rec.description}
-                    </p>
-                  </td>
-                  <td className="p-8 font-black text-slate-900">
-                    Rp {rec.cost.toLocaleString()}
-                  </td>
-                  <td className="p-8">
-                    <span
-                      className={`px-4 py-2 rounded-full text-[8px] font-black uppercase tracking-widest ${rec.status === "COMPLETED" ? "bg-emerald-50 text-emerald-500" : "bg-amber-50 text-amber-500"}`}
-                    >
-                      {rec.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        </div>
-      </div>
-
-      {showAdd && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-6">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white w-full max-w-3xl rounded-[48px] shadow-2xl p-10"
-          >
-            <div className="flex justify-between items-center mb-8">
-              <h3 className="text-2xl font-black">Catat Riwayat Servis</h3>
-              <button
-                onClick={() => setShowAdd(false)}
-                className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                  Pilih Aset
-                </label>
-                <select
-                  required
-                  value={formData.assetId}
-                  onChange={(e) =>
-                    setFormData({ ...formData, assetId: e.target.value })
-                  }
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-                >
-                  <option value="">Daftar Aset</option>
-                  {assets.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name} ({a.brand})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex gap-4">
-                <button
-                  type="button"
-                  onClick={() => setFormData({ ...formData, type: "ROUTINE" })}
-                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${formData.type === "ROUTINE" ? "bg-slate-900 text-white border-slate-900" : "bg-white text-slate-400 border-slate-100"}`}
-                >
-                  Rutin
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setFormData({ ...formData, type: "EMERGENCY" })
-                  }
-                  className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all ${formData.type === "EMERGENCY" ? "bg-rose-500 text-white border-rose-500" : "bg-white text-slate-400 border-slate-100"}`}
-                >
-                  Urgen
-                </button>
-              </div>
-              <textarea
-                placeholder="Deskripsi Perbaikan"
-                required
-                rows={3}
-                value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none resize-none"
-              />
-              <input
-                placeholder="Biaya (Rp)"
-                type="number"
-                required
-                value={formData.cost}
-                onChange={(e) =>
-                  setFormData({ ...formData, cost: e.target.value })
-                }
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-              />
-              <button
-                type="submit"
-                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl mt-4"
-              >
-                Simpan Laporan Servis
-              </button>
-            </form>
-          </motion.div>
-        </div>
-      )}
-    </AdminLayout>
-  );
-};
-
-const AdminRolesScreen = ({
-  roles,
-  onNavigate,
-  user,
-  onEdit,
-  onAdd,
-  logActivity,
-}: {
-  roles: RoleConfig[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  onEdit: (role: RoleConfig) => void;
-  onAdd: () => void;
-  logActivity: (m: string, a: string, d: string) => Promise<void>;
-}) => {
-  return (
-    <AdminLayout
-      activeScreen="admin-roles"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      <div className="space-y-8 pb-24">
-        <div className="flex justify-between items-end flex-wrap gap-4">
-          <div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight italic uppercase">
-              Hak Akses & Izin
-            </h1>
-            <p className="text-slate-500 font-medium">
-              Definisikan hirarki dan batasan akses sistem.
-            </p>
-          </div>
-          <button
-            onClick={onAdd}
-            className="bg-slate-900 text-white px-6 py-4 rounded-[2rem] font-black text-[10px] uppercase tracking-widest shadow-2xl shadow-slate-900/20 flex items-center gap-2 active:scale-95 transition-all hover:bg-primary"
-          >
-            <Plus size={16} /> Tambah Role
-          </button>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-          {roles.map((role) => (
-            <div
-              key={role.id}
-              className="bg-white p-10 rounded-[48px] border border-slate-100 shadow-sm relative overflow-hidden group hover:shadow-2xl transition-all"
-            >
-              <div
-                className={`w-14 h-14 ${
-                  role.color === "rose"
-                    ? "bg-rose-500"
-                    : role.color === "blue"
-                      ? "bg-blue-500"
-                      : role.color === "emerald"
-                        ? "bg-emerald-500"
-                        : role.color === "amber"
-                          ? "bg-amber-500"
-                          : role.color === "indigo"
-                            ? "bg-indigo-500"
-                            : "bg-slate-500"
-                } rounded-[24px] mb-8 flex items-center justify-center text-white shadow-lg`}
-              >
-                <Shield size={28} />
-              </div>
-              <div className="flex justify-between items-start mb-4">
-                <h3 className="text-xl font-black text-slate-900">
-                  {role.name}
-                </h3>
-                <span className="text-[10px] font-black text-slate-400 bg-slate-50 px-3 py-1 rounded-full uppercase tracking-tighter">
-                  {role.permissions?.length || 0} Izin
-                </span>
-              </div>
-              <p className="text-sm text-slate-400 font-medium leading-relaxed mb-8 h-20 line-clamp-3 italic">
-                "{role.description}"
-              </p>
-              <div className="pt-8 border-t border-slate-50">
-                <button
-                  onClick={() => onEdit(role)}
-                  className="w-full py-4 bg-slate-50 text-[10px] font-black text-slate-900 uppercase tracking-widest rounded-2xl flex items-center justify-center gap-2 hover:bg-slate-900 hover:text-white transition-all shadow-sm"
-                >
-                  Konfigurasi Detail <ArrowRight size={14} />
-                </button>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </AdminLayout>
-  );
-};
-
-const RoleEditorModal = ({
-  role,
-  isOpen,
-  onClose,
-  onSave,
-  allScreens,
-}: {
-  role: RoleConfig | null;
-  isOpen: boolean;
-  onClose: () => void;
-  onSave: (role: RoleConfig) => void;
-  allScreens: ScreenId[];
-}) => {
-  const [formData, setFormData] = useState<Partial<RoleConfig>>({
-    name: "",
-    description: "",
-    permissions: [],
-    color: "slate",
-  });
-
-  useEffect(() => {
-    if (role) {
-      setFormData(role);
-    } else {
-      setFormData({
-        name: "",
-        description: "",
-        permissions: [],
-        color: "slate",
-      });
-    }
-  }, [role, isOpen]);
-
-  if (!isOpen) return null;
-
-  const togglePermission = (screenId: ScreenId) => {
-    const current = formData.permissions || [];
-    if (current.includes(screenId)) {
-      setFormData({
-        ...formData,
-        permissions: current.filter((p) => p !== screenId),
-      });
-    } else {
-      setFormData({ ...formData, permissions: [...current, screenId] });
-    }
-  };
-
-  const groupScreens = (screens: ScreenId[]) => {
-    const admin = [
-      "admin-dashboard",
-      "admin-projects",
-      "admin-approval",
-      "admin-inventory",
-      "admin-quotations",
-      "admin-tracking",
-      "admin-payroll",
-      "admin-tasks",
-      "admin-docs",
-      "admin-ekatalog",
-      "admin-audit",
-      "admin-settings",
-      "admin-expenses",
-      "admin-schedule",
-      "admin-notifications",
-      "admin-announcements",
-      "admin-performance",
-      "admin-clients",
-      "admin-invoices",
-      "admin-po",
-      "admin-maintenance",
-      "admin-roles",
-      "admin-profile",
-      "admin-surat-jalan",
-      "admin-analytics",
-      "admin-finance",
-      "admin-debt",
-      "admin-kasbon",
-      "company-profile",
-      "data-karyawan",
-      "staff-detail",
-      "all-projects",
-    ];
-
-    const employee = [
-      "home",
-      "profile",
-      "absen-masuk",
-      "absen-pulang",
-      "laporan-lapangan",
-      "reimburse",
-      "izin-cuti",
-      "slip-gaji",
-      "project-detail",
-      "task-detail",
-    ];
-
-    return {
-      admin: admin.filter((s) => screens.includes(s as ScreenId)),
-      employee: employee.filter((s) => screens.includes(s as ScreenId)),
-    };
-  };
-
-  const availableScreens: ScreenId[] = [
-    "home",
-    "profile",
-    "absen-masuk",
-    "absen-pulang",
-    "laporan-lapangan",
-    "reimburse",
-    "izin-cuti",
-    "slip-gaji",
-    "admin-dashboard",
-    "admin-projects",
-    "admin-approval",
-    "admin-inventory",
-    "admin-quotations",
-    "admin-tracking",
-    "admin-payroll",
-    "admin-tasks",
-    "admin-docs",
-    "admin-ekatalog",
-    "admin-audit",
-    "admin-settings",
-    "admin-expenses",
-    "admin-schedule",
-    "admin-notifications",
-    "admin-announcements",
-    "admin-performance",
-    "admin-clients",
-    "admin-invoices",
-    "admin-po",
-    "admin-maintenance",
-    "admin-roles",
-    "admin-profile",
-    "admin-surat-jalan",
-    "admin-analytics",
-    "admin-finance",
-    "admin-debt",
-    "admin-kasbon",
-    "company-profile",
-    "data-karyawan",
-    "staff-detail",
-    "project-detail",
-    "all-projects",
-    "task-detail",
-  ];
-
-  const groups = groupScreens(availableScreens);
-
-  return (
-    <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-6">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="bg-white w-full max-w-4xl rounded-[4rem] shadow-2xl p-12 flex flex-col max-h-[90vh] border border-white"
-      >
-        <div className="flex justify-between items-center mb-10">
-          <div>
-            <h3 className="text-3xl font-black italic uppercase tracking-tighter">
-              {role ? "Edit Role" : "Tambah Role Baru"}
-            </h3>
-            <p className="text-sm text-slate-400 font-medium">
-              Atur modul yang dapat diakses oleh role ini.
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="w-14 h-14 bg-slate-50 rounded-3xl flex items-center justify-center text-slate-400 hover:text-slate-900 transition-colors"
-          >
-            <X size={28} />
-          </button>
-        </div>
-
-        <div className="flex-1 overflow-y-auto pr-6 custom-scrollbar space-y-10">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="space-y-3">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] pl-1">
-                Nama Role / Posisi
-              </label>
-              <input
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData({ ...formData, name: e.target.value })
-                }
-                className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-[2rem] text-sm font-black outline-none focus:ring-4 focus:ring-primary/10 transition-all"
-                placeholder="Ex: Supervisor Lapangan"
-              />
-            </div>
-            <div className="space-y-3">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] pl-1">
-                Identitas Warna
-              </label>
-              <div className="flex gap-4 p-2 bg-slate-50 rounded-[2rem] justify-center items-center h-[60px]">
-                {["rose", "blue", "emerald", "amber", "indigo", "slate"].map(
-                  (c) => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setFormData({ ...formData, color: c })}
-                      className={`w-8 h-8 rounded-full bg-${c}-500 transition-all ${formData.color === c ? "ring-4 ring-slate-900 ring-offset-2 scale-110" : "opacity-40 hover:opacity-100"}`}
-                    />
-                  ),
-                )}
-              </div>
-            </div>
-            <div className="md:col-span-2 space-y-3">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] pl-1">
-                Deskripsi & Cakupan Tugas
-              </label>
-              <textarea
-                value={formData.description}
-                onChange={(e) =>
-                  setFormData({ ...formData, description: e.target.value })
-                }
-                rows={3}
-                className="w-full px-8 py-5 bg-slate-50 border border-slate-100 rounded-[2rem] text-sm font-bold outline-none resize-none focus:ring-4 focus:ring-primary/10 transition-all"
-                placeholder="Jelaskan cakupan tanggung jawab role ini secara singkat..."
-              />
-            </div>
-          </div>
-
-          <div className="space-y-8">
-            <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest border-b border-slate-100 pb-4">
-              Konfigurasi Hak Akses (Permissions)
-            </h4>
-
-            <div className="space-y-10">
-              <div>
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-8 h-8 bg-slate-900 text-white rounded-xl flex items-center justify-center">
-                    <Shield size={16} />
-                  </div>
-                  <p className="text-sm font-black text-slate-900 tracking-tight">
-                    Modul Administrator & Dashboard
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {groups.admin.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => togglePermission(s as ScreenId)}
-                      className={`p-5 rounded-[2rem] border-2 text-left transition-all ${formData.permissions?.includes(s as ScreenId) ? "bg-slate-900 text-white border-slate-900 shadow-xl scale-[1.02]" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"}`}
-                    >
-                      <p className="text-[11px] font-black uppercase tracking-tighter leading-tight">
-                        {s.replace("admin-", "").replace("-", " ")}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center gap-3 mb-6">
-                  <div className="w-8 h-8 bg-primary/10 text-primary rounded-xl flex items-center justify-center">
-                    <Layout size={16} />
-                  </div>
-                  <p className="text-sm font-black text-slate-900 tracking-tight">
-                    Modul Front-Mobile / Karyawan
-                  </p>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  {groups.employee.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      onClick={() => togglePermission(s as ScreenId)}
-                      className={`p-5 rounded-[2rem] border-2 text-left transition-all ${formData.permissions?.includes(s as ScreenId) ? "bg-slate-900 text-white border-slate-900 shadow-xl scale-[1.02]" : "bg-white border-slate-100 text-slate-400 hover:border-slate-200"}`}
-                    >
-                      <p className="text-[11px] font-black uppercase tracking-tighter leading-tight">
-                        {s.replace("-", " ")}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="pt-10 border-t border-slate-50 flex gap-6 mt-8">
-          <button
-            onClick={onClose}
-            className="flex-1 py-5 bg-slate-100 rounded-3xl text-[11px] font-black uppercase tracking-[0.2em] text-slate-500 hover:bg-slate-200 transition-all"
-          >
-            Batal
-          </button>
-          <button
-            onClick={() => onSave(formData as RoleConfig)}
-            className="flex-[2] py-5 bg-slate-900 text-white rounded-3xl text-[11px] font-black uppercase tracking-[0.2em] shadow-2xl shadow-slate-900/20 active:scale-95 transition-all hover:bg-primary"
-          >
-            Terapkan Konfigurasi
-          </button>
-        </div>
-      </motion.div>
-    </div>
-  );
-};
-
-const CompanyProfileScreen = ({
-  profile,
-  onNavigate,
-  user,
-  roles,
-}: {
-  profile: CompanyProfile | null;
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-}) => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [formData, setFormData] = useState<CompanyProfile>(
-    profile || {
-      name: "PT. JAFRA KONSTRUKSI",
-      vision:
-        "Menjadi perusahaan konstruksi terdepan di Indonesia dengan mengutamakan kualitas dan inovasi.",
-      mission:
-        "Memberikan layanan konstruksi terbaik, menjaga keselamatan kerja, dan meningkatkan nilai bagi stakeholder.",
-      history:
-        "Didirikan pada tahun 2020, kami telah mengerjakan berbagai proyek strategis di seluruh wilayah.",
-      address: "Jl. Raya Sepatan, Tangerang, Banten",
-      email: "info@jafra-konstruksi.co.id",
-      phone: "021-1234567",
-      website: "www.jafra-konstruksi.co.id",
-    },
-  );
-
-  useEffect(() => {
-    if (profile && !isEditing) {
-      setFormData(profile);
-    }
-  }, [profile, isEditing]);
-
-  const handleSave = async () => {
-    const docId = (profile as any)?.id || "pt-profile";
-    await dbService.setDocument("companyProfile", docId, formData);
-    setIsEditing(false);
-  };
-
-  return (
-    <AdminLayout
-      activeScreen="company-profile"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      <div className="w-full space-y-10 pb-32">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-          <div>
-            <h1 className="text-4xl font-black text-slate-900 tracking-tight italic uppercase">
-              Profil Perusahaan
-            </h1>
-            <p className="text-slate-500 font-medium max-w-xl mt-2">
-              Informasi fundamental identitas dan legalitas operasional PT
-              Global Teknologi.
-            </p>
-          </div>
-          {user.role === "admin" && (
-            <button
-              onClick={() => (isEditing ? handleSave() : setIsEditing(true))}
-              className="bg-slate-900 text-white px-10 py-4 rounded-[2rem] font-black text-[11px] uppercase tracking-[0.2em] shadow-2xl shadow-slate-900/20 flex items-center gap-3 hover:scale-105 transition-all active:scale-95"
-            >
-              {isEditing ? <Check size={18} /> : <Edit size={18} />}
-              {isEditing ? "Simpan Perubahan" : "Update Informasi"}
-            </button>
-          )}
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-          <div className="lg:col-span-8 space-y-10">
-            <div className="bg-white p-10 md:p-14 rounded-[3rem] border border-slate-100 shadow-sm relative overflow-hidden group">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-slate-50 rounded-full -mr-20 -mt-20 group-hover:scale-110 transition-transform duration-700" />
-              <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] mb-10 relative z-10">
-                Filosofi & Sejarah
-              </h3>
-              {isEditing ? (
-                <textarea
-                  rows={8}
-                  value={formData.history}
-                  onChange={(e) =>
-                    setFormData({ ...formData, history: e.target.value })
-                  }
-                  className="w-full px-10 py-8 bg-slate-50 border border-slate-100 rounded-[2rem] text-sm font-bold outline-none resize-none focus:ring-4 focus:ring-primary/5 transition-all relative z-10"
-                />
-              ) : (
-                <p className="text-slate-600 leading-[2] font-medium text-lg relative z-10">
-                  {formData.history}
-                </p>
-              )}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
-              <div className="bg-white p-10 md:p-12 rounded-[3rem] border border-slate-100 shadow-sm relative overflow-hidden group">
-                <div className="absolute -top-10 -right-10 w-40 h-40 bg-primary/5 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-1000" />
-                <h3 className="text-[11px] font-black text-primary uppercase tracking-[0.3em] mb-8">
-                  Visi Utama
-                </h3>
-                {isEditing ? (
-                  <textarea
-                    rows={5}
-                    value={formData.vision}
-                    onChange={(e) =>
-                      setFormData({ ...formData, vision: e.target.value })
-                    }
-                    className="w-full px-8 py-6 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold outline-none resize-none focus:ring-4 focus:ring-primary/5 transition-all"
-                  />
-                ) : (
-                  <p className="text-slate-900 font-black text-xl leading-relaxed italic">
-                    "{formData.vision}"
-                  </p>
-                )}
-              </div>
-              <div className="bg-white p-10 md:p-12 rounded-[3rem] border border-slate-100 shadow-sm relative overflow-hidden group">
-                <div className="absolute -top-10 -right-10 w-40 h-40 bg-emerald-500/5 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-1000" />
-                <h3 className="text-[11px] font-black text-emerald-500 uppercase tracking-[0.3em] mb-8">
-                  Misi Strategis
-                </h3>
-                {isEditing ? (
-                  <textarea
-                    rows={5}
-                    value={formData.mission}
-                    onChange={(e) =>
-                      setFormData({ ...formData, mission: e.target.value })
-                    }
-                    className="w-full px-8 py-6 bg-slate-50 border border-slate-100 rounded-3xl text-sm font-bold outline-none resize-none focus:ring-4 focus:ring-emerald-500/5 transition-all"
-                  />
-                ) : (
-                  <p className="text-slate-900 font-bold text-lg leading-[1.8]">
-                    {formData.mission}
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <div className="lg:col-span-4 space-y-10">
-            <div className="bg-slate-900 p-10 md:p-12 rounded-[3rem] text-white shadow-2xl relative overflow-hidden group">
-              <div className="absolute top-0 right-0 w-64 h-64 bg-white/5 rounded-full -mr-32 -mt-32 blur-3xl group-hover:scale-125 transition-transform duration-1000" />
-              <h3 className="text-[11px] font-black text-slate-500 uppercase tracking-[0.3em] mb-12">
-                Contact Hub
-              </h3>
-              <div className="space-y-10 relative z-10">
-                {[
-                  {
-                    icon: MapPin,
-                    label: "Head Office",
-                    value: formData.address,
-                    field: "address",
-                  },
-                  {
-                    icon: Mail,
-                    label: "Official Email",
-                    value: formData.email,
-                    field: "email",
-                  },
-                  {
-                    icon: Phone,
-                    label: "Line Telephone",
-                    value: formData.phone,
-                    field: "phone",
-                  },
-                  {
-                    icon: Globe,
-                    label: "Global Website",
-                    value: formData.website,
-                    field: "website",
-                  },
-                ].map((item, i) => (
-                  <div key={i} className="flex gap-6 items-start group/item">
-                    <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center text-slate-400 group-hover/item:bg-primary group-hover/item:text-white transition-all">
-                      <item.icon size={20} />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] leading-none mb-3">
-                        {item.label}
-                      </p>
-                      {isEditing ? (
-                        <input
-                          value={item.value ?? ""}
-                          onChange={(e) =>
-                            setFormData({
-                              ...formData,
-                              [item.field]: e.target.value,
-                            })
-                          }
-                          className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-xs outline-none focus:border-primary transition-all font-bold"
-                        />
-                      ) : (
-                        <p className="text-base font-bold tracking-tight text-white/90">
-                          {item.value}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="mt-14 pt-10 border-t border-white/10 flex items-center gap-4 relative z-10">
-                <div className="w-12 h-12 bg-primary/20 rounded-full flex items-center justify-center text-primary">
-                  <ShieldCheck size={24} />
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
-                    Status Verifikasi
-                  </p>
-                  <p className="text-xs font-black text-white">
-                    Terverifikasi Resmi
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-sm">
-              <h3 className="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] mb-6 text-center">
-                QR Business Profile
-              </h3>
-              <div className="aspect-square bg-slate-50 rounded-[2rem] flex items-center justify-center border-2 border-dashed border-slate-100">
-                <QrCode size={120} className="text-slate-200" />
-              </div>
-              <p className="text-center text-[10px] font-bold text-slate-400 uppercase mt-6 tracking-widest">
-                Scan to share profile
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </AdminLayout>
-  );
-};
-
-const AdminAssignmentsScreen = ({
-  projects,
-  employees,
-  assignments,
-  onNavigate,
-  user,
-  roles,
-}: {
-  projects: Project[];
-  employees: Employee[];
-  assignments: Assignment[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-}) => {
-  const [showAdd, setShowAdd] = useState(false);
-  const [formData, setFormData] = useState({
-    projectId: "",
-    employeeIds: [] as string[],
-    taskDescription: "",
-    deadline: "",
-    status: "PENDING" as any,
-  });
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    await dbService.createDocument("assignments", formData);
-    setShowAdd(false);
-  };
-
-  return (
-    <AdminLayout
-      activeScreen="admin-tasks"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      <div className="space-y-8 pb-24">
-        <div className="flex justify-between items-end">
-          <div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight">
-              Penugasan Tim
-            </h1>
-            <p className="text-slate-500 font-medium">
-              Delegasikan tugas dan pantau progres kerja karyawan.
-            </p>
-          </div>
-          <button
-            onClick={() => setShowAdd(true)}
-            className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2"
-          >
-            <Plus size={16} /> Tugas Baru
-          </button>
-        </div>
-
-        <div className="bg-white rounded-3xl lg:rounded-[40px] border border-slate-100 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left min-w-[600px]">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Proyek & Tugas
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Karyawan
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Deadline
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {assignments.map((asg) => {
-                const project = projects.find((p) => p.id === asg.projectId);
-                return (
-                  <tr
-                    key={asg.id}
-                    className="hover:bg-slate-50/50 transition-colors"
-                  >
-                    <td className="p-8">
-                      <p className="font-black text-slate-900">
-                        {project?.name || "Unknown Project"}
-                      </p>
-                      <p className="text-xs font-medium text-slate-500 mt-1">
-                        {asg.taskDescription}
-                      </p>
-                    </td>
-                    <td className="p-8">
-                      <div className="flex -space-x-2">
-                        {asg.employeeIds.map((id) => {
-                          const emp = employees.find((e) => e.id === id);
-                          return (
-                            <img
-                              key={id}
-                              src={emp?.avatar}
-                              className="w-8 h-8 rounded-full border-2 border-white shadow-sm"
-                              alt=""
-                            />
-                          );
-                        })}
-                      </div>
-                    </td>
-                    <td className="p-8 text-xs font-bold text-slate-500">
-                      {asg.deadline}
-                    </td>
-                    <td className="p-8">
-                      <span
-                        className={`px-4 py-2 rounded-full text-[8px] font-black uppercase tracking-widest ${asg.status === "DONE" ? "bg-emerald-50 text-emerald-500" : "bg-amber-50 text-amber-500"}`}
-                      >
-                        {asg.status}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          </div>
-        </div>
-      </div>
-
-      {showAdd && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200] flex items-center justify-center p-6">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white w-full max-w-3xl rounded-[48px] shadow-2xl p-10"
-          >
-            <h3 className="text-2xl font-black mb-8">Beri Tugas Baru</h3>
-            <form onSubmit={handleCreate} className="space-y-4">
-              <select
-                required
-                value={formData.projectId}
-                onChange={(e) =>
-                  setFormData({ ...formData, projectId: e.target.value })
-                }
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-              >
-                <option value="">Pilih Proyek</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-              <textarea
-                placeholder="Deskripsi Tugas"
-                required
-                rows={3}
-                value={formData.taskDescription}
-                onChange={(e) =>
-                  setFormData({ ...formData, taskDescription: e.target.value })
-                }
-                className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none resize-none"
-              />
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                  Deadline
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={formData.deadline}
-                  onChange={(e) =>
-                    setFormData({ ...formData, deadline: e.target.value })
-                  }
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-                />
-              </div>
-              <button
-                type="submit"
-                className="w-full py-4 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl mt-4"
-              >
-                Simpan Tugas
-              </button>
-            </form>
-          </motion.div>
-        </div>
-      )}
-    </AdminLayout>
-  );
-};
-
-const AdminPerformanceScreen = ({
-  employees,
-  reports,
-  assignments,
-  attendanceHistory,
-  onNavigate,
-  user,
-  roles,
-}: {
-  employees: Employee[];
-  reports: FieldReport[];
-  assignments: Assignment[];
-  attendanceHistory: any[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-}) => {
-  const stats = useMemo(() => {
-    const totalReports = reports.length;
-    const completedAssignments = assignments.filter(
-      (a) => a.status === "DONE",
-    ).length;
-    const avgAttendance =
-      attendanceHistory.length > 0
-        ? Math.round(
-            (attendanceHistory.length / (employees.length * 30 || 1)) * 100,
-          )
-        : 0;
-
-    return {
-      score: "8.5/10", // Still slightly arbitrary but could be calculated from reports/attendance
-      attendance: `${Math.min(avgAttendance + 80, 100)}%`,
-      tasks: completedAssignments + totalReports,
-      bonus: "Rp 12.5M", // Could be real if we had payroll state
-    };
-  }, [employees, reports, assignments, attendanceHistory]);
-
-  return (
-    <AdminLayout
-      activeScreen="admin-performance"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      <div className="space-y-8 pb-24">
-        <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">
-            Kinerja Tim
-          </h1>
-          <p className="text-slate-500 font-medium">
-            Analisis produktivitas dan KPI karyawan.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-              Skor Rata-rata
-            </p>
-            <h3 className="text-3xl font-black text-slate-900">
-              {stats.score}
-            </h3>
-          </div>
-          <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-              Tingkat Kehadiran
-            </p>
-            <h3 className="text-3xl font-black text-emerald-500">
-              {stats.attendance}
-            </h3>
-          </div>
-          <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-              Tugas Selesai
-            </p>
-            <h3 className="text-3xl font-black text-blue-500">{stats.tasks}</h3>
-          </div>
-          <div className="bg-white p-8 rounded-[40px] border border-slate-100 shadow-sm">
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-              Poin Aktivitas
-            </p>
-            <h3 className="text-3xl font-black text-amber-500">
-              {stats.tasks * 10}
-            </h3>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-3xl lg:rounded-[40px] border border-slate-100 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left min-w-[600px]">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Karyawan
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Kinerja
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  KPI Utama
-                </th>
-                <th className="p-8 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {employees.map((emp) => {
-                const empReports = reports.filter(
-                  (r) => r.userName === emp.name,
-                ).length;
-                const empAttendance = attendanceHistory.filter(
-                  (h) => h.employeeId === emp.id,
-                ).length;
-                const completionRate = Math.min(
-                  Math.round((empReports / 10) * 100),
-                  100,
-                );
-
-                return (
-                  <tr
-                    key={emp.id}
-                    className="hover:bg-slate-50/50 transition-colors"
-                  >
-                    <td className="p-8 flex items-center gap-4">
-                      <img
-                        src={emp.avatar}
-                        alt=""
-                        className="w-10 h-10 rounded-xl"
-                      />
-                      <div>
-                        <p className="font-black text-slate-900">{emp.name}</p>
-                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                          {emp.role}
-                        </p>
-                      </div>
-                    </td>
-                    <td className="p-8">
-                      <div className="w-full max-w-[100px] bg-slate-100 h-2 rounded-full overflow-hidden">
-                        <div
-                          className="bg-emerald-500 h-full"
-                          style={{ width: `${completionRate}%` }}
-                        />
-                      </div>
-                    </td>
-                    <td className="p-8 text-xs font-bold text-slate-700">
-                      Laporan: {empReports} | Hadir: {empAttendance}
-                    </td>
-                    <td className="p-8">
-                      <span
-                        className={`px-4 py-2 rounded-full text-[8px] font-black uppercase tracking-widest ${completionRate > 80 ? "bg-emerald-50 text-emerald-600" : "bg-amber-50 text-amber-600"}`}
-                      >
-                        {completionRate > 80 ? "Excellent" : "Good"}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          </div>
-        </div>
-      </div>
-    </AdminLayout>
-  );
-};
-
-const AdminFieldReportsTab = ({
-  reports,
-  projects,
-  employees,
-  user,
-}: {
-  reports: FieldReport[];
-  projects: Project[];
-  employees: Employee[];
-  user: any;
-}) => {
-  const [searchTerm, setSearchTerm] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"ALL" | "PROJECT" | "EXPENSE">(
-    "ALL",
-  );
-  const [statusFilter, setStatusFilter] = useState<
-    "ALL" | "PENDING" | "APPROVED" | "PROSES"
-  >("ALL");
-  const [selectedImg, setSelectedImg] = useState<string | null>(null);
-
-  const handleUpdateStatus = async (
-    reportId: string,
-    status: "APPROVED" | "PENDING" | "PROSES",
-  ) => {
-    try {
-      await dbService.updateDocument("reports", reportId, { status });
-    } catch (err) {
-      console.error("Gagal mengupdate status laporan", err);
-    }
-  };
-
-  const handleDeleteReport = async (reportId: string) => {
-    if (user?.role !== "admin") {
-      alert("Hanya admin yang dapat menghapus laporan lapangan.");
-      return;
-    }
-    if (window.confirm("Apakah Anda yakin ingin menghapus laporan ini?")) {
-      try {
-        await dbService.deleteDocument("reports", reportId);
-      } catch (err) {
-        console.error("Gagal menghapus laporan", err);
-      }
-    }
-  };
-
-  const filteredReports = useMemo(() => {
-    return reports.filter((r) => {
-      const matchesSearch =
-        (r.userName || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (r.location || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (r.title || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (r.description || "").toLowerCase().includes(searchTerm.toLowerCase());
-
-      const matchesType = typeFilter === "ALL" ? true : r.type === typeFilter;
-      const matchesStatus =
-        statusFilter === "ALL" ? true : r.status === statusFilter;
-
-      return matchesSearch && matchesType && matchesStatus;
-    });
-  }, [reports, searchTerm, typeFilter, statusFilter]);
-
-  return (
-    <div className="space-y-6">
-      {/* Filter controls */}
-      <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
-        <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
-          <div className="relative w-full lg:flex-1">
-            <Search
-              size={18}
-              className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-400"
-            />
-            <input
-              type="text"
-              placeholder="Cari berdasarkan lokasi, pekerja, judul, deskripsi..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-14 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none focus:ring-4 ring-primary/5 transition-all"
-            />
-          </div>
-
-          <div className="flex gap-3 w-full lg:w-auto">
-            <select
-              value={typeFilter}
-              onChange={(e) => setTypeFilter(e.target.value as any)}
-              className="px-4 py-3.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none cursor-pointer w-full lg:w-44"
-            >
-              <option value="ALL">Semua Jenis Laporan</option>
-              <option value="PROJECT">üè¢ Laporan Projek</option>
-              <option value="EXPENSE">üìã Laporan Umum & Kebutuhan</option>
-            </select>
-
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as any)}
-              className="px-4 py-3.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none cursor-pointer w-full lg:w-44"
-            >
-              <option value="ALL">Semua Status</option>
-              <option value="PENDING">‚è≥ Menunggu Verifikasi</option>
-              <option value="PROSES">üîÑ Sedang Diproses</option>
-              <option value="APPROVED">‚úÖ Terverifikasi</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Reports display card list */}
-      {filteredReports.length === 0 ? (
-        <div className="py-24 text-center bg-white rounded-[40px] border border-slate-100 shadow-sm">
-          <div className="flex flex-col items-center justify-center gap-4 text-slate-400">
-            <FileText size={48} className="stroke-[1.5]" />
-            <div>
-              <p className="text-sm font-black uppercase tracking-widest text-slate-700">
-                Tidak Ada Laporan yang Cocok
-              </p>
-              <p className="text-xs text-slate-400 mt-1">
-                Belum ada laporan lapangan yang sesuai dengan kriteria
-                pencarian.
-              </p>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredReports.map((report) => (
-            <motion.div
-              key={report.id}
-              layout
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden flex flex-col justify-between group hover:shadow-md transition-all animate-in fade-in"
-            >
-              <div>
-                {/* Image Banner */}
-                <div
-                  className="relative h-48 bg-slate-100 overflow-hidden cursor-zoom-in"
-                  onClick={() => report.img && setSelectedImg(report.img)}
-                >
-                  {report.img ? (
-                    <img
-                      src={report.img}
-                      alt={report.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center text-slate-400">
-                      <AlertCircle size={32} />
-                      <span className="text-[10px] uppercase font-bold tracking-widest mt-2">
-                        Tidak Ada Foto
-                      </span>
-                    </div>
-                  )}
-                  {/* Badge Category type */}
-                  <span
-                    className={`absolute top-4 left-4 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest shadow-md ${
-                      report.type === "PROJECT"
-                        ? "bg-blue-600 text-white"
-                        : "bg-slate-900 text-white"
-                    }`}
-                  >
-                    {report.type === "PROJECT"
-                      ? "üè¢ Projek Progres"
-                      : "üìã Laporan Umum"}
-                  </span>
-
-                  {/* Priority indicator */}
-                  {report.priority && (
-                    <span
-                      className={`absolute top-4 right-4 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest shadow-md ${
-                        report.priority === "High"
-                          ? "bg-rose-500 text-white"
-                          : report.priority === "Medium"
-                            ? "bg-amber-500 text-white"
-                            : "bg-slate-500 text-white"
-                      }`}
-                    >
-                      Prio: {report.priority}
-                    </span>
-                  )}
-                </div>
-
-                {/* Body Details */}
-                <div className="p-6 space-y-4">
-                  {/* Employee & Timestamp info */}
-                  <div className="flex items-center justify-between text-slate-400">
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[9px] font-bold text-slate-500 border border-slate-200">
-                        {report.userName
-                          ? report.userName.charAt(0).toUpperCase()
-                          : "U"}
-                      </div>
-                      <span className="text-xs font-bold text-slate-700">
-                        {report.userName}
-                      </span>
-                    </div>
-                    <span className="text-[10px] font-medium text-slate-400">
-                      {report.time || "Waktu tidak tercatat"}
-                    </span>
-                  </div>
-
-                  <hr className="border-slate-50" />
-
-                  {/* Title & Job specifics */}
-                  <div>
-                    <h4 className="font-extrabold text-base text-slate-900 tracking-tight leading-snug">
-                      {report.title}
-                    </h4>
-                    <p className="text-xs text-slate-500 font-medium mt-1.5 leading-relaxed">
-                      {report.description || "Tidak ada deskripsi rinci."}
-                    </p>
-                  </div>
-
-                  {/* Project Location */}
-                  <div className="flex items-start gap-2 text-slate-500 bg-slate-50/70 p-3 rounded-2xl border border-slate-100/50">
-                    <MapPin
-                      size={15}
-                      className="mt-0.5 text-primary shrink-0"
-                    />
-                    <div className="space-y-1 w-full">
-                      <p className="text-xs font-black text-slate-800 leading-tight break-words">
-                        {report.location || "Lokasi manual"}
-                      </p>
-
-                      {report.lat && report.lng && (
-                        <a
-                          href={`https://www.google.com/maps/search/?api=1&query=${report.lat},${report.lng}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-[10px] font-bold text-primary hover:underline hover:text-blue-700 transition"
-                        >
-                          <Globe size={11} /> Lihat Koordinat GPS (
-                          {report.lat.toFixed(5)}, {report.lng.toFixed(5)}){" "}
-                          <ArrowRight size={10} />
-                        </a>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Status and Action bar */}
-              <div className="p-6 pt-0 border-t border-slate-50 mt-auto bg-slate-50/10">
-                <div className="flex items-center justify-between gap-3 pt-4">
-                  {/* Status indicator */}
-                  <div>
-                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest block mb-1">
-                      Status
-                    </span>
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest ${
-                        report.status === "APPROVED"
-                          ? "bg-emerald-50 text-emerald-600 border border-emerald-200"
-                          : report.status === "PROSES"
-                            ? "bg-amber-50 text-amber-600 border border-amber-200"
-                            : "bg-rose-50 text-rose-600 border border-rose-200"
-                      }`}
-                    >
-                      {report.status === "APPROVED"
-                        ? "‚úÖ Terverifikasi"
-                        : report.status === "PROSES"
-                          ? "üîÑ Diproses"
-                          : "‚è≥ Menunggu"}
-                    </span>
-                  </div>
-
-                  {/* Controls */}
-                  <div className="flex gap-2">
-                    {report.status !== "APPROVED" && (
-                      <button
-                        onClick={() =>
-                          report.id && handleUpdateStatus(report.id, "APPROVED")
-                        }
-                        className="py-2 px-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition shadow-sm font-sans"
-                        title="Tandai Terverifikasi"
-                      >
-                        <Check size={12} /> Verifikasi
-                      </button>
-                    )}
-                    {report.status === "PENDING" && (
-                      <button
-                        onClick={() =>
-                          report.id && handleUpdateStatus(report.id, "PROSES")
-                        }
-                        className="py-2 px-3 bg-slate-850 hover:bg-slate-900 border border-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center gap-1.5 transition shadow-sm font-sans"
-                        title="Tandai Sedang Diproses"
-                      >
-                        Proses
-                      </button>
-                    )}
-                    {user?.role === "admin" && (
-                      <button
-                        onClick={() => report.id && handleDeleteReport(report.id)}
-                        className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl transition border border-rose-100"
-                        title="Hapus Laporan"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      )}
-
-      {/* Image Modal Lightbox */}
-      <AnimatePresence>
-        {selectedImg && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setSelectedImg(null)}
-            className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-50 flex items-center justify-center p-4 cursor-zoom-out"
-          >
-            <motion.div
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              exit={{ scale: 0.95 }}
-              className="relative max-w-4xl max-h-[85vh] rounded-[32px] overflow-hidden bg-white/10 p-2 shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <img
-                src={selectedImg}
-                alt="Foto Lapangan Expanded"
-                className="max-w-full max-h-[80vh] object-contain rounded-2xl"
-                referrerPolicy="no-referrer"
-              />
-              <button
-                onClick={() => setSelectedImg(null)}
-                className="absolute top-6 right-6 w-10 h-10 bg-slate-900/65 hover:bg-slate-900 text-white rounded-full flex items-center justify-center transition-all shadow-md active:scale-90"
-              >
-                ‚úï
-              </button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-};
-
-const compressDocumentImage = (
-  url: string,
-  maxWidth: number = 400,
-  maxHeight: number = 300,
-): Promise<string> => {
-  return new Promise((resolve) => {
-    if (!url || typeof url !== "string") {
-      resolve(url);
-      return;
-    }
-    if (
-      !url.startsWith("data:") &&
-      !url.startsWith("http") &&
-      !url.startsWith("/")
-    ) {
-      resolve(url);
-      return;
-    }
-
-    const img = new Image();
-    if (!url.startsWith("data:")) {
-      img.crossOrigin = "anonymous";
-    }
-
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      resolve(url);
-    }, 4500);
-
-    img.onload = () => {
-      clearTimeout(timer);
-      if (timedOut) return;
-      try {
-        const canvas = document.createElement("canvas");
-        let width = img.width;
-        let height = img.height;
-
-        if (width > maxWidth) {
-          height = Math.round((height * maxWidth) / width);
-          width = maxWidth;
-        }
-        if (height > maxHeight) {
-          width = Math.round((width * maxHeight) / height);
-          height = maxHeight;
-        }
-
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const dataUrl = canvas.toDataURL("image/jpeg", 0.5);
-          resolve(dataUrl);
-        } else {
-          resolve(url);
-        }
-      } catch (e) {
-        console.warn(
-          "Could not compress image via canvas/CORS, fallback used",
-          e,
-        );
-        resolve(url);
-      }
-    };
-    img.onerror = () => {
-      clearTimeout(timer);
-      resolve(url);
-    };
-    img.src = url;
-  });
-};
-
-const AdminReportArchivesTab = ({
-  reports,
-  dailyReports,
-  projects,
-  employees,
-  user,
-  documents,
-  companyProfile,
-}: {
-  reports: FieldReport[];
-  dailyReports: DailyReport[];
-  projects: Project[];
-  employees: Employee[];
-  user: any;
-  documents: Document[];
-  companyProfile?: any;
-}) => {
-  const [selectedEmployeeName, setSelectedEmployeeName] =
-    useState<string>("ALL");
-  const [selectedProjectName, setSelectedProjectName] = useState<string>("ALL");
-  const [startDate, setStartDate] = useState<string>("");
-  const [endDate, setEndDate] = useState<string>("");
-  const [isCompiling, setIsCompiling] = useState<boolean>(false);
-
-  const [ptName, setPtName] = useState<string>(() => {
-    return (
-      localStorage.getItem("custom_pt_name") ||
-      companyProfile?.name ||
-      "PT. GARDA INOVASI GLOBALTECH"
-    );
-  });
-  const [logoImage, setLogoImage] = useState<string>(() => {
-    return localStorage.getItem("custom_logo_image") || "";
-  });
-
-  useEffect(() => {
-    localStorage.setItem("custom_pt_name", ptName);
-  }, [ptName]);
-
-  useEffect(() => {
-    localStorage.setItem("custom_logo_image", logoImage);
-  }, [logoImage]);
-
-  const employeeNames = useMemo(() => {
-    const list = new Set<string>();
-    employees.forEach((e) => {
-      if (e.name) list.add(e.name);
-    });
-    dailyReports.forEach((r) => {
-      if (r.submittedByName) list.add(r.submittedByName);
-    });
-    reports.forEach((r) => {
-      if (r.userName) list.add(r.userName);
-    });
-    return Array.from(list).sort();
-  }, [employees, dailyReports, reports]);
-
-  const projectNames = useMemo(() => {
-    const list = new Set<string>();
-    projects.forEach((p) => {
-      if (p.name) list.add(p.name);
-    });
-    dailyReports.forEach((r) => {
-      if (r.projectName) list.add(r.projectName);
-    });
-    return Array.from(list).sort();
-  }, [projects, dailyReports]);
-
-  const filteredDailyReports = useMemo(() => {
-    return dailyReports.filter((dr) => {
-      let matchesEmployee = true;
-      if (selectedEmployeeName !== "ALL") {
-        matchesEmployee = dr.submittedByName === selectedEmployeeName;
-      }
-      let matchesProject = true;
-      if (selectedProjectName !== "ALL") {
-        matchesProject = dr.projectName === selectedProjectName;
-      }
-      let matchesDate = true;
-      if (startDate) {
-        const rDate = new Date(dr.timestamp).toISOString().split("T")[0];
-        matchesDate = matchesDate && rDate >= startDate;
-      }
-      if (endDate) {
-        const rDate = new Date(dr.timestamp).toISOString().split("T")[0];
-        matchesDate = matchesDate && rDate <= endDate;
-      }
-      return matchesEmployee && matchesProject && matchesDate;
-    });
-  }, [
-    dailyReports,
-    selectedEmployeeName,
-    selectedProjectName,
-    startDate,
-    endDate,
-  ]);
-
-  const filteredFieldReports = useMemo(() => {
-    return reports.filter((fr) => {
-      let matchesEmployee = true;
-      if (selectedEmployeeName !== "ALL") {
-        matchesEmployee = fr.userName === selectedEmployeeName;
-      }
-      let matchesProject = true;
-      if (selectedProjectName !== "ALL") {
-        matchesProject =
-          (fr.location || "")
-            .toLowerCase()
-            .includes(selectedProjectName.toLowerCase()) ||
-          (fr.title || "")
-            .toLowerCase()
-            .includes(selectedProjectName.toLowerCase());
-      }
-      let matchesDate = true;
-      if (fr.time) {
-        try {
-          const rDate = new Date(fr.time).toISOString().split("T")[0];
-          if (startDate) matchesDate = matchesDate && rDate >= startDate;
-          if (endDate) matchesDate = matchesDate && rDate <= endDate;
-        } catch (_) {}
-      }
-      return matchesEmployee && matchesProject && matchesDate;
-    });
-  }, [reports, selectedEmployeeName, selectedProjectName, startDate, endDate]);
-
-  const reportArchives = useMemo(() => {
-    return documents.filter((doc) => doc.type === "LAPORAN");
-  }, [documents]);
-
-  const handleDeleteArchive = async (id: string | undefined) => {
-    if (!id) return;
-    if (
-      window.confirm("Apakah Anda yakin ingin menghapus arsip kompilasi ini?")
-    ) {
-      try {
-        await dbService.deleteDocument("documents", id);
-      } catch (err) {
-        console.error("Gagal menghapus arsip laporan", err);
-        alert("Gagal menghapus dokumen dari arsip.");
-      }
-    }
-  };
-
-  const handleGenerateCompilationPDF = async () => {
-    if (
-      filteredDailyReports.length === 0 &&
-      filteredFieldReports.length === 0
-    ) {
-      alert(
-        "Tidak ada laporan yang cocok dengan filter untuk dimasukkan ke dalam arsip.",
-      );
-      return;
-    }
-
-    setIsCompiling(true);
-    try {
-      const doc = new jsPDF("p", "mm", "a4", true);
-      let pageCount = 1;
-
-      const drawFrameAndHeader = (pNum: number) => {
-        doc.setDrawColor(15, 23, 42);
-        doc.setLineWidth(0.5);
-        doc.rect(10, 10, 190, 277);
-
-        doc.setFontSize(7);
-        doc.setTextColor(148, 163, 184);
-        doc.setFont("helvetica", "normal");
-        doc.text(
-          `KOMPILASI ARSIP LAPORAN HARIAN | ${ptName.toUpperCase()}`,
-          15,
-          15,
-        );
-        doc.text(`Halaman ${pNum}`, 195, 15, { align: "right" });
-        doc.setDrawColor(226, 232, 240);
-        doc.setLineWidth(0.2);
-        doc.line(10, 17, 200, 17);
-      };
-
-      doc.setDrawColor(15, 23, 42);
-      doc.setLineWidth(0.5);
-      doc.rect(10, 10, 190, 277);
-
-      // Draw custom logo square if available, otherwise draw a fallback box
-      if (logoImage) {
-        try {
-          doc.addImage(logoImage, "PNG", 12, 12, 25, 20);
-        } catch (e) {
-          console.error("Error drawing logoImage to PDF:", e);
-          doc.setFillColor(16, 185, 129);
-          doc.rect(12, 12, 25, 20, "F");
-          doc.setTextColor(255, 255, 255);
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(10);
-          doc.text("LOGO", 24.5, 24, { align: "center" });
-        }
-      } else {
-        doc.setFillColor(16, 185, 129);
-        doc.rect(12, 12, 25, 20, "F");
-        doc.setTextColor(255, 255, 255);
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(10);
-        doc.text("GIGT", 24.5, 24, { align: "center" });
-      }
-
-      doc.setTextColor(15, 23, 42);
-      doc.setFontSize(13);
-      doc.text("LAPORAN HARIAN KOMPILASI", 110, 19, { align: "center" });
-      doc.setFontSize(8.5);
-      doc.setFont("helvetica", "normal");
-      doc.text("PEKERJAAN, TENAGA, BAHAN, ALAT & FOTO PROGRESS", 110, 25, {
-        align: "center",
-      });
-      doc.line(10, 35, 200, 35);
-
-      const metaRows = [
-        [
-          "Proyek",
-          `: ${selectedProjectName === "ALL" ? "Semua Proyek" : selectedProjectName}`,
-          "Karyawan",
-          `: ${selectedEmployeeName === "ALL" ? "Semua Personil" : selectedEmployeeName}`,
-        ],
-        [
-          "Kontraktor",
-          `: ${ptName}`,
-          "Periode",
-          `: ${startDate || "Awal"} s/d ${endDate || "Akhir"}`,
-        ],
-        [
-          "Tanggal Cetak",
-          `: ${new Date().toLocaleDateString("id-ID")}`,
-          "Statistik",
-          `: ${filteredDailyReports.length} Laporan Harian + ${filteredFieldReports.length} Progres Foto`,
-        ],
-      ];
-
-      autoTable(doc, {
-        startY: 37,
-        margin: { left: 12, right: 12 },
-        body: metaRows,
-        theme: "plain",
-        styles: { fontSize: 8, cellPadding: 1.2, font: "helvetica" },
-        columnStyles: {
-          0: { fontStyle: "bold", cellWidth: 28 },
-          1: { cellWidth: 70 },
-          2: { fontStyle: "bold", cellWidth: 25 },
-          3: { cellWidth: 65 },
-        },
-      });
-
-      let currentY = (doc as any).lastAutoTable.finalY + 6;
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.text("I. KONSOLIDASI TENAGA KERJA (MANPOWER)", 14, currentY);
-
-      const staffSummary: { [key: string]: number } = {};
-      let hasStaffData = false;
-      filteredDailyReports.forEach((dr) => {
-        (dr.staff || []).forEach((s) => {
-          if (s.jabatan) {
-            hasStaffData = true;
-            const key = s.jabatan.toUpperCase().trim();
-            staffSummary[key] =
-              (staffSummary[key] || 0) + (Number(s.jumlah) || 0);
-          }
-        });
-      });
-
-      const staffRows = hasStaffData
-        ? Object.keys(staffSummary).map((jab, idx) => [
-            idx + 1,
-            jab,
-            staffSummary[jab],
-            "Orang-Hari (Man-Days)",
-          ])
-        : [
-            [
-              1,
-              "PIC Proyek / Supervise",
-              filteredFieldReports.length || 1,
-              "Event-Hari",
-            ],
-          ];
-
-      autoTable(doc, {
-        startY: currentY + 2.5,
-        margin: { left: 12, right: 12 },
-        head: [
-          [
-            "No",
-            "Uraian Jabatan / Keahlian",
-            "Kuantitas Kumulatif",
-            "Satuan Ukur",
-          ],
-        ],
-        body: staffRows,
-        theme: "grid",
-        headStyles: { fillColor: [15, 23, 42], fontSize: 8 },
-        styles: { fontSize: 7.5, cellPadding: 1.5 },
-      });
-
-      currentY = (doc as any).lastAutoTable.finalY + 6;
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.text("II. BAHAN, MATERIAL & ALAT DI LAPANGAN", 14, currentY);
-
-      const toolsSet = new Set<string>();
-      const materialsSummary: { [key: string]: number } = {};
-      const materialsUnits: { [key: string]: string } = {};
-
-      filteredDailyReports.forEach((dr) => {
-        (dr.tools || []).forEach((t) => {
-          if (t) toolsSet.add(t);
-        });
-        (dr.materials || []).forEach((m) => {
-          if (m.jenis) {
-            const key = m.jenis.toUpperCase().trim();
-            const volNum = parseFloat(m.volume) || 0;
-            const unit = m.volume.replace(/[0-9.,]/g, "").trim() || "Unit";
-            materialsSummary[key] = (materialsSummary[key] || 0) + volNum;
-            materialsUnits[key] = unit;
-          }
-        });
-      });
-
-      const materialsRows: any[] = [];
-      const mKeys = Object.keys(materialsSummary);
-      const mTools = Array.from(toolsSet);
-      const maxRows = Math.max(mKeys.length, mTools.length, 1);
-
-      for (let i = 0; i < maxRows; i++) {
-        materialsRows.push([
-          i + 1,
-          mTools[i] || "-",
-          mKeys[i] || "-",
-          mKeys[i]
-            ? `${materialsSummary[mKeys[i]]} ${materialsUnits[mKeys[i]] || "Pcs"}`
-            : "-",
-        ]);
-      }
-
-      autoTable(doc, {
-        startY: currentY + 2.5,
-        margin: { left: 12, right: 12 },
-        head: [
-          [
-            "No",
-            "Alat Kerja yang Digunakan",
-            "Material / Barang Masuk",
-            "Volume Kumulatif",
-          ],
-        ],
-        body: materialsRows,
-        theme: "grid",
-        headStyles: { fillColor: [15, 23, 42], fontSize: 8 },
-        styles: { fontSize: 7.5, cellPadding: 1.5 },
-      });
-
-      currentY = (doc as any).lastAutoTable.finalY + 6;
-
-      if (currentY > 210) {
-        pageCount++;
-        doc.addPage();
-        drawFrameAndHeader(pageCount);
-        currentY = 22;
-      }
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.text("III. JURNAL PEKERJAAN & URAIAN AKTIVITAS", 14, currentY);
-
-      const activityRows: any[] = [];
-      filteredDailyReports.forEach((dr) => {
-        const dateStr = new Date(dr.timestamp).toLocaleDateString("id-ID", {
-          day: "2-digit",
-          month: "short",
-          year: "numeric",
-        });
-        (dr.activities || []).forEach((act, idx) => {
-          if (act) {
-            activityRows.push([dateStr, dr.projectName, act]);
-          }
-        });
-      });
-
-      filteredFieldReports.forEach((fr) => {
-        const dateStr = fr.time
-          ? new Date(fr.time).toLocaleDateString("id-ID", {
-              day: "2-digit",
-              month: "short",
-              year: "numeric",
-            })
-          : "N/A";
-        if (fr.title || fr.description) {
-          activityRows.push([
-            dateStr,
-            fr.location || "Site Lapangan",
-            `[FOTO PROGRES] ${fr.title || "Uraian Lapangan"} - ${fr.description || ""}`,
-          ]);
-        }
-      });
-
-      if (activityRows.length === 0) {
-        activityRows.push([
-          "-",
-          "Semua Proyek",
-          "Tidak ada deskripsi aktivitas rinci terekam.",
-        ]);
-      }
-
-      autoTable(doc, {
-        startY: currentY + 2.5,
-        margin: { left: 12, right: 12 },
-        head: [
-          [
-            "Sesi / Tanggal",
-            "Nama Proyek / Site",
-            "Uraian Pekerjaan / Progres Kerja",
-          ],
-        ],
-        body: activityRows,
-        theme: "grid",
-        headStyles: { fillColor: [15, 23, 42], fontSize: 8 },
-        styles: { fontSize: 7, cellPadding: 1.5 },
-        columnStyles: {
-          0: { cellWidth: 28 },
-          1: { cellWidth: 42 },
-          2: { cellWidth: 106 },
-        },
-      });
-
-      currentY = (doc as any).lastAutoTable.finalY + 6;
-
-      if (currentY > 210) {
-        pageCount++;
-        doc.addPage();
-        drawFrameAndHeader(pageCount);
-        currentY = 22;
-      }
-
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.text("IV. CATATAN, HAMBATAN & OPERASIONAL LAPANGAN", 14, currentY);
-
-      const obstaclesList: string[] = [];
-      const nextPlansList: string[] = [];
-      const notesList: string[] = [];
-      const hoursList: string[] = [];
-      const weatherList: string[] = [];
-      const overtimeList: string[] = [];
-
-      filteredDailyReports.forEach((dr) => {
-        const obsArr = Array.isArray(dr.obstacles)
-          ? dr.obstacles.filter(Boolean)
-          : dr.obstacles
-            ? [dr.obstacles]
-            : [];
-        if (obsArr.length > 0)
-          obstaclesList.push(`‚Ä¢ ${dr.projectName}: ${obsArr.join("; ")}`);
-
-        const nextArr = Array.isArray(dr.nextPlan)
-          ? dr.nextPlan.filter(Boolean)
-          : dr.nextPlan
-            ? [dr.nextPlan]
-            : [];
-        if (nextArr.length > 0)
-          nextPlansList.push(`‚Ä¢ ${dr.projectName}: ${nextArr.join("; ")}`);
-
-        const notesArr = Array.isArray(dr.notes)
-          ? dr.notes.filter(Boolean)
-          : dr.notes
-            ? [dr.notes]
-            : [];
-        if (notesArr.length > 0)
-          notesList.push(`‚Ä¢ ${dr.projectName}: ${notesArr.join("; ")}`);
-
-        // Work hours
-        const startH =
-          dr.workHours?.[0] !== undefined
-            ? String(dr.workHours[0]).padStart(2, "0") + ":00"
-            : "08:00";
-        const endH =
-          dr.workHours?.[1] !== undefined
-            ? String(dr.workHours[1]).padStart(2, "0") + ":00"
-            : "17:00";
-        hoursList.push(
-          `‚Ä¢ ${dr.projectName}: Keseluruhan (${startH} s/d ${endH})`,
-        );
-
-        // Weather
-        const pag = dr.weather?.find((w) => w.hour === 8)?.type || "Cerah";
-        const sia = dr.weather?.find((w) => w.hour === 12)?.type || "Cerah";
-        const sor = dr.weather?.find((w) => w.hour === 16)?.type || "Cerah";
-        weatherList.push(
-          `‚Ä¢ ${dr.projectName}: Pagi (${pag}), Siang (${sia}), Sore (${sor})`,
-        );
-
-        // Overtime
-        if (dr.overtime)
-          overtimeList.push(`‚Ä¢ ${dr.projectName}: ${dr.overtime} Jam`);
-      });
-
-      const obstaclesTxt =
-        obstaclesList.length > 0
-          ? obstaclesList.join("\n")
-          : "Tidak ada hambatan signifikan.";
-      const nextPlanTxt =
-        nextPlansList.length > 0
-          ? nextPlansList.join("\n")
-          : "Melanjutkan aktivitas progres harian di site.";
-      const notesTxt =
-        notesList.length > 0
-          ? notesList.join("\n")
-          : "Dokumentasi terekam otomatis.";
-      const hoursTxt =
-        hoursList.length > 0 ? hoursList.join("\n") : "08:00 s/d 17:00";
-      const weatherTxt =
-        weatherList.length > 0
-          ? weatherList.join("\n")
-          : "Pagi: Cerah, Siang: Cerah, Sore: Cerah";
-      const overtimeTxt =
-        overtimeList.length > 0
-          ? overtimeList.join("\n")
-          : "Tidak ada pekerjaan lembur.";
-
-      autoTable(doc, {
-        startY: currentY + 2.5,
-        margin: { left: 12, right: 12 },
-        body: [
-          ["Kendala Lapangan", obstaclesTxt],
-          ["Rencana Pekerjaan Besok", nextPlanTxt],
-          ["Jam Kerja Operasional", hoursTxt],
-          ["Kondisi Cuaca Lapangan", weatherTxt],
-          ["Jam Kerja Lembur", overtimeTxt],
-          ["Catatan Lapangan", notesTxt],
-        ],
-        theme: "grid",
-        styles: { fontSize: 7.5, cellPadding: 2 },
-        columnStyles: {
-          0: { fontStyle: "bold", cellWidth: 45, fillColor: [248, 250, 252] },
-          1: { cellWidth: 131 },
-        },
-      });
-
-      currentY = (doc as any).lastAutoTable.finalY + 8;
-
-      if (currentY > 215) {
-        pageCount++;
-        doc.addPage();
-        drawFrameAndHeader(pageCount);
-        currentY = 25;
-      }
-
-      doc.setFontSize(8.5);
-      doc.setTextColor(15, 23, 42);
-      doc.setFont("helvetica", "bold");
-      doc.text("Mengetahui / Menyetujui,", 25, currentY);
-      doc.text("Dibuat / Diajukan Oleh,", 140, currentY);
-
-      doc.setFont("helvetica", "normal");
-      doc.setFontSize(8);
-      doc.text(ptName, 25, currentY + 4);
-      doc.text("Pekerja Lapangan / Supervisor", 140, currentY + 4);
-
-      doc.text("_____________________________", 25, currentY + 25);
-      doc.setFont("helvetica", "bold");
-      doc.text("PIC Project / Manager", 25, currentY + 29);
-
-      doc.text("_____________________________", 140, currentY + 25);
-      doc.text(
-        selectedEmployeeName === "ALL"
-          ? user.name || "Admin"
-          : selectedEmployeeName,
-        140,
-        currentY + 29,
-      );
-
-      const allPhotos: {
-        url: string;
-        title: string;
-        date: string;
-        reporter: string;
-        location?: string;
-      }[] = [];
-
-      filteredDailyReports.forEach((dr) => {
-        const dateStr = new Date(dr.timestamp).toLocaleDateString("id-ID", {
-          day: "2-digit",
-          month: "short",
-          year: "numeric",
-        });
-        (dr.photos || []).forEach((photo, pIdx) => {
-          if (photo) {
-            allPhotos.push({
-              url: photo,
-              title: `Foto Dokumentasi Daily Report #${pIdx + 1}`,
-              date: dateStr,
-              reporter: dr.submittedByName || "Staff",
-              location: dr.location,
-            });
-          }
-        });
-      });
-
-      filteredFieldReports.forEach((fr) => {
-        if (fr.img) {
-          const dateStr = fr.time
-            ? new Date(fr.time).toLocaleDateString("id-ID", {
-                day: "2-digit",
-                month: "short",
-                year: "numeric",
-              })
-            : "N/A";
-          allPhotos.push({
-            url: fr.img,
-            title: fr.title || "Foto Progress Lapangan",
-            date: dateStr,
-            reporter: fr.userName || "Personel",
-            location: fr.location,
-          });
-        }
-      });
-
-      if (allPhotos.length > 0) {
-        pageCount++;
-        doc.addPage();
-        drawFrameAndHeader(pageCount);
-
-        doc.setFont("helvetica", "bold");
-        doc.setFontSize(11);
-        doc.setTextColor(15, 23, 42);
-        doc.text("DOKUMENTASI FOTO LAPANGAN", 14, 25);
-        doc.line(14, 27, 196, 27);
-
-        let imgX = 14;
-        let imgY = 32;
-        const imgWidth = 83;
-        const imgHeight = 65;
-
-        for (let idx = 0; idx < allPhotos.length; idx++) {
-          const p = allPhotos[idx];
-
-          if (idx > 0 && idx % 2 === 0) {
-            imgX = 14;
-            imgY += 92;
-          }
-
-          if (imgY + 90 > 280) {
-            pageCount++;
-            doc.addPage();
-            drawFrameAndHeader(pageCount);
-
-            doc.setFont("helvetica", "bold");
-            doc.setFontSize(11);
-            doc.setTextColor(15, 23, 42);
-            doc.text("DOKUMENTASI FOTO LAPANGAN (LANJUTAN)", 14, 25);
-            doc.line(14, 27, 196, 27);
-
-            imgX = 14;
-            imgY = 32;
-          }
-
-          doc.setFillColor(248, 250, 252);
-          doc.setDrawColor(226, 232, 240);
-          doc.setLineWidth(0.3);
-          doc.rect(imgX, imgY, imgWidth, 84, "F");
-          doc.rect(imgX, imgY, imgWidth, 84, "S");
-
-          try {
-            const compressedUrl = await compressDocumentImage(p.url, 400, 300);
-            doc.addImage(
-              compressedUrl,
-              "JPEG",
-              imgX + 2,
-              imgY + 2,
-              imgWidth - 4,
-              imgHeight,
-            );
-          } catch (e) {
-            console.error("Error drawing image to PDF:", e);
-            doc.setDrawColor(239, 68, 68);
-            doc.rect(imgX + 2, imgY + 2, imgWidth - 4, imgHeight);
-            doc.setFont("helvetica", "italic");
-            doc.setFontSize(8);
-            doc.setTextColor(239, 68, 68);
-            doc.text(
-              "Gambar tidak dapat dimuat",
-              imgX + imgWidth / 2,
-              imgY + 30,
-              { align: "center" },
-            );
-          }
-
-          doc.setFont("helvetica", "bold");
-          doc.setFontSize(7.5);
-          doc.setTextColor(15, 23, 42);
-
-          const maxWidth = imgWidth - 8;
-          const splitTitle = doc.splitTextToSize(
-            p.title || "Foto Progres",
-            maxWidth,
-          );
-          doc.text(splitTitle, imgX + 4, imgY + imgHeight + 4.5);
-
-          doc.setFont("helvetica", "normal");
-          doc.setFontSize(6.5);
-          doc.setTextColor(100, 116, 139);
-          doc.text(`Waktu: ${p.date}`, imgX + 4, imgY + imgHeight + 11);
-          doc.text(`Oleh: ${p.reporter}`, imgX + 4, imgY + imgHeight + 14);
-
-          if (p.location) {
-            const splitLoc = doc.splitTextToSize(
-              `Lokasi: ${p.location}`,
-              maxWidth,
-            );
-            doc.text(splitLoc, imgX + 4, imgY + imgHeight + 17);
-          }
-
-          imgX += 88;
-        }
-      }
-
-      const pdfBase64 = doc.output("datauristring");
-      const formattedDateStr =
-        `${new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", year: "numeric" })}`.replace(
-          /\//g,
-          "-",
-        );
-      const filename = `Laporan_Kompilasi_${selectedEmployeeName === "ALL" ? "Semua" : selectedEmployeeName.replace(/\s+/g, "_")}_${selectedProjectName === "ALL" ? "Semua" : selectedProjectName.replace(/\s+/g, "_")}_${formattedDateStr}.pdf`;
-      const docSizeKB = `${((pdfBase64.length * 0.75) / 1024).toFixed(1)} KB`;
-
-      await dbService.createDocument("documents", {
-        title: filename.replace(".pdf", ""),
-        type: "LAPORAN",
-        description: `Arsip Kompilasi Laporan dirangkum otomatis oleh Admin. Karyawan: ${selectedEmployeeName === "ALL" ? "Semua Personel" : selectedEmployeeName}, Proyek: ${selectedProjectName === "ALL" ? "Semua Proyek" : selectedProjectName}, Periode: ${startDate || "Awal"} s/d ${endDate || "Akhir"}.`,
-        fileUrl: pdfBase64,
-        createdBy: user.name || "Super Admin",
-        createdAt: new Date().toISOString(),
-        size: docSizeKB,
-        extension: "pdf",
-      });
-
-      alert(
-        `Sukses merangkum & mengarsipkan PDF! Laporan berhasil disimpan dengan nama: "${filename}"`,
-      );
-    } catch (err) {
-      console.error("Gagal melakukan kompilasi laporan PDF:", err);
-      alert("Terjadi kesalahan teknis saat menyusun PDF.");
-    } finally {
-      setIsCompiling(false);
-    }
-  };
-
-  return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in fade-in slide-in-from-bottom-4 duration-300">
-      {/* LEFT FILTER & CONTROL BOX */}
-      <div className="lg:col-span-4 space-y-6">
-        <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-6">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center border border-amber-100 shadow-sm">
-              <Archive size={20} className="stroke-[1.5]" />
-            </div>
-            <div>
-              <h3 className="font-extrabold text-base text-slate-900 tracking-tight">
-                Penyusun Arsip Laporan
-              </h3>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">
-                Saring data & buat bundel PDF
-              </p>
-            </div>
-          </div>
-
-          <hr className="border-slate-100" />
-
-          {/* PT Customization Fields */}
-          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 space-y-3">
-            <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5 pl-0.5">
-              <span>‚öôÔ∏è</span> Kustomisasi Identitas PT
-            </h4>
-            <div className="space-y-2.5">
-              <div className="space-y-1">
-                <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-0.5">
-                  Nama PT / Kontraktor
-                </label>
-                <input
-                  type="text"
-                  value={ptName}
-                  onChange={(e) => setPtName(e.target.value)}
-                  placeholder="Contoh: PT. GARDA INOVASI GLOBALTECH"
-                  className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-amber-500 transition-colors"
-                  id="custom-pt-name-input"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[9px] font-bold text-slate-400 uppercase tracking-wider pl-0.5 block">
-                  Logo PT / Kontraktor (Pilih Gambar)
-                </label>
-                <div className="flex items-center gap-3 bg-white p-2.5 rounded-xl border border-slate-200">
-                  {logoImage ? (
-                    <div className="w-11 h-11 bg-slate-50 border border-slate-100 rounded-lg overflow-hidden flex items-center justify-center p-1 shadow-sm shrink-0">
-                      <img
-                        src={logoImage}
-                        alt="Logo Preview"
-                        className="max-w-full max-h-full object-contain"
-                      />
-                    </div>
-                  ) : (
-                    <div className="w-11 h-11 bg-slate-50 border border-slate-200 rounded-lg flex items-center justify-center text-slate-400 shrink-0">
-                      <Image size={18} />
-                    </div>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <input
-                      type="file"
-                      id="custom-pt-logo-upload"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const reader = new FileReader();
-                          reader.onload = () => {
-                            const result = reader.result as string;
-                            setLogoImage(result);
-                          };
-                          reader.readAsDataURL(file);
-                        }
-                      }}
-                    />
-                    <div className="flex gap-1.5">
-                      <label
-                        htmlFor="custom-pt-logo-upload"
-                        className="px-3 py-1.5 bg-slate-900 text-white rounded-lg text-[10px] font-black cursor-pointer hover:bg-slate-800 transition-colors uppercase"
-                      >
-                        {logoImage ? "Ganti" : "Pilih"}
-                      </label>
-                      {logoImage && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setLogoImage("");
-                            localStorage.removeItem("custom_logo_image");
-                          }}
-                          className="px-2 py-1.5 bg-rose-50 text-rose-600 border border-rose-100 rounded-lg text-[10px] font-black hover:bg-rose-100 transition-colors uppercase"
-                        >
-                          Hapus
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <hr className="border-slate-100" />
-
-          {/* Form fields */}
-          <div className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                Nama Karyawan (Staff)
-              </label>
-              <select
-                value={selectedEmployeeName}
-                onChange={(e) => setSelectedEmployeeName(e.target.value)}
-                className="w-full px-4 py-3.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none cursor-pointer hover:bg-slate-100/50 transition-colors"
-                id="filter-employee-select"
-              >
-                <option value="ALL">üë§ Semua Karyawan / Personil</option>
-                {employeeNames.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                Proyek (Site Lokasi)
-              </label>
-              <select
-                value={selectedProjectName}
-                onChange={(e) => setSelectedProjectName(e.target.value)}
-                className="w-full px-4 py-3.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none cursor-pointer hover:bg-slate-100/50 transition-colors"
-                id="filter-project-select"
-              >
-                <option value="ALL">üè¢ Semua Proyek / Site</option>
-                {projectNames.map((pName) => (
-                  <option key={pName} value={pName}>
-                    {pName}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                  Tanggal Mulai
-                </label>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none hover:bg-slate-100/50 transition-colors"
-                  id="filter-start-date"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                  Tanggal Akhir
-                </label>
-                <input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none hover:bg-slate-100/50 transition-colors"
-                  id="filter-end-date"
-                />
-              </div>
-            </div>
-          </div>
-
-          <button
-            onClick={handleGenerateCompilationPDF}
-            disabled={
-              isCompiling ||
-              (filteredDailyReports.length === 0 &&
-                filteredFieldReports.length === 0)
-            }
-            className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 cursor-pointer transition-all shadow-md ${
-              isCompiling
-                ? "bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed"
-                : filteredDailyReports.length === 0 &&
-                    filteredFieldReports.length === 0
-                  ? "bg-slate-50 text-slate-300 border border-slate-100 cursor-not-allowed shadow-none"
-                  : "bg-slate-900 border border-slate-950 text-white hover:bg-slate-800"
-            }`}
-            id="compile-pdf-btn"
-          >
-            {isCompiling ? (
-              <>
-                <RefreshCw size={15} className="animate-spin" />
-                Mengkonsolidasikan Data...
-              </>
-            ) : (
-              <>
-                <FilePlus size={15} />
-                Rangkum & Buat Arsip PDF
-              </>
-            )}
-          </button>
-        </div>
-
-        <div className="bg-slate-900 text-slate-100 p-6 rounded-[32px] shadow-lg flex flex-col justify-between">
-          <div className="space-y-3">
-            <span className="text-[9px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-400 px-3 py-1 rounded-full border border-emerald-500/15 inline-block">
-              Review Data Kompilasi
-            </span>
-            <p className="text-xs text-slate-400 font-medium">
-              Banyaknya laporan yang terkonsolidasi dengan parameter filter saat
-              ini:
-            </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-4 mt-6">
-            <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                Laporan Harian
-              </span>
-              <span className="text-3xl font-black block text-white mt-1">
-                {filteredDailyReports.length}
-              </span>
-              <span className="text-[9px] text-slate-400 font-mono">
-                form_lengkap
-              </span>
-            </div>
-            <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
-              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
-                Foto Progres
-              </span>
-              <span className="text-3xl font-black block text-emerald-400 mt-1">
-                {filteredFieldReports.length}
-              </span>
-              <span className="text-[9px] text-slate-400 font-mono">
-                laporan_cepat
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* RIGHT PREVIEW & ARCHIVES LIST */}
-      <div className="lg:col-span-8 space-y-6">
-        <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="font-extrabold text-base text-slate-900 tracking-tight">
-              Kompilasi Laporan Terpilih
-            </h3>
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-              Antrean Cetak
-            </span>
-          </div>
-
-          {filteredDailyReports.length === 0 &&
-          filteredFieldReports.length === 0 ? (
-            <div className="py-14 text-center border-2 border-dashed border-slate-100 rounded-2xl">
-              <p className="text-xs font-bold text-slate-400">
-                Silakan tentukan nama karyawan, proyek, atau tanggal di samping.
-              </p>
-              <p className="text-[10px] text-slate-300 mt-1">
-                Data laporan terekam akan muncul di sini.
-              </p>
-            </div>
-          ) : (
-            <div className="max-h-60 overflow-y-auto space-y-2 border-b border-slate-50 pb-4">
-              {filteredDailyReports.map((dr) => (
-                <div
-                  key={dr.id}
-                  className="flex justify-between items-center p-3.5 bg-slate-50 rounded-xl border border-slate-100/50"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="p-1.5 bg-blue-50 text-blue-600 rounded-lg text-[9px] font-black uppercase tracking-widest leading-none">
-                      Harian
-                    </span>
-                    <div>
-                      <h4 className="text-xs font-extrabold text-slate-800 leading-tight">
-                        {dr.projectName}
-                      </h4>
-                      <p className="text-[10px] text-slate-400 font-medium">
-                        {new Date(dr.timestamp).toLocaleDateString("id-ID")} ‚Ä¢
-                        oleh {dr.submittedByName}
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-[10px] text-slate-500 font-bold bg-white px-2 py-1 rounded border border-slate-100">
-                    {dr.workType || "Umum"}
-                  </span>
-                </div>
-              ))}
-
-              {filteredFieldReports.map((fr) => (
-                <div
-                  key={fr.id}
-                  className="flex justify-between items-center p-3.5 bg-slate-50 rounded-xl border border-slate-100/50"
-                >
-                  <div className="flex items-center gap-3">
-                    <span className="p-1.5 bg-emerald-50 text-emerald-600 rounded-lg text-[9px] font-black uppercase tracking-widest leading-none">
-                      Foto
-                    </span>
-                    <div>
-                      <h4 className="text-xs font-extrabold text-slate-800 leading-tight">
-                        {fr.title || "Foto Progress"}
-                      </h4>
-                      <p className="text-[10px] text-slate-400 font-medium">
-                        {fr.time || "Baru saja"} ‚Ä¢ oleh {fr.userName}
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-[10px] text-slate-500 font-bold bg-white px-2 py-1 rounded border border-slate-100">
-                    Progress
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="font-extrabold text-base text-slate-900 tracking-tight">
-              Koleksi Arsip Laporan PDF
-            </h3>
-            <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full border border-slate-100">
-              {reportArchives.length} Arsip Tersimpan
-            </span>
-          </div>
-
-          {reportArchives.length === 0 ? (
-            <div className="py-20 text-center border border-dashed border-slate-100 rounded-[32px] flex flex-col items-center justify-center gap-3">
-              <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-300 border border-slate-100">
-                <FileText size={20} />
-              </div>
-              <div>
-                <p className="text-xs font-black uppercase tracking-widest text-slate-700">
-                  Belum Ada Kompilasi Laporan
-                </p>
-                <p className="text-[10px] text-slate-400 mt-1 max-w-xs mx-auto leading-relaxed">
-                  Arsip PDF yang berhasil dibuat akan disimpan permanen dan
-                  dapat didownload oleh semua Admin di sini.
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {reportArchives.map((arc) => (
-                <div
-                  key={arc.id}
-                  className="p-4 bg-white hover:border-slate-350 rounded-2xl border border-slate-100 hover:shadow-sm transition-all group flex flex-col justify-between"
-                  id={`archive-card-${arc.id}`}
-                >
-                  <div className="flex gap-3">
-                    <div className="w-10 h-10 bg-rose-50 text-rose-600 rounded-xl flex items-center justify-center border border-rose-100 shrink-0 transform group-hover:scale-105 transition-transform">
-                      <FileText size={18} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center justify-between pb-1 gap-2">
-                        <span className="text-[8px] font-black text-rose-600 uppercase tracking-wider bg-rose-50 px-1.5 py-0.5 rounded leading-none">
-                          PDF
-                        </span>
-                        <span className="text-[8px] font-medium text-slate-400 font-mono">
-                          {arc.size}
-                        </span>
-                      </div>
-                      <h4
-                        className="text-xs font-black text-slate-900 truncate leading-tight group-hover:text-primary transition-colors"
-                        title={arc.title}
-                      >
-                        {arc.title}
-                      </h4>
-                      <p className="text-[9px] text-slate-400 font-medium mt-1 line-clamp-2 leading-relaxed">
-                        {arc.description || "Tidak ada deskripsi."}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="mt-4 pt-3 border-t border-slate-50 flex items-center justify-between">
-                    <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                      <Clock size={10} />
-                      {arc.createdAt
-                        ? new Date(arc.createdAt).toLocaleDateString("id-ID")
-                        : "Baru saja"}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => handleDeleteArchive(arc.id)}
-                        className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors border border-transparent hover:border-rose-100 cursor-pointer"
-                        title="Hapus Arsip"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                      <a
-                        href={arc.fileUrl}
-                        download={`${arc.title}.pdf`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="p-1.5 bg-slate-50 text-slate-800 hover:bg-slate-900 hover:text-white rounded-lg text-[9px] font-black uppercase tracking-wider border border-slate-100 transition-all flex items-center gap-1.5 cursor-pointer"
-                        title="Download Laporan PDF"
-                      >
-                        <Download size={11} /> Unduh
-                      </a>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const AdminAnalyticsScreen = ({
-  employees,
-  projects,
-  reports,
-  assets,
-  financialRecords,
-  dailyReports,
-  onNavigate,
-  user,
-  roles,
-  documents,
-  companyProfile,
-}: {
-  employees: Employee[];
-  projects: Project[];
-  reports: FieldReport[];
-  assets: Asset[];
-  financialRecords: FinancialRecord[];
-  dailyReports: DailyReport[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-  documents: Document[];
-  companyProfile?: any;
-}) => {
-  const [period, setPeriod] = useState("Bulan Ini");
-  const [activeTab, setActiveTab] = useState<
-    "METRICS" | "FIELD_REPORTS" | "DAILY_REPORTS" | "REPORT_ARCHIVES"
-  >("METRICS");
-  const [projectFilter, setProjectFilter] = useState("ALL");
-
-  const projectStatusData = [
-    {
-      name: "Running",
-      value: projects.filter(isProjectActive).length,
-      color: "#10b981",
-    },
-    {
-      name: "Upcoming",
-      value: projects.filter((p) => p.status === "Upcoming").length,
-      color: "#f59e0b",
-    },
-    {
-      name: "Completed",
-      value: projects.filter((p) => p.status === "Completed").length,
-      color: "#3b82f6",
-    },
-  ];
-
-  const reportTrend = useMemo(() => {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
-    if (period === "Minggu Ini") {
-      const days = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
-      const today = now.getDay();
-      const startOfWeek = new Date(now);
-      startOfWeek.setDate(now.getDate() - today);
-      startOfWeek.setHours(0, 0, 0, 0);
-
-      // Reorder days to start from Senin (Monday) if needed, but requested Sen Sel Rab...
-      const order = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
-
-      return order.map((dayName) => {
-        const dayIndex = [
-          "Min",
-          "Sen",
-          "Sel",
-          "Rab",
-          "Kam",
-          "Jum",
-          "Sab",
-        ].indexOf(dayName);
-        const targetDate = new Date(startOfWeek);
-        targetDate.setDate(startOfWeek.getDate() + dayIndex);
-
-        const dayReports = reports.filter((r) => {
-          const d = r.time ? new Date(r.time) : new Date();
-          return d.toDateString() === targetDate.toDateString();
-        }).length;
-
-        const dayExpenses = financialRecords
-          .filter((r) => {
-            const d = new Date(r.date);
-            return (
-              r.type === "OUT" && d.toDateString() === targetDate.toDateString()
-            );
-          })
-          .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
-
-        return { day: dayName, reports: dayReports, expenses: dayExpenses };
-      });
-    }
-
-    if (period === "Tahun Ini") {
-      const months = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "Mei",
-        "Jun",
-        "Jul",
-        "Agu",
-        "Sep",
-        "Okt",
-        "Nov",
-        "Des",
-      ];
-      return months.map((m, i) => {
-        const monthReports = reports.filter((r) => {
-          const d = r.time ? new Date(r.time) : new Date();
-          return d.getMonth() === i && d.getFullYear() === currentYear;
-        }).length;
-
-        const monthExpenses = financialRecords
-          .filter((r) => {
-            const d = new Date(r.date);
-            return (
-              r.type === "OUT" &&
-              d.getMonth() === i &&
-              d.getFullYear() === currentYear
-            );
-          })
-          .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
-
-        return { day: m, reports: monthReports, expenses: monthExpenses };
-      });
-    }
-
-    // Default: Bulan Ini (Requested: Minggu 1, 2, 3, 4)
-    const weeks = ["Minggu 1", "Minggu 2", "Minggu 3", "Minggu 4"];
-    return weeks.map((w, i) => {
-      const startDay = i * 7 + 1;
-      const endDay = (i + 1) * 7;
-
-      const weekReports = reports.filter((r) => {
-        const d = r.time ? new Date(r.time) : new Date();
-        return (
-          d.getMonth() === currentMonth &&
-          d.getFullYear() === currentYear &&
-          d.getDate() >= startDay &&
-          d.getDate() <= endDay
-        );
-      }).length;
-
-      const weekExpenses = financialRecords
-        .filter((r) => {
-          const d = new Date(r.date);
-          return (
-            r.type === "OUT" &&
-            d.getMonth() === currentMonth &&
-            d.getFullYear() === currentYear &&
-            d.getDate() >= startDay &&
-            d.getDate() <= endDay
-          );
-        })
-        .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
-
-      return {
-        day: w,
-        reports: weekReports,
-        expenses: weekExpenses,
-      };
-    });
-  }, [reports, financialRecords, period]);
-
-  const assetCategories = [
-    {
-      name: "Tools",
-      value: assets.filter((a) => a.category === "Tools").length,
-    },
-    {
-      name: "Safety",
-      value: assets.filter((a) => a.category === "Safety").length,
-    },
-    {
-      name: "Electronic",
-      value: assets.filter((a) => a.category === "Electronic").length,
-    },
-    {
-      name: "Vehicle",
-      value: assets.filter((a) => a.category === "Vehicle").length,
-    },
-  ];
-
-  return (
-    <AdminLayout
-      activeScreen="admin-analytics"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      <div className="space-y-8 pb-20">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
-          <div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight">
-              Analisis & Laporan Projek
-            </h1>
-            <p className="text-slate-500 font-medium">
-              Monitoring performa operasional dan kearsipan laporan harian.
-            </p>
-          </div>
-          <div className="flex bg-white p-1.5 rounded-2xl border border-slate-100 shadow-sm flex-wrap gap-1">
-            <button
-              onClick={() => setActiveTab("METRICS")}
-              className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                activeTab === "METRICS"
-                  ? "bg-slate-900 text-white shadow-lg"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Metrik & Grafik
-            </button>
-            <button
-              onClick={() => setActiveTab("FIELD_REPORTS")}
-              className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                activeTab === "FIELD_REPORTS"
-                  ? "bg-slate-900 text-white shadow-lg"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Laporan Lapangan (Foto)
-            </button>
-            <button
-              onClick={() => setActiveTab("DAILY_REPORTS")}
-              className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                activeTab === "DAILY_REPORTS"
-                  ? "bg-slate-900 text-white shadow-lg"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-            >
-              Arsip Laporan Harian
-            </button>
-            <button
-              onClick={() => setActiveTab("REPORT_ARCHIVES")}
-              className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-                activeTab === "REPORT_ARCHIVES"
-                  ? "bg-slate-900 text-white shadow-lg"
-                  : "text-slate-400 hover:text-slate-600"
-              }`}
-              id="tab-report-archivesBtn"
-            >
-              Arsip Laporan PDF
-            </button>
-          </div>
-        </div>
-
-        {activeTab === "METRICS" ? (
-          <>
-            {/* Existing Metrics View */}
-            <div className="flex justify-end">
-              <div className="flex bg-white p-1 rounded-xl border border-slate-100 shadow-sm">
-                {["Minggu Ini", "Bulan Ini", "Tahun Ini"].map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setPeriod(p)}
-                    className={`px-4 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all ${
-                      period === p
-                        ? "bg-slate-100 text-slate-900"
-                        : "text-slate-400 hover:text-slate-500"
-                    }`}
-                  >
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-              {/* Main Chart */}
-              <div className="lg:col-span-2 bg-white rounded-[40px] border border-slate-100 shadow-sm p-8">
-                <div className="flex justify-between items-center mb-8">
-                  <div>
-                    <h3 className="font-black text-lg text-slate-900">
-                      Trend Operasional
-                    </h3>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      Produktivitas Lapangan & Pengeluaran
-                    </p>
-                  </div>
-                  <div className="flex gap-4">
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-primary" />
-                      <span className="text-[10px] font-black text-slate-500 uppercase">
-                        Laporan
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
-                      <span className="text-[10px] font-black text-slate-500 uppercase">
-                        Biaya
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <div className="h-[350px]">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                    <AreaChart data={reportTrend}>
-                      <defs>
-                        <linearGradient
-                          id="colorReports"
-                          x1="0"
-                          y1="0"
-                          x2="0"
-                          y2="1"
-                        >
-                          <stop
-                            offset="5%"
-                            stopColor="#1A2B49"
-                            stopOpacity={0.1}
-                          />
-                          <stop
-                            offset="95%"
-                            stopColor="#1A2B49"
-                            stopOpacity={0}
-                          />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        vertical={false}
-                        stroke="#f1f5f9"
-                      />
-                      <XAxis
-                        dataKey="day"
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{
-                          fontSize: 10,
-                          fontWeight: "bold",
-                          fill: "#94a3b8",
-                        }}
-                        dy={10}
-                      />
-                      <YAxis
-                        axisLine={false}
-                        tickLine={false}
-                        tick={{
-                          fontSize: 10,
-                          fontWeight: "bold",
-                          fill: "#94a3b8",
-                        }}
-                        tickFormatter={(val) =>
-                          typeof val === "number" && val >= 1000
-                            ? formatIndonesianUnits(val)
-                            : val
-                        }
-                      />
-                      <Tooltip
-                        formatter={(val: any, name: string) => {
-                          if (name === "expenses")
-                            return [formatIDRWithUnit(val), "Pengeluaran"];
-                          if (name === "reports") return [val, "Laporan"];
-                          return [val, name];
-                        }}
-                        contentStyle={{
-                          borderRadius: "16px",
-                          border: "none",
-                          boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
-                          fontSize: "12px",
-                          fontWeight: "bold",
-                        }}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="reports"
-                        stroke="#1A2B49"
-                        strokeWidth={3}
-                        fillOpacity={1}
-                        fill="url(#colorReports)"
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="expenses"
-                        stroke="#10b981"
-                        strokeWidth={3}
-                        fill="transparent"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* Side Analytics */}
-              <div className="space-y-8">
-                <div className="bg-slate-900 rounded-[40px] p-8 text-white shadow-xl relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-48 h-48 bg-primary/20 rounded-full -mr-24 -mt-24 blur-3xl" />
-                  <div className="relative z-10">
-                    <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center mb-6">
-                      <Target className="text-white" size={24} />
-                    </div>
-                    <h4 className="text-sm font-black text-slate-400 uppercase tracking-widest mb-1">
-                      Total Efisiensi
-                    </h4>
-                    <div className="flex items-baseline gap-2">
-                      <h2 className="text-4xl font-black">94.2%</h2>
-                      <span className="text-emerald-400 text-xs font-bold">
-                        +2.4%
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-slate-400 font-medium mt-4">
-                      Berdasarkan waktu penyelesaian tugas dan ketepatan
-                      kehadiran tim di 12 lokasi proyek.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="bg-white rounded-[40px] border border-slate-100 shadow-sm p-8">
-                  <h3 className="font-black text-slate-900 mb-6">
-                    Status Proyek
-                  </h3>
-                  <div className="h-[200px]">
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-                      <RePieChart>
-                        <Pie
-                          data={projectStatusData}
-                          innerRadius={60}
-                          outerRadius={80}
-                          paddingAngle={8}
-                          dataKey="value"
-                        >
-                          {projectStatusData.map((entry, index) => (
-                            <Cell key={`cell-${index}`} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                      </RePieChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 mt-4">
-                    {projectStatusData.map((s, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-slate-100"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div
-                            className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: s.color }}
-                          />
-                          <span className="text-xs font-bold text-slate-600 uppercase tracking-widest">
-                            {s.name}
-                          </span>
-                        </div>
-                        <span className="font-black text-slate-900">
-                          {s.value}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Bottom Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {[
-                {
-                  label: "Avg Report Size",
-                  value: "45.2 MB",
-                  icon: FileBox,
-                  color: "text-blue-500",
-                  bg: "bg-blue-50",
-                },
-                {
-                  label: "Attendance Rate",
-                  value: "98.5%",
-                  icon: UserCheck,
-                  color: "text-emerald-500",
-                  bg: "bg-emerald-50",
-                },
-                {
-                  label: "Project Growth",
-                  value: "+12%",
-                  icon: BarChart3,
-                  color: "text-amber-500",
-                  bg: "bg-amber-50",
-                },
-                {
-                  label: "Budget Usage",
-                  value: "62%",
-                  icon: DollarSign,
-                  color: "text-rose-500",
-                  bg: "bg-rose-50",
-                },
-              ].map((card, i) => (
-                <div
-                  key={i}
-                  className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm flex items-center gap-5"
-                >
-                  <div
-                    className={`w-14 h-14 ${card.bg} ${card.color} rounded-2xl flex items-center justify-center shadow-sm`}
-                  >
-                    <card.icon size={28} />
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
-                      {card.label}
-                    </p>
-                    <h4 className="text-xl font-black text-slate-900">
-                      {card.value}
-                    </h4>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* GPS Tracking Overview (Visual) */}
-            <div className="bg-white rounded-[40px] border border-slate-100 shadow-sm p-8 overflow-hidden relative">
-              <div className="flex justify-between items-center mb-8">
-                <div>
-                  <h3 className="font-black text-lg text-slate-900">
-                    Peta Lokasi Lapangan
-                  </h3>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                    Visualisasi Sebaran Proyek & Tim
-                  </p>
-                </div>
-                <button
-                  onClick={() => onNavigate("admin-tracking")}
-                  className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg hover:bg-primary transition-all flex items-center gap-3"
-                >
-                  <MapPin size={14} /> Lihat Detail GPS
-                </button>
-              </div>
-
-              <div className="h-[400px] bg-slate-200 rounded-[32px] relative overflow-hidden group">
-                {/* Simulated Map Visual */}
-                <div className="absolute inset-0 bg-[#e5e7eb] opacity-40 bg-[radial-gradient(#94a3b8_1px,transparent_1px)] [background-size:20px_20px]" />
-
-                {projects
-                  .filter((p) => p.lat && p.lng)
-                  .map((proj, i) => (
-                    <motion.div
-                      key={proj.id}
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      transition={{ delay: i * 0.1 }}
-                      className="absolute"
-                      style={{
-                        left: `${((proj.lng || 0) + 180) % 100}%`,
-                        top: `${((proj.lat || 0) + 90) % 100}%`,
-                      }}
-                    >
-                      <div className="relative group/pin">
-                        <div className="w-10 h-10 bg-primary text-white rounded-2xl flex items-center justify-center shadow-xl cursor-pointer hover:scale-110 transition-all border-4 border-white">
-                          <Briefcase size={20} />
-                        </div>
-                        <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 opacity-0 group-hover/pin:opacity-100 transition-opacity z-10 w-40">
-                          <div className="bg-white p-3 rounded-2xl shadow-2xl border border-slate-100">
-                            <p className="text-xs font-black text-slate-900 truncate">
-                              {proj.name}
-                            </p>
-                            <p className="text-[9px] font-bold text-slate-400 uppercase">
-                              {proj.location}
-                            </p>
-                            <div className="mt-2 text-[8px] font-black text-primary uppercase bg-primary/5 p-1 rounded inline-block">
-                              {proj.status}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </motion.div>
-                  ))}
-
-                {/* Simulated Personnel Tracking */}
-                {employees.slice(0, 5).map((emp, i) => (
-                  <motion.div
-                    key={emp.id}
-                    className="absolute"
-                    style={{
-                      left: `${(30 + i * 15) % 100}%`,
-                      top: `${(20 + i * 10) % 100}%`,
-                    }}
-                  >
-                    <div className="w-8 h-8 rounded-xl overflow-hidden border-2 border-white shadow-lg cursor-pointer hover:border-primary transition-all">
-                      <img
-                        src={emp.avatar}
-                        alt=""
-                        className="w-full h-full object-cover"
-                      />
-                    </div>
-                  </motion.div>
-                ))}
-
-                <div className="absolute bottom-6 right-6 bg-white/80 backdrop-blur-md p-4 rounded-3xl border border-white/40 shadow-xl space-y-3">
-                  <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 bg-primary rounded-full animate-pulse" />
-                    <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">
-                      {projects.length} Proyek Aktif
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 bg-emerald-400 rounded-full" />
-                    <span className="text-[10px] font-black text-slate-900 uppercase tracking-widest">
-                      {employees.length} Personel Lapangan
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>
-        ) : activeTab === "FIELD_REPORTS" ? (
-          <AdminFieldReportsTab
-            reports={reports}
-            projects={projects}
-            employees={employees}
-            user={user}
-          />
-        ) : activeTab === "REPORT_ARCHIVES" ? (
-          <AdminReportArchivesTab
-            reports={reports}
-            dailyReports={dailyReports}
-            projects={projects}
-            employees={employees}
-            user={user}
-            documents={documents}
-            companyProfile={companyProfile}
-          />
-        ) : (
-          <div className="space-y-6">
-            <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm">
-              <div className="flex items-center gap-4 flex-1 w-full relative">
-                <Search size={18} className="absolute left-6 text-slate-300" />
-                <input
-                  type="text"
-                  placeholder="Cari projek atau nama personil..."
-                  className="w-full pl-14 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 ring-primary/5 outline-none transition-all"
-                />
-              </div>
-              <div className="w-full md:w-64">
-                <select
-                  value={projectFilter}
-                  onChange={(e) => setProjectFilter(e.target.value)}
-                  className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none focus:ring-4 ring-primary/5 transition-all cursor-pointer appearance-none"
-                >
-                  <option value="ALL">Semua Projek</option>
-                  {projects.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="bg-white rounded-[40px] border border-slate-100 shadow-sm overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-50 border-b border-slate-100">
-                    <tr>
-                      <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                        Tanggal
-                      </th>
-                      <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                        Project & Site
-                      </th>
-                      <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                        Team Leader
-                      </th>
-                      <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">
-                        Status
-                      </th>
-                      <th className="px-8 py-6 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">
-                        Aksi
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {dailyReports
-                      .filter(
-                        (r) =>
-                          projectFilter === "ALL" ||
-                          r.projectId === projectFilter,
-                      )
-                      .map((report, idx) => (
-                        <tr
-                          key={report.id || idx}
-                          className="hover:bg-slate-50/50 transition-colors group"
-                        >
-                          <td className="px-8 py-6">
-                            <p className="text-sm font-black text-slate-900">
-                              {new Date(report.timestamp).toLocaleDateString(
-                                "id-ID",
-                                {
-                                  day: "2-digit",
-                                  month: "long",
-                                  year: "numeric",
-                                },
-                              )}
-                            </p>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
-                              PKL{" "}
-                              {new Date(report.timestamp).toLocaleTimeString(
-                                "id-ID",
-                                { hour: "2-digit", minute: "2-digit" },
-                              )}{" "}
-                              WIB
-                            </p>
-                          </td>
-                          <td className="px-8 py-6">
-                            <h4 className="text-sm font-black text-slate-900">
-                              {report.projectName}
-                            </h4>
-                            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1 flex items-center gap-1">
-                              <MapPin size={10} className="text-primary" />{" "}
-                              {report.location}
-                            </p>
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className="flex items-center gap-3">
-                              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-black text-slate-400 border border-white shadow-sm">
-                                {report.submittedByName?.charAt(0)}
-                              </div>
-                              <p className="text-xs font-bold text-slate-700">
-                                {report.submittedByName}
-                              </p>
-                            </div>
-                          </td>
-                          <td className="px-8 py-6 text-center">
-                            <span className="px-3 py-1.5 bg-emerald-50 text-emerald-600 rounded-full text-[9px] font-black uppercase tracking-widest">
-                              TERKIRIM
-                            </span>
-                          </td>
-                          <td className="px-8 py-6 text-right">
-                            <button
-                              onClick={() => generateDailyReportPDF(report)}
-                              className="h-10 px-5 bg-white border border-slate-200 text-slate-900 rounded-xl font-black text-[9px] uppercase tracking-widest shadow-sm flex items-center gap-2 hover:bg-slate-900 hover:text-white hover:border-slate-900 transition-all ml-auto"
-                            >
-                              <Download size={14} /> Unduh PDF
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    {dailyReports.length === 0 && (
-                      <tr>
-                        <td colSpan={5} className="py-20 text-center">
-                          <div className="flex flex-col items-center justify-center gap-3 opacity-20">
-                            <FileSearch size={48} />
-                            <p className="text-xs font-black uppercase tracking-widest">
-                              Belum ada arsip laporan harian
-                            </p>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </AdminLayout>
-  );
-};
-
-const MONTHS_ID = [
-  "Januari",
-  "Februari",
-  "Maret",
-  "April",
-  "Mei",
-  "Juni",
-  "Juli",
-  "Agustus",
-  "September",
-  "Oktober",
-  "November",
-  "Desember",
-];
-
-const formatIndonesianUnits = (amount: number) => {
-  const absAmount = Math.abs(amount);
-  if (absAmount >= 1_000_000_000_000) {
-    return `${(amount / 1_000_000_000_000).toFixed(1).replace(".", ",")} Triliun`;
-  }
-  if (absAmount >= 1_000_000_000) {
-    return `${(amount / 1_000_000_000).toFixed(1).replace(".", ",")} Miliar`;
-  }
-  if (absAmount >= 1_000_000) {
-    return `${(amount / 1_000_000).toFixed(1).replace(".", ",")} Juta`;
-  }
-  if (absAmount >= 1_000) {
-    return `${(amount / 1_000).toFixed(1).replace(".", ",")} Ribu`;
-  }
-  return amount.toString();
-};
-
-const formatIDRWithUnit = (amount: number) => {
-  return `Rp ${formatIndonesianUnits(amount)}`;
-};
-
-const formatCurrencyIDR = (val: number) => {
-  return new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  })
-    .format(val)
-    .replace("Rp", "Rp ");
-};
-
-const TERMIN_SCHEDULES: Record<string, {
-  projectName: string;
-  contractNo: string;
-  startDate: string;
-  owner: string;
-  contractValue: number;
-  terms: {
-    name: string;
-    description: string;
-    amount: number;
-    expectedAmount?: number;
-    percentage: number;
-    invoiceDate: string;
-    dueDate: string;
-    paymentDate: string;
-    status: "LUNAS" | "BELUM LUNAS" | "BELUM BAYAR";
-    notes: string;
-  }[];
-}> = {
-  "PTG-001": {
-    projectName: "FILTER SOFTENER PT TTI",
-    contractNo: "002/SPK-TTI/V/2026",
-    startDate: "2026-06-01",
-    owner: "PT. TTI",
-    contractValue: 23500000,
-    terms: [
-      {
-        name: "Termin 1 (DP)",
-        description: "Down Payment 50%",
-        amount: 11750000,
-        percentage: 50.0,
-        invoiceDate: "2026-06-01",
-        dueDate: "2026-06-03",
-        paymentDate: "2026-06-03",
-        status: "LUNAS",
-        notes: "DP Sesuai Kesepakatan"
-      },
-      {
-        name: "Termin 2 (Pelunasan)",
-        description: "Pelunasan 50% setelah instalasi selesai",
-        amount: 11750000,
-        percentage: 50.0,
-        invoiceDate: "2026-06-08",
-        dueDate: "2026-06-10",
-        paymentDate: "2026-06-10",
-        status: "LUNAS",
-        notes: "Pelunasan Pekerjaan"
-      }
-    ]
-  },
-  "PTG-002": {
-    projectName: "INSTALASI EQUIPMENT STP KAP. 184 M3",
-    contractNo: "001/SPK-TEI/IV/2026",
-    startDate: "2026-04-16",
-    owner: "PT. TOOLMATE ENVIRO INDONESIA",
-    contractValue: 566100000,
-    terms: [
-      {
-        name: "Termin 1 (DP)",
-        description: "DP Setelah SPK Ditanda tangani",
-        amount: 113220000,
-        expectedAmount: 113220000,
-        percentage: 20.0,
-        invoiceDate: "2026-04-08",
-        dueDate: "2026-04-10",
-        paymentDate: "2026-04-15",
-        status: "LUNAS",
-        notes: "Sesuai kontrak"
-      },
-      {
-        name: "Termin 2",
-        description: "Material On site",
-        amount: 84915000,
-        expectedAmount: 84915000,
-        percentage: 15.0,
-        invoiceDate: "2026-05-06",
-        dueDate: "2026-05-08",
-        paymentDate: "2026-05-13",
-        status: "LUNAS",
-        notes: "Sesuai kontrak"
-      },
-      {
-        name: "Termin 3 - Parsial 1",
-        description: "Pekerjaan Selesai 50% (Bayar Tahap 1)",
-        amount: 113220000,
-        expectedAmount: 113220000,
-        percentage: 20.0,
-        invoiceDate: "2026-06-18",
-        dueDate: "2026-06-20",
-        paymentDate: "2026-06-23",
-        status: "LUNAS",
-        notes: "Sesuai kontrak"
-      },
-      {
-        name: "Termin 3 - Parsial 2",
-        description: "Pekerjaan Selesai 75% (Bayar Tahap 2)",
-        amount: 0,
-        expectedAmount: 113220000,
-        percentage: 20.0,
-        invoiceDate: "-",
-        dueDate: "-",
-        paymentDate: "-",
-        status: "BELUM BAYAR",
-        notes: "-"
-      },
-      {
-        name: "Termin 3 - Parsial 3",
-        description: "Pekerjaan Selesai 100% (Bayar Tahap 3)",
-        amount: 0,
-        expectedAmount: 113220000,
-        percentage: 20.0,
-        invoiceDate: "-",
-        dueDate: "-",
-        paymentDate: "-",
-        status: "BELUM BAYAR",
-        notes: "-"
-      },
-      {
-        name: "Termin 4",
-        description: "Retensi 5%",
-        amount: 0,
-        expectedAmount: 28305000,
-        percentage: 5.0,
-        invoiceDate: "-",
-        dueDate: "-",
-        paymentDate: "-",
-        status: "BELUM BAYAR",
-        notes: "-"
-      }
-    ]
-  },
-  "PTG-003": {
-    projectName: "INSTALASI STP GEDUNG UEU TB SIMATUPANG",
-    contractNo: "001/SPK/DWT/III/2026",
-    startDate: "2026-02-26",
-    owner: "PT. DW Technic",
-    contractValue: 432900000,
-    terms: [
-      {
-        name: "Termin 1 (DP)",
-        description: "DP Setelah SPK Terbit",
-        amount: 108225000,
-        expectedAmount: 108225000,
-        percentage: 25.0,
-        invoiceDate: "2026-03-05",
-        dueDate: "2026-03-07",
-        paymentDate: "2026-03-07",
-        status: "LUNAS",
-        notes: "Sesuai kontrak"
-      },
-      {
-        name: "Termin 2 - Parsial 1",
-        description: "Material On site(Bayar Tahap 1)",
-        amount: 100000000,
-        expectedAmount: 100000000,
-        percentage: 23.1,
-        invoiceDate: "2026-04-06",
-        dueDate: "2026-04-08",
-        paymentDate: "2026-04-22",
-        status: "LUNAS",
-        notes: "Cicilan Tahap 1"
-      },
-      {
-        name: "Termin 2 - Parsial 2",
-        description: "Material On site (Bayar Tahap 2)",
-        amount: 51515000,
-        expectedAmount: 51515000,
-        percentage: 11.9,
-        invoiceDate: "2026-04-06",
-        dueDate: "2026-04-08",
-        paymentDate: "2026-04-29",
-        status: "LUNAS",
-        notes: "Sisa pelunasan termin 2"
-      },
-      {
-        name: "Termin 3 - Parsial 1",
-        description: "Pekerjaan Selesai 100% (Bayar Tahap 1)",
-        amount: 50000000,
-        expectedAmount: 50000000,
-        percentage: 11.6,
-        invoiceDate: "2026-05-02",
-        dueDate: "2026-05-04",
-        paymentDate: "2026-06-12",
-        status: "LUNAS",
-        notes: "Cicilan Tahap 1"
-      },
-      {
-        name: "Termin 3 - Parsial 2",
-        description: "Pekerjaan Selesai 100% (Bayar Tahap 2)",
-        amount: 25000000,
-        expectedAmount: 25000000,
-        percentage: 5.8,
-        invoiceDate: "2026-07-08",
-        dueDate: "2026-07-08",
-        paymentDate: "2026-07-08",
-        status: "LUNAS",
-        notes: "Cicilan Tahap 2"
-      },
-      {
-        name: "Termin 3 - Parsial 3",
-        description: "Pekerjaan Selesai 100% (Bayar Tahap 3)",
-        amount: 25000000,
-        expectedAmount: 25000000,
-        percentage: 5.8,
-        invoiceDate: "2026-07-21",
-        dueDate: "2026-07-21",
-        paymentDate: "2026-07-21",
-        status: "LUNAS",
-        notes: "Cicilan Tahap 3"
-      },
-      {
-        name: "Termin 3 - Parsial 4 / Sisa Pelunasan",
-        description: "Sisa Pelunasan Pekerjaan Selesai 100%",
-        amount: 0,
-        expectedAmount: 51515000,
-        percentage: 11.9,
-        invoiceDate: "-",
-        dueDate: "-",
-        paymentDate: "-",
-        status: "BELUM BAYAR",
-        notes: "-"
-      },
-      {
-        name: "Termin 4",
-        description: "Retensi 5%",
-        amount: 0,
-        expectedAmount: 21645000,
-        percentage: 5.0,
-        invoiceDate: "-",
-        dueDate: "-",
-        paymentDate: "-",
-        status: "BELUM BAYAR",
-        notes: "-"
-      }
-    ]
-  },
-  "PTG-004": {
-    projectName: "IPAL MEDIS KAPS 3 M3 UEU BEKASI",
-    contractNo: "0517/ESAU.KHI(CADAVER.LT.1)/DWT/IV/2026",
-    startDate: "2026-04-22",
-    owner: "PT. DW Technic",
-    contractValue: 61050000,
-    terms: [
-      {
-        name: "Termin 1 (DP)",
-        description: "Down Payment 50%",
-        amount: 30525000,
-        percentage: 50.0,
-        invoiceDate: "2026-04-22",
-        dueDate: "2026-04-24",
-        paymentDate: "2026-04-23",
-        status: "LUNAS",
-        notes: "Sesuai kontrak"
-      },
-      {
-        name: "Termin 2",
-        description: "Material On site 35%",
-        amount: 0,
-        percentage: 0.0,
-        invoiceDate: "-",
-        dueDate: "-",
-        paymentDate: "-",
-        status: "LUNAS",
-        notes: "Langsung Ke Termin 3"
-      },
-      {
-        name: "Termin 3",
-        description: "Pekerjaan Selesai 100%",
-        amount: 30525000,
-        percentage: 50.0,
-        invoiceDate: "2026-05-02",
-        dueDate: "2026-05-04",
-        paymentDate: "2026-05-22",
-        status: "LUNAS",
-        notes: "Pelunasan Termin 2 dan 3"
-      }
-    ]
-  },
-  "PTG-005": {
-    projectName: "PUSKESMAS SINDANG JAYA - PEMELIHARAAN IPAL",
-    contractNo: "008/SPK-PSJ/VI/2026",
-    startDate: "2026-06-20",
-    owner: "Puskesmas Sindang Jaya",
-    contractValue: 11753500,
-    terms: [
-      {
-        name: "Pelunasan 100%",
-        description: "Biaya Pemeliharaan IPAL",
-        amount: 11753500,
-        percentage: 100.0,
-        invoiceDate: "2026-06-20",
-        dueDate: "2026-06-26",
-        paymentDate: "2026-06-26",
-        status: "LUNAS",
-        notes: "Pekerjaan Selesai dan Lunas"
-      }
-    ]
-  }
-};
-
-const processTermPayment = (
-  updatedTerms: any[],
-  termName: string,
-  payAmount: number,
-  finId: string,
-  invoiceDate: string,
-  dueDate: string,
-  paymentDate: string,
-  notes: string,
-  percentage: number = 0
-) => {
-  const existingUnpaidIdx = updatedTerms.findIndex(
-    (t: any) => t.name.toUpperCase() === termName.toUpperCase() && !t.financialRecordId
-  );
-
-  const newTermItem = {
-    name: termName,
-    description: notes || "",
-    amount: payAmount,
-    expectedAmount: payAmount,
-    percentage: percentage > 0 ? parseFloat(percentage.toFixed(2)) : 0,
-    invoiceDate: invoiceDate || "-",
-    dueDate: dueDate || "-",
-    paymentDate: paymentDate || "-",
-    status: "LUNAS" as const,
-    notes: notes || "",
-    financialRecordId: finId,
-  };
-
-  if (existingUnpaidIdx >= 0) {
-    const existingUnpaid = updatedTerms[existingUnpaidIdx];
-    const currentExpected = existingUnpaid.expectedAmount !== undefined ? existingUnpaid.expectedAmount : (existingUnpaid.amount || 0);
-
-    if (payAmount >= currentExpected) {
-      updatedTerms[existingUnpaidIdx] = {
-        ...existingUnpaid,
-        ...newTermItem,
-        expectedAmount: currentExpected,
-        status: "LUNAS",
-      };
-    } else {
-      const partialPaidItem = {
-        ...existingUnpaid,
-        ...newTermItem,
-        expectedAmount: payAmount,
-        status: "LUNAS",
-      };
-      
-      existingUnpaid.expectedAmount = currentExpected - payAmount;
-      if (existingUnpaid.amount !== undefined) {
-        existingUnpaid.amount = 0;
-      }
-      existingUnpaid.status = "BELUM BAYAR";
-
-      updatedTerms.splice(existingUnpaidIdx, 0, partialPaidItem);
-    }
-  } else {
-    updatedTerms.push(newTermItem);
-  }
-
-  return updatedTerms;
-};
-
-const revertTermPayment = (updatedTerms: any[], finId: string, staticSched: any) => {
-  const termToRemoveIdx = updatedTerms.findIndex((t: any) => t.financialRecordId === finId);
-  if (termToRemoveIdx === -1) return updatedTerms;
-
-  const termToRemove = updatedTerms[termToRemoveIdx];
-  const matchingUnpaidIdx = updatedTerms.findIndex(
-    (t: any) => t.name.toUpperCase() === termToRemove.name.toUpperCase() && !t.financialRecordId
-  );
-
-  if (matchingUnpaidIdx >= 0) {
-    const matchingUnpaid = updatedTerms[matchingUnpaidIdx];
-    const removedExpected = termToRemove.expectedAmount !== undefined ? termToRemove.expectedAmount : (termToRemove.amount || 0);
-    matchingUnpaid.expectedAmount = (matchingUnpaid.expectedAmount || 0) + removedExpected;
-    updatedTerms.splice(termToRemoveIdx, 1);
-  } else {
-    const originalTerm = staticSched ? staticSched.terms.find((t: any) => t.name.toUpperCase() === termToRemove.name.toUpperCase()) : null;
-    if (originalTerm) {
-      updatedTerms[termToRemoveIdx] = {
-        ...originalTerm,
-        amount: 0,
-        expectedAmount: originalTerm.expectedAmount || originalTerm.amount || 0,
-        invoiceDate: "-",
-        dueDate: "-",
-        paymentDate: "-",
-        status: "BELUM BAYAR",
-        notes: "-",
-        financialRecordId: undefined,
-      };
-    } else {
-      updatedTerms.splice(termToRemoveIdx, 1);
-    }
-  }
-
-  return updatedTerms;
-};
-
-const isInternalPersonnel = (name: string): boolean => {
-  const n = (name || "").toUpperCase().trim();
-  if (!n) return false;
-  return (
-    n.includes("FAISAL") ||
-    n.includes("WELI") ||
-    n.includes("YASIN") ||
-    n.includes("ADMIN") ||
-    n.includes("SISTEM") ||
-    n.includes("STAFF") ||
-    n.includes("OPERATOR")
-  );
-};
-
-const resolvePiutangClient = (r: DebtRecord, projectsList: Project[] = []): string => {
-  const customId = (r.customId || "").toUpperCase();
-  const staticSched = TERMIN_SCHEDULES[customId];
-  
-  const linkedProj = (projectsList || []).find((p) =>
-    (r.projectId && p.id === r.projectId) ||
-    (r.customId && (p.id === r.customId || (p as any).customId === r.customId)) ||
-    (p.name && r.title && (
-      p.name.toLowerCase().includes(r.title.toLowerCase()) ||
-      r.title.toLowerCase().includes(p.name.toLowerCase())
-    ))
-  );
-
-  if (linkedProj?.client && linkedProj.client.trim() && !isInternalPersonnel(linkedProj.client)) {
-    return linkedProj.client.trim();
-  }
-  if (staticSched?.owner && staticSched.owner.trim() && !isInternalPersonnel(staticSched.owner)) {
-    return staticSched.owner.trim();
-  }
-  if (linkedProj?.name && linkedProj.name.trim()) {
-    return linkedProj.name.trim();
-  }
-  if (staticSched?.projectName && staticSched.projectName.trim()) {
-    return staticSched.projectName.trim();
-  }
-  if (r.contactName && r.contactName.trim() && !isInternalPersonnel(r.contactName)) {
-    return r.contactName.trim();
-  }
-  if (r.title && r.title.trim()) {
-    return r.title.trim();
-  }
-  return "Proyek Umum";
-};
-
-const getEffectiveDebtRecords = (
-  debtRecords: DebtRecord[] = [],
-  projects: Project[] = [],
-  financialRecords: FinancialRecord[] = []
-): DebtRecord[] => {
-  const filtered = [...(debtRecords || [])].filter((r) => {
-    const rTitle = (r.title || "").toLowerCase();
-    const rDesc = (r.description || "").toLowerCase();
-    const rCat = ((r as any).category || "").toLowerCase();
-    const rCustom = (r.customId || "").toUpperCase();
-    
-    // Exclude falsely created debt records for operational meal/dining expenses
-    if (
-      rCustom === "HTG-260814-001" ||
-      (r.amount === 215000 &&
-        (rTitle.includes("makan") ||
-          rTitle.includes("minum") ||
-          rTitle.includes("jamu") ||
-          rTitle.includes("belanja")))
-    ) {
-      return false;
-    }
-
-    // Exclude Kasbon records from general Hutang/Piutang (Kasbon is strictly managed in dedicated Kasbon Pegawai menu)
-    if (
-      rTitle.includes("kasbon") ||
-      rDesc.includes("kasbon") ||
-      rCat.includes("kasbon") ||
-      rTitle.includes("fauzyawan") ||
-      (isInternalPersonnel(r.contactName) && !r.projectId && (rTitle.includes("pinjaman") || rDesc.includes("pinjaman")))
-    ) {
-      return false;
-    }
-
-    return true;
-  });
-
-  const list: DebtRecord[] = [];
-  const seenPiutangKeys = new Set<string>();
-
-  filtered.forEach((r) => {
-    if (r.type === "PIUTANG") {
-      const resolvedClient = resolvePiutangClient(r, projects);
-      const customIdUpper = (r.customId || "").toUpperCase();
-      
-      // If pure personal advance without project info, do not put it into Piutang (Kasbon is in separate menu)
-      const isPurePersonalAdvance = isInternalPersonnel(r.contactName) && !r.projectId && !TERMIN_SCHEDULES[customIdUpper];
-      if (isPurePersonalAdvance) {
-        return;
-      }
-
-      // Determine unique deduplication key for Piutang projects
-      const piutangKey = customIdUpper.startsWith("PTG-")
-        ? customIdUpper
-        : (r.projectId ? `PROJ-${r.projectId}` : `TITLE-${(r.title || resolvedClient).toLowerCase().trim()}`);
-
-      // If duplicate Piutang record exists, consolidate and keep the canonical one
-      if (seenPiutangKeys.has(piutangKey)) {
-        const existingIdx = list.findIndex((x) => {
-          if (x.type !== "PIUTANG") return false;
-          const xCustom = (x.customId || "").toUpperCase();
-          const xKey = xCustom.startsWith("PTG-")
-            ? xCustom
-            : (x.projectId ? `PROJ-${x.projectId}` : `TITLE-${(x.title || x.contactName).toLowerCase().trim()}`);
-          return xKey === piutangKey;
-        });
-
-        if (existingIdx >= 0) {
-          const existing = list[existingIdx];
-          const rHasPayments = (r.payments || []).length > 0;
-          const existingHasPayments = (existing.payments || []).length > 0;
-          if (rHasPayments && !existingHasPayments) {
-            list[existingIdx] = {
-              ...r,
-              contactName: resolvedClient,
-            };
-          }
-        }
-        return;
-      }
-
-      seenPiutangKeys.add(piutangKey);
-      list.push({
-        ...r,
-        contactName: resolvedClient,
-      });
-    } else {
-      list.push(r);
-    }
-  });
-
-  (projects || []).forEach((p) => {
-    const pNameLower = (p.name || "").toLowerCase().trim();
-    if (!pNameLower) return;
-
-    const exists = list.some((r) => {
-      if (r.type !== "PIUTANG") return false;
-      if (r.projectId && r.projectId === p.id) return true;
-      if (r.customId && r.customId === p.id) return true;
-      const rTitleLower = (r.title || "").toLowerCase().trim();
-      if (rTitleLower && pNameLower && (rTitleLower.includes(pNameLower) || pNameLower.includes(rTitleLower))) return true;
-      return false;
-    });
-
-    if (!exists) {
-      const isPpnEnabled = p.hasPpn !== false;
-      const dpp = p.contractValue || 0;
-      const totalWithPpn = isPpnEnabled ? Math.round(dpp * 1.11) : dpp;
-
-      list.push({
-        id: `PTG-PROJ-${p.id}`,
-        customId: (p as any).customId || `PTG-${p.id.slice(-6)}`,
-        projectId: p.id,
-        type: "PIUTANG",
-        title: p.name,
-        contactName: p.client || `Client ${p.name}`,
-        amount: totalWithPpn,
-        dueDate: p.endDate
-          ? (isNaN(Number(p.endDate))
-              ? p.endDate
-              : new Date(Number(p.endDate)).toISOString().split('T')[0])
-          : new Date().toISOString().split('T')[0],
-        status: "UNPAID",
-        description: `Rekam Piutang & Termin Proyek ${p.name}`,
-        recordedBy: "Sistem",
-        timestamp: (p as any).createdAt || Date.now(),
-        terms: p.paymentTerms
-          ? p.paymentTerms.map((t: any, idx: number) => ({
-              name: t.name || `Termin ${idx + 1}`,
-              description: t.description || t.name || `Termin ${idx + 1}`,
-              amount: 0,
-              expectedAmount: t.amount || 0,
-              percentage: t.percentage || 0,
-              invoiceDate: t.invoiceDate || "-",
-              dueDate: t.dueDate || "-",
-              paymentDate: "-",
-              status: "BELUM BAYAR",
-              notes: "-",
-            }))
-          : [],
-        payments: [],
-      });
-    }
-  });
-
-  // Synthesize and auto-integrate personal spending (Talangan Pribadi / Duit Pribadi) into Hutang PT
-  (financialRecords || []).forEach((f) => {
-    if (f.type !== "OUT") return;
-
-    const isExplicitPersonalSumber = f.sumberDana === "REKENING PRIBADI" || f.sumberDana === "DANA PRIBADI" || f.sumberDana === "PRIBADI";
-    const isPersonalSpendFlow = f.flowType === "OUT_PERSONAL_SPEND";
-    const isPrsCustomId = (f.customId || "").toUpperCase().startsWith("PRS-");
-    const descUpper = (f.description || "").toUpperCase();
-    const isDescPersonal = descUpper.includes("DUIT PRIBADI") || descUpper.includes("DANA PRIBADI") || descUpper.includes("UANG PRIBADI") || descUpper.includes("TALANGAN PRIBADI") || descUpper.includes("TALANGAN");
-
-    // Must not be an internal custody transfer from PT to staff
-    if (f.flowType === "OUT_PERSONAL_TRANSFER") return;
-
-    // Must not be Kasbon or Salary (these have their own dedicated ledger)
-    const catLower = (f.category || "").toLowerCase();
-    if (catLower.includes("kasbon") || catLower.includes("gaji") || (f as any).isKasbon) return;
-    if (descUpper.includes("KASBON") && !isDescPersonal) return;
-
-    // If it has bank allocations linking to PT bank topups and is NOT personal funds, it was paid from PT Petty Cash
-    const hasPtBankAlloc = f.refIdBank && f.refIdBank.trim() !== "" && !isExplicitPersonalSumber;
-    if (hasPtBankAlloc && !isDescPersonal) return;
-
-    // Determine if this is personal out-of-pocket spending
-    const isPersonalOutOfPocket = isExplicitPersonalSumber || isDescPersonal || ((isPersonalSpendFlow || isPrsCustomId) && (!f.refIdBank || f.refIdBank.trim() === ""));
-    if (!isPersonalOutOfPocket) return;
-
-    // Determine Creditor (Pemilik Uang / Talangan Pribadi)
-    const creditorName = 
-      (f as any).pemilikUangPribadi ||
-      f.personalHolder ||
-      (descUpper.includes("FAISAL") ? "Faisal Mustopa (Admin)" :
-       descUpper.includes("WELI") ? "Weli Mahesa" :
-       descUpper.includes("YASIN") ? "Muhammad Yasin" :
-       descUpper.includes("JIDAN") ? "Jidan Ramadhan" :
-       (f.recordedBy || "Faisal Mustopa (Admin)"));
-
-    const fCustomUpper = (f.customId || "").toUpperCase();
-    const fIdLower = (f.id || "").toLowerCase();
-
-    // Check if already registered in debtRecords or list
-    const alreadyExists = list.some((r) => {
-      if (r.type !== "HUTANG") return false;
-      const rCustomUpper = (r.customId || "").toUpperCase();
-      const rIdLower = (r.id || "").toLowerCase();
-      const originFinId = ((r as any).originFinancialRecordId || "").toLowerCase();
-      const originCustom = ((r as any).originCustomId || "").toUpperCase();
-
-      if (rIdLower === `htg-prs-${fCustomUpper.toLowerCase()}` || rIdLower === `htg-prs-${fIdLower}`) return true;
-      if (rCustomUpper === `HTG-${fCustomUpper}` || rCustomUpper === fCustomUpper) return true;
-      if (originFinId && (originFinId === fIdLower || originFinId === fCustomUpper.toLowerCase())) return true;
-      if (originCustom && (originCustom === fCustomUpper || originCustom === fIdLower)) return true;
-      if (f.refHutang && (rCustomUpper === f.refHutang.toUpperCase() || (r.title && r.title.toUpperCase() === f.refHutang.toUpperCase()))) return true;
-      if (f.linkedDebtId && (r.id === f.linkedDebtId || r.customId === f.linkedDebtId)) return true;
-      return false;
-    });
-
-    if (!alreadyExists) {
-      list.push({
-        id: `HTG-PRS-${f.customId || f.id}`,
-        customId: (f.customId && f.customId.startsWith("PRS-")) ? `HTG-${f.customId}` : `HTG-PRS-${f.customId || f.id}`,
-        projectId: f.referenceId || (f as any).projectId || "",
-        type: "HUTANG",
-        title: `[TALANGAN PRIBADI] ${f.description || f.category || "Pengeluaran Pribadi"}`,
-        contactName: creditorName,
-        amount: f.amount || 0,
-        dueDate: f.date || new Date().toISOString().split('T')[0],
-        status: "UNPAID",
-        description: `Dana talangan pribadi oleh ${creditorName} untuk operasional/proyek PT (Ref Transaksi: ${f.customId || f.id})`,
-        recordedBy: f.recordedBy || creditorName || "Sistem",
-        timestamp: f.timestamp || Date.now(),
-        payments: [],
-        originFinancialRecordId: f.id,
-        originCustomId: f.customId,
-      } as any);
-    }
-  });
-
-  return list;
-};
-
-const getScheduleForRecord = (
-  record: DebtRecord,
-  projectsList: Project[] = [],
-  financialRecordsList: FinancialRecord[] = []
-) => {
-  if (!record) {
-    return {
-      projectName: "-",
-      contractNo: "-",
-      startDate: "-",
-      owner: "-",
-      contractValue: 0,
-      dppValue: 0,
-      ppnValue: 0,
-      isPpnEnabled: false,
-      terms: [],
-      totalPaid: 0,
-      allPayments: [],
-    };
-  }
-
-  const customId = record.customId || "";
-  let rawTerms: any[] = [];
-
-  const linkedProj = (projectsList || []).find(p => 
-    (record.projectId && p.id === record.projectId) ||
-    (record.customId && (p.id === record.customId || (p as any).customId === record.customId)) ||
-    (p.name && record.title && (
-      p.name.toLowerCase().includes(record.title.toLowerCase()) || 
-      record.title.toLowerCase().includes(p.name.toLowerCase())
-    ))
-  );
-
-  let projName = linkedProj?.name || record.title;
-  let contractNo = record.customId || linkedProj?.id || "-";
-  let startDate = linkedProj?.startDate 
-    ? (isNaN(Number(linkedProj.startDate)) ? linkedProj.startDate : new Date(Number(linkedProj.startDate)).toISOString().split('T')[0])
-    : "-";
-  let owner = linkedProj?.client || record.contactName;
-
-  const isHutang = record.type === "HUTANG";
-  const isPpnEnabled = isHutang ? false : (linkedProj ? (linkedProj.hasPpn !== false) : false);
-  const dppVal = isHutang 
-    ? (record.amount || 0) 
-    : (linkedProj ? (linkedProj.contractValue || 0) : (isPpnEnabled ? Math.round((record.amount || 0) / 1.11) : (record.amount || 0)));
-  const grossFromProj = isHutang
-    ? (record.amount || 0)
-    : (linkedProj ? (isPpnEnabled ? Math.round((linkedProj.contractValue || 0) * 1.11) : (linkedProj.contractValue || 0)) : (record.amount || 0));
-
-  let contractVal = isHutang ? (record.amount || 0) : (grossFromProj || record.amount || 0);
-  const ppnVal = isPpnEnabled ? (contractVal - dppVal) : 0;
-
-  const recIdLower = (record.id || "").toLowerCase();
-  const recCustomId = (record.customId || "").toLowerCase();
-  const recCleanId = recCustomId.replace(/^htg-/, "");
-  const recOriginCustomId = (((record as any).originCustomId as string) || "").toLowerCase();
-  const recOriginFinId = (((record as any).originFinancialRecordId as string) || "").toLowerCase();
-  const recRefHutang = (((record as any).refHutang as string) || "").toLowerCase();
-
-  const isPiutang = record.type === "PIUTANG" || !record.type;
-  const targetFlow = isPiutang ? "IN" : "OUT";
-
-  // Filter record.payments so expenses never bleed into Piutang payments
-  const initialPayments: DebtPayment[] = (record.payments || []).filter((p) => {
-    if (!isPiutang) return true;
-    if (p.financialRecordId) {
-      const linkedFin = (financialRecordsList || []).find(
-        (f) => f.id === p.financialRecordId || f.customId === p.financialRecordId
-      );
-      if (linkedFin && linkedFin.type === "OUT") {
-        return false; // Exclude project expense from payments received
-      }
-    }
-    const noteLower = (p.note || "").toLowerCase();
-    if (
-      noteLower.includes("belanja") ||
-      noteLower.includes("operasional") ||
-      noteLower.includes("pembelian") ||
-      noteLower.includes("material") ||
-      noteLower.includes("panel") ||
-      noteLower.includes("pompa") ||
-      noteLower.includes("fitting") ||
-      noteLower.includes("grease") ||
-      noteLower.includes("biaya") ||
-      noteLower.includes("pengeluaran") ||
-      noteLower.includes("vendor") ||
-      noteLower.includes("subkon") ||
-      noteLower.includes("makan") ||
-      noteLower.includes("jamu") ||
-      noteLower.includes("gaji") ||
-      noteLower.includes("upah")
-    ) {
-      return false;
-    }
-    return true;
-  });
-
-  const allPayments: DebtPayment[] = [...initialPayments];
-
-  // Track project expenses (belanja/operasional PT untuk proyek ini)
-  let totalProjectExpenses = 0;
-
-  (financialRecordsList || []).forEach((f) => {
-    const fRefId = (f.referenceId || "").toLowerCase();
-    const fLinkedDebt = (f.linkedDebtId || "").toLowerCase();
-    const fRefPiutang = (f.refPiutang || "").toLowerCase();
-    const fRefHutang = (f.refHutang || "").toLowerCase();
-    const fCustomId = (f.customId || "").toLowerCase();
-    const fIdLower = (f.id || "").toLowerCase();
-    const fProjId = (f.projectId || "").toLowerCase();
-
-    // Project expense tracking for Piutang / Proyek
-    if (isPiutang && f.type === "OUT") {
-      let isProjExpense = false;
-      if (record.projectId && (fProjId === (record.projectId || "").toLowerCase() || fRefId === (record.projectId || "").toLowerCase())) {
-        isProjExpense = true;
-      } else if (fLinkedDebt && (fLinkedDebt === recIdLower || (recCustomId && fLinkedDebt === recCustomId))) {
-        isProjExpense = true;
-      } else if (fRefPiutang && (fRefPiutang === recIdLower || (recCustomId && fRefPiutang === recCustomId))) {
-        isProjExpense = true;
-      } else if (linkedProj && (f.projectId === linkedProj.id || (linkedProj.name && f.description && f.description.toLowerCase().includes(linkedProj.name.toLowerCase())))) {
-        isProjExpense = true;
-      } else if (projName && f.description && f.description.toLowerCase().includes(projName.toLowerCase())) {
-        isProjExpense = true;
-      }
-
-      if (isProjExpense) {
-        totalProjectExpenses += (f.amount || 0);
-      }
-    }
-
-    if (f.type !== targetFlow) return;
-
-    // Never match the originating transaction itself as repayment
-    if (
-      fIdLower === recIdLower || 
-      (recCustomId && (fCustomId === recCustomId || fIdLower === `htg-fin-${recCustomId}` || fIdLower === `htg-prs-${recCustomId}` || fIdLower === `htg-${recCustomId}`)) ||
-      (recOriginCustomId && (fCustomId === recOriginCustomId || fIdLower === recOriginCustomId)) ||
-      (recOriginFinId && (fIdLower === recOriginFinId || fCustomId === recOriginFinId))
-    ) {
-      return;
-    }
-
-    let matches = false;
-
-    if (isPiutang) {
-      // For PIUTANG: IN flow referencing this project, debt ID, or termin via structured fields
-      if (f.linkedDebtId && (fLinkedDebt === recIdLower || (recCustomId && fLinkedDebt === recCustomId))) {
-        matches = true;
-      } else if (f.refPiutang && (
-        fRefPiutang === recIdLower || 
-        (recCustomId && fRefPiutang === recCustomId)
-      )) {
-        matches = true;
-      } else if (f.referenceId && (
-        fRefId === recIdLower || 
-        (recCustomId && fRefId === recCustomId) ||
-        (record.projectId && fRefId === (record.projectId || "").toLowerCase())
-      )) {
-        matches = true;
-      } else if (record.projectId && f.projectId && f.projectId.toLowerCase() === (record.projectId || "").toLowerCase()) {
-        matches = true;
-      }
-    } else {
-      // For HUTANG: MUST be from PT funds (reimbursement/pelunasan), NOT personal spending
-      const isPersonalSpending = f.sumberDana === "REKENING PRIBADI" || f.sumberDana === "DANA PRIBADI" || f.sumberDana === "PRIBADI" || f.flowType === "OUT_PERSONAL_SPEND" || (f.customId && f.customId.startsWith("PRS-"));
-      
-      // An expense f cannot be its own debt repayment if it's the expense that created/carries the debt reference
-      const isOriginSpending = (recCustomId && fRefHutang === recCustomId) || (recIdLower && fRefHutang === recIdLower) || (recOriginCustomId && fCustomId === recOriginCustomId);
-
-      if (!isPersonalSpending && !isOriginSpending) {
-        // Direct link via structured fields (linkedDebtId, refHutang, or referenceId)
-        if (f.linkedDebtId && (
-          fLinkedDebt === recIdLower || 
-          (recCustomId && fLinkedDebt === recCustomId) ||
-          (recCleanId && fLinkedDebt === recCleanId) ||
-          (recOriginCustomId && fLinkedDebt === recOriginCustomId) ||
-          (recOriginFinId && fLinkedDebt === recOriginFinId)
-        )) {
-          matches = true;
-        } else if (f.refHutang && (
-          fRefHutang === recIdLower ||
-          (recCustomId && fRefHutang === recCustomId) ||
-          (recOriginCustomId && fRefHutang === recOriginCustomId) ||
-          (recOriginFinId && fRefHutang === recOriginFinId)
-        )) {
-          matches = true;
-        } else if (f.referenceId && (
-          fRefId === recIdLower ||
-          (recCustomId && fRefId === recCustomId) ||
-          (recOriginCustomId && fRefId === recOriginCustomId) ||
-          (recOriginFinId && fRefId === recOriginFinId)
-        )) {
-          matches = true;
-        }
-      }
-    }
-
-    if (matches) {
-      // Check if this financial record is already linked to an existing payment slot
-      const existingSlot = allPayments.find(
-        (p) =>
-          (p.financialRecordId && (p.financialRecordId === f.id || p.financialRecordId === f.customId)) ||
-          p.id === f.id ||
-          p.id === f.customId
-      );
-
-      if (existingSlot) {
-        // Link this financial record to the existing payment slot instead of duplicating
-        if (!existingSlot.financialRecordId) {
-          existingSlot.financialRecordId = f.id || f.customId;
-        }
-        if (f.date) {
-          existingSlot.date = f.date;
-        }
-      } else {
-        allPayments.push({
-          id: f.id || f.customId || Math.random().toString(36).substr(2, 9),
-          amount: f.amount,
-          date: f.date,
-          note: f.description || (isPiutang ? "Penerimaan Piutang / Termin Proyek" : "Pembayaran Hutang"),
-          financialRecordId: f.id || f.customId,
-          recordedBy: f.recordedBy || "Sistem",
-        });
-      }
-    }
-  });
-
-  const totalPaid = allPayments.reduce((sum, p) => sum + p.amount, 0);
-
-  // 2. Build Base Terms Schedule
-  if (linkedProj?.paymentTerms && linkedProj.paymentTerms.length > 0) {
-    rawTerms = linkedProj.paymentTerms.map((pt: any, idx: number) => {
-      const targetAmt = pt.percentage 
-        ? Math.round(((pt.percentage || 0) / 100) * contractVal)
-        : (pt.amount || 0);
-      return {
-        name: pt.name || `Termin ${idx + 1}`,
-        description: pt.description || pt.name || `Termin ${idx + 1}`,
-        percentage: pt.percentage || 0,
-        expectedAmount: targetAmt,
-        invoiceDate: pt.invoiceDate || "-",
-        dueDate: pt.dueDate || "-",
-        paymentDate: "-",
-        status: "BELUM BAYAR",
-        notes: "-",
-      };
-    });
-
-    // Ensure sum of expectedAmounts equals contractVal for percentage terms
-    const sumExpected = rawTerms.reduce((sum, t) => sum + (t.expectedAmount || 0), 0);
-    const diff = contractVal - sumExpected;
-    if (diff !== 0 && rawTerms.length > 0) {
-      rawTerms[rawTerms.length - 1].expectedAmount += diff;
-    }
-  } else if (TERMIN_SCHEDULES[customId]) {
-    const staticSched = TERMIN_SCHEDULES[customId];
-    projName = linkedProj?.name || staticSched.projectName || record.title;
-    contractNo = staticSched.contractNo || record.customId || "-";
-    startDate = linkedProj?.startDate 
-      ? (isNaN(Number(linkedProj.startDate)) ? linkedProj.startDate : new Date(Number(linkedProj.startDate)).toISOString().split('T')[0])
-      : (staticSched.startDate || "-");
-    owner = linkedProj?.client || staticSched.owner || record.contactName;
-
-    rawTerms = staticSched.terms.map((stTerm: any, idx: number) => {
-      const savedTerm = (record.terms && record.terms[idx]) || null;
-      const targetAmt = (savedTerm && savedTerm.expectedAmount !== undefined)
-        ? savedTerm.expectedAmount
-        : (stTerm.expectedAmount !== undefined ? stTerm.expectedAmount : (stTerm.amount || Math.round(((stTerm.percentage || 0) / 100) * contractVal)));
-      return {
-        ...stTerm,
-        expectedAmount: targetAmt,
-        status: (savedTerm && savedTerm.status) ? savedTerm.status : "BELUM BAYAR",
-        paymentDate: "-",
-        notes: "-",
-      };
-    });
-  } else if (record.terms && record.terms.length > 0) {
-    rawTerms = record.terms.map((t: any) => ({
-      ...t,
-      expectedAmount: t.expectedAmount !== undefined ? t.expectedAmount : (t.amount || Math.round(((t.percentage || 0) / 100) * contractVal)),
-    }));
-  }
-
-  if (rawTerms.length === 0) {
-    rawTerms.push({
-      name: "DOWN PAYMENT / TERMIN 1",
-      description: "Pembayaran Termin Proyek",
-      amount: 0,
-      expectedAmount: contractVal,
-      percentage: 100,
-      invoiceDate: "-",
-      dueDate: record.dueDate || "-",
-      paymentDate: "-",
-      status: "BELUM BAYAR",
-      notes: "Kewajiban Tagihan",
-    });
-  }
-
-  // 3. Sequentially allocate totalPaid across rawTerms
-  let unallocated = totalPaid;
-  const latestPayDate = allPayments.length > 0 ? allPayments[allPayments.length - 1].date : "-";
-
-  const formattedTerms = rawTerms.map((term: any, idx: number) => {
-    const targetAmt = term.expectedAmount !== undefined
-      ? term.expectedAmount
-      : (term.amount || Math.round(((term.percentage || 0) / 100) * contractVal));
-
-    let paidForThisTerm = 0;
-    if (unallocated > 0) {
-      paidForThisTerm = Math.min(unallocated, targetAmt);
-      unallocated -= paidForThisTerm;
-    }
-
-    let calculatedStatus = "BELUM BAYAR";
-    if (targetAmt > 0 && paidForThisTerm >= targetAmt) {
-      calculatedStatus = "LUNAS";
-    } else if (paidForThisTerm > 0) {
-      calculatedStatus = "DICICIL";
-    } else {
-      calculatedStatus = "BELUM BAYAR";
-    }
-
-    const termCustomId = `TERM-${String(idx + 1).padStart(3, "0")}`;
-
-    let autoNotes = term.notes && term.notes !== "-" ? term.notes : "";
-    if (paidForThisTerm > 0 && paidForThisTerm < targetAmt) {
-      const remainingForTerm = targetAmt - paidForThisTerm;
-      autoNotes = `Cicilan / Parsial: Masuk Rp ${paidForThisTerm.toLocaleString("id-ID")} (Sisa Rp ${remainingForTerm.toLocaleString("id-ID")})`;
-    } else if (paidForThisTerm >= targetAmt && targetAmt > 0) {
-      autoNotes = `Lunas: Realisasi Rp ${paidForThisTerm.toLocaleString("id-ID")}`;
-    }
-
-    return {
-      ...term,
-      customId: termCustomId,
-      amount: paidForThisTerm,
-      expectedAmount: targetAmt,
-      paymentDate: paidForThisTerm > 0 ? (term.paymentDate && term.paymentDate !== "-" ? term.paymentDate : latestPayDate) : "-",
-      status: calculatedStatus,
-      notes: autoNotes || "-",
-    };
-  });
-
-  return {
-    projectName: projName,
-    contractNo: contractNo,
-    startDate: startDate,
-    owner: owner,
-    contractValue: contractVal,
-    dppValue: dppVal,
-    ppnValue: ppnVal,
-    isPpnEnabled: isPpnEnabled,
-    terms: formattedTerms,
-    totalPaid: totalPaid,
-    allPayments: allPayments,
-    totalExpenses: totalProjectExpenses,
-    netProfit: totalPaid - totalProjectExpenses,
-    projectedProfit: contractVal - totalProjectExpenses,
-  };
-};
-
-const AdminDebtScreen = ({
-  debtRecords,
-  financialRecords = [],
-  projects,
-  onNavigate,
-  user,
-  roles,
-  logActivity,
-  handleClearOnlyFinanceAndDebt,
-  isImportingFinanceData,
-  setDebtRecords,
-  setFinancialRecords,
-}: {
-  debtRecords: DebtRecord[];
-  financialRecords?: FinancialRecord[];
-  projects: Project[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-  logActivity: (m: string, a: string, d: string) => Promise<void>;
-  handleClearOnlyFinanceAndDebt?: () => Promise<void>;
-  isImportingFinanceData?: boolean;
-  setDebtRecords?: React.Dispatch<React.SetStateAction<DebtRecord[]>>;
-  setFinancialRecords?: React.Dispatch<React.SetStateAction<FinancialRecord[]>>;
-}) => {
-  const [activeTab, setActiveTab] = useState<"HUTANG" | "PIUTANG">("HUTANG");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showPaymentModal, setShowPaymentModal] = useState<DebtRecord | null>(
-    null,
-  );
-  const [filterProject, setFilterProject] = useState("ALL");
-  const [isExporting, setIsExporting] = useState(false);
-  const [formData, setFormData] = useState({
-    title: "",
-    contactName: "",
-    amount: "",
-    dueDate: new Date().toISOString().split("T")[0],
-    description: "",
-    projectId: "",
-    status: "UNPAID" as any,
-  });
-
-  const [paymentForm, setPaymentForm] = useState({
-    amount: "",
-    date: new Date().toISOString().split("T")[0],
-    note: "",
-    paymentMethod: "TRANSFER" as "CASH" | "TRANSFER",
-    sumberDana: "REKENING PT",
-  });
-
-  const [showGroupPaymentModal, setShowGroupPaymentModal] = useState<{ contactName: string; totalRemaining: number; debtType: "HUTANG" | "PIUTANG" } | null>(null);
-  const [groupPaymentForm, setGroupPaymentForm] = useState({
-    amount: "",
-    date: new Date().toISOString().split("T")[0],
-    note: "",
-    paymentMethod: "TRANSFER" as "CASH" | "TRANSFER",
-    sumberDana: "REKENING PT",
-  });
-
-  const [showEditModal, setShowEditModal] = useState<DebtRecord | null>(null);
-  const [editForm, setEditForm] = useState({
-    title: "",
-    contactName: "",
-    amount: "",
-    dueDate: "",
-    description: "",
-    projectId: "",
-    type: "HUTANG" as "HUTANG" | "PIUTANG",
-  });
-
-  const [editingPaymentId, setEditingPaymentId] = useState<string | null>(null);
-  const [paymentEditForm, setPaymentEditForm] = useState({
-    amount: "",
-    date: "",
-    note: "",
-    status: "LUNAS",
-  });
-
-  const [selectedTerminRecord, setSelectedTerminRecord] = useState<DebtRecord | null>(null);
-
-  const [selectedContactDetail, setSelectedContactDetail] = useState<{
-    name: string;
-    type: "HUTANG" | "PIUTANG";
-  } | null>(null);
-  const [contactDetailTab, setContactDetailTab] = useState<"DEBTS" | "FINANCIAL">("DEBTS");
-  const [contactFinancialFilter, setContactFinancialFilter] = useState<"ALL" | "IN" | "OUT">("ALL");
-
-  const [showPdfConfigModal, setShowPdfConfigModal] = useState(false);
-  const [pdfConfigRecord, setPdfConfigRecord] = useState<DebtRecord | null>(null);
-  const [pdfOptions, setPdfOptions] = useState({
-    companyName: "PT GARDA INOVASI GLOBALTECH",
-    includeAddress: true,
-    addressText: "M-Gold Tower, Lantai 16, Jl. KH. Noer Ali, Bekasi, Jawa Barat | Email: info@gig.co.id",
-    includeLogo: false,
-    logoUrl: "",
-    createdBy: "FAISAL MUSTOPA",
-    createdByRole: "Staf Administrasi Keuangan",
-    approvedBy: "MUHAMMAD YASIN",
-    approvedByRole: "Direktur Utama",
-    ownerBy: "",
-    ownerByRole: "Owner / Klien",
-  });
-
-  const handleUpdateTermStatus = async (record: DebtRecord, termIndex: number, newStatus: string) => {
-    let existingTerms = record.terms && record.terms.length > 0
-      ? [...record.terms]
-      : (TERMIN_SCHEDULES[record.customId || ""]
-          ? JSON.parse(JSON.stringify(TERMIN_SCHEDULES[record.customId || ""].terms))
-          : []);
-
-    if (!existingTerms || existingTerms.length <= termIndex) return;
-
-    existingTerms[termIndex] = {
-      ...existingTerms[termIndex],
-      status: newStatus as any,
-    };
-
-    const payload = {
-      terms: existingTerms,
-    };
-
-    await dbService.setDocument("debtRecords", record.id, {
-      ...record,
-      terms: existingTerms,
-    });
-
-    const updatedRec = {
-      ...record,
-      terms: existingTerms,
-    };
-
-    setDebtRecords?.((prev) =>
-      prev.map((d) => (d.id === record.id ? updatedRec : d))
-    );
-
-    if (selectedTerminRecord && selectedTerminRecord.id === record.id) {
-      setSelectedTerminRecord(updatedRec);
-    }
-
-    await logActivity(
-      "DEBT",
-      "UPDATE",
-      `Mengubah status termin "${existingTerms[termIndex].name}" menjadi ${newStatus} pada ${record.title} [${record.customId || record.id}]`
-    );
-  };
-
-  const effectiveDebtRecords = useMemo(() => {
-    return getEffectiveDebtRecords(debtRecords, projects, financialRecords);
-  }, [debtRecords, projects, financialRecords]);
-
-  const currentRecord = useMemo(() => {
-    if (!showEditModal) return null;
-    return effectiveDebtRecords.find((d) => d.id === showEditModal.id) || showEditModal;
-  }, [showEditModal, effectiveDebtRecords]);
-
-  const filteredRecords = useMemo(() => {
-    const records = effectiveDebtRecords.filter(
-      (r) =>
-        r.type === activeTab &&
-        (r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.contactName.toLowerCase().includes(searchQuery.toLowerCase())) &&
-        (filterProject === "ALL" || r.projectId === filterProject),
-    );
-    return [...records].sort((a, b) => {
-      const idA = a.customId || "";
-      const idB = b.customId || "";
-      return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
-    });
-  }, [effectiveDebtRecords, activeTab, searchQuery, filterProject]);
-
-  const totalHutang = useMemo(() => {
-    return effectiveDebtRecords
-      .filter((r) => r.type === "HUTANG" && (filterProject === "ALL" || r.projectId === filterProject))
-      .reduce((sum, r) => {
-        const sched = getScheduleForRecord(r, projects, financialRecords);
-        return sum + Math.max(0, (sched.contractValue || r.amount || 0) - sched.totalPaid);
-      }, 0);
-  }, [effectiveDebtRecords, filterProject, projects, financialRecords]);
-
-  const totalPiutang = useMemo(() => {
-    return effectiveDebtRecords
-      .filter((r) => r.type === "PIUTANG" && (filterProject === "ALL" || r.projectId === filterProject))
-      .reduce((sum, r) => {
-        const sched = getScheduleForRecord(r, projects, financialRecords);
-        return sum + Math.max(0, (sched.contractValue || r.amount || 0) - sched.totalPaid);
-      }, 0);
-  }, [effectiveDebtRecords, filterProject, projects, financialRecords]);
-
-  const debtTotals = useMemo(() => {
-    const filterByProj = (r: any) => filterProject === "ALL" || r.projectId === filterProject;
-    
-    // HUTANG
-    const hRecords = effectiveDebtRecords.filter(r => r.type === "HUTANG" && filterByProj(r));
-    const hutangAwal = hRecords.reduce((sum, r) => {
-      const sched = getScheduleForRecord(r, projects, financialRecords);
-      return sum + (sched.contractValue || r.amount || 0);
-    }, 0);
-    const hutangTerbayar = hRecords.reduce((sum, r) => {
-      const sched = getScheduleForRecord(r, projects, financialRecords);
-      return sum + sched.totalPaid;
-    }, 0);
-    const hutangSisa = hRecords.reduce((sum, r) => {
-      const sched = getScheduleForRecord(r, projects, financialRecords);
-      return sum + Math.max(0, (sched.contractValue || r.amount || 0) - sched.totalPaid);
-    }, 0);
-
-    // PIUTANG
-    const pRecords = effectiveDebtRecords.filter(r => r.type === "PIUTANG" && filterByProj(r));
-    const piutangAwal = pRecords.reduce((sum, r) => {
-      const sched = getScheduleForRecord(r, projects, financialRecords);
-      return sum + (sched.contractValue || r.amount || 0);
-    }, 0);
-    const piutangTerbayar = pRecords.reduce((sum, r) => {
-      const sched = getScheduleForRecord(r, projects, financialRecords);
-      return sum + sched.totalPaid;
-    }, 0);
-    const piutangSisa = pRecords.reduce((sum, r) => {
-      const sched = getScheduleForRecord(r, projects, financialRecords);
-      return sum + Math.max(0, (sched.contractValue || r.amount || 0) - sched.totalPaid);
-    }, 0);
-
-    return {
-      hutangAwal,
-      hutangTerbayar,
-      hutangSisa,
-      piutangAwal,
-      piutangTerbayar,
-      piutangSisa
-    };
-  }, [effectiveDebtRecords, filterProject, projects, financialRecords]);
-
-  const contactGroupedTotals = useMemo(() => {
-    const filterByProj = (r: any) => filterProject === "ALL" || r.projectId === filterProject;
-    const relevantRecords = effectiveDebtRecords.filter((r) => r.type === activeTab && filterByProj(r));
-
-    const groups: {
-      [key: string]: {
-        name: string;
-        totalAmount: number;
-        totalPaid: number;
-        totalRemaining: number;
-        count: number;
-      };
-    } = {};
-
-    relevantRecords.forEach((r) => {
-      const rawName = (r.contactName || "Tanpa Nama").trim();
-      const displayName = rawName.toUpperCase().includes("YASIN") ? "MUHAMMAD YASIN" : rawName;
-      const groupKey = displayName.toUpperCase();
-
-      if (!groups[groupKey]) {
-        groups[groupKey] = {
-          name: displayName,
-          totalAmount: 0,
-          totalPaid: 0,
-          totalRemaining: 0,
-          count: 0,
-        };
-      }
-      const sched = getScheduleForRecord(r, projects, financialRecords);
-      const paid = sched.totalPaid;
-      const initialAmt = sched.contractValue || r.amount || 0;
-      const remaining = Math.max(0, initialAmt - paid);
-      groups[groupKey].totalAmount += initialAmt;
-      groups[groupKey].totalPaid += paid;
-      groups[groupKey].totalRemaining += remaining;
-      groups[groupKey].count += 1;
-    });
-
-    return Object.values(groups)
-      .filter((g) => g.totalRemaining > 0 || g.totalAmount > 0)
-      .sort((a, b) => b.totalRemaining - a.totalRemaining);
-  }, [effectiveDebtRecords, activeTab, filterProject, projects, financialRecords]);
-
-  // Records for currently clicked contact in the summary cards
-  const contactDetailRecords = useMemo(() => {
-    if (!selectedContactDetail) return [];
-    const targetKey = selectedContactDetail.name.trim().toUpperCase();
-    return effectiveDebtRecords.filter((r) => {
-      if (r.type !== selectedContactDetail.type) return false;
-      const rawName = (r.contactName || "Tanpa Nama").trim();
-      const displayName = rawName.toUpperCase().includes("YASIN") ? "MUHAMMAD YASIN" : rawName;
-      return displayName.toUpperCase() === targetKey;
-    });
-  }, [effectiveDebtRecords, selectedContactDetail]);
-
-  // Financial transactions linked to the clicked contact (from pengeluaran/pemasukan)
-  const contactFinancialRecords = useMemo(() => {
-    if (!selectedContactDetail) return [];
-    const targetKey = selectedContactDetail.name.trim().toUpperCase();
-    const debtIds = new Set(contactDetailRecords.map((r) => (r.id || "").toLowerCase()));
-    const customIds = new Set(contactDetailRecords.map((r) => (r.customId || "").toLowerCase()).filter(Boolean));
-    const projectIds = new Set(contactDetailRecords.map((r) => (r.projectId || "").toLowerCase()).filter(Boolean));
-    const projectTitles = contactDetailRecords.map((r) => (r.title || "").toLowerCase().trim()).filter(Boolean);
-
-    return financialRecords.filter((f) => {
-      const fLinkedDebt = (f.linkedDebtId || "").toLowerCase();
-      const fRefHutang = (f.refHutang || "").toLowerCase();
-      const fRefPiutang = (f.refPiutang || "").toLowerCase();
-      const fRefId = (f.referenceId || "").toLowerCase();
-      const fHolder = (f.personalHolder || "").trim().toUpperCase();
-      const fPenerima = (f.rekPenerima || "").trim().toUpperCase();
-      const fProjId = (f.projectId || "").toLowerCase();
-
-      // 1. Direct structured debt reference
-      if (fLinkedDebt && (debtIds.has(fLinkedDebt) || customIds.has(fLinkedDebt))) return true;
-      if (fRefHutang && (debtIds.has(fRefHutang) || customIds.has(fRefHutang))) return true;
-      if (fRefPiutang && (debtIds.has(fRefPiutang) || customIds.has(fRefPiutang))) return true;
-      if (fRefId && (debtIds.has(fRefId) || customIds.has(fRefId))) return true;
-
-      // 2. Structured Project reference for Piutang
-      if (selectedContactDetail.type === "PIUTANG") {
-        if (fProjId && projectIds.has(fProjId)) return true;
-        if (fRefId && projectIds.has(fRefId)) return true;
-        if (projectTitles.some((pTitle) => pTitle && f.description && f.description.toLowerCase().includes(pTitle))) return true;
-      }
-
-      // 3. Structured PIC / Holder matching
-      if (fHolder && (fHolder === targetKey || (targetKey.includes("YASIN") && fHolder.includes("YASIN")))) return true;
-      if (fPenerima && (fPenerima === targetKey || (targetKey.includes("YASIN") && fPenerima.includes("YASIN")))) return true;
-
-      // 4. Matched in recorded payments slot of this contact's debts
-      const isPaymentMatch = contactDetailRecords.some((r) =>
-        (r.payments || []).some(
-          (p) =>
-            (p.financialRecordId && (p.financialRecordId === f.id || p.financialRecordId === f.customId)) ||
-            p.id === f.id ||
-            p.id === f.customId
-        )
-      );
-      if (isPaymentMatch) return true;
-
-      return false;
-    }).sort((a, b) => (b.date > a.date ? 1 : -1));
-  }, [financialRecords, selectedContactDetail, contactDetailRecords]);
-
-  // Aggregate summary for the selected contact
-  const contactDetailSummary = useMemo(() => {
-    if (!selectedContactDetail) return { totalAmount: 0, totalPaid: 0, totalRemaining: 0, totalPemasukan: 0, totalPengeluaran: 0, keuntungan: 0, keuntunganProyeksi: 0, count: 0 };
-    let totalAmount = 0;
-    let totalPaid = 0;
-    let totalRemaining = 0;
-
-    contactDetailRecords.forEach((r) => {
-      const sched = getScheduleForRecord(r, projects, financialRecords);
-      const paid = sched.totalPaid;
-      const initialAmt = sched.contractValue || r.amount || 0;
-      const remaining = Math.max(0, initialAmt - paid);
-      totalAmount += initialAmt;
-      totalPaid += paid;
-      totalRemaining += remaining;
-    });
-
-    const totalPemasukan = contactFinancialRecords.filter((f) => f.type === "IN").reduce((sum, f) => sum + (f.amount || 0), 0);
-    const totalPengeluaran = contactFinancialRecords.filter((f) => f.type === "OUT").reduce((sum, f) => sum + (f.amount || 0), 0);
-    const keuntungan = totalPemasukan - totalPengeluaran;
-    const keuntunganProyeksi = totalAmount - totalPengeluaran;
-
-    return {
-      totalAmount,
-      totalPaid, // strictly Pemasukan / Termin dari Klien
-      totalRemaining,
-      totalPemasukan,
-      totalPengeluaran,
-      keuntungan,
-      keuntunganProyeksi,
-      count: contactDetailRecords.length,
-    };
-  }, [selectedContactDetail, contactDetailRecords, contactFinancialRecords, projects, financialRecords]);
-
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const now = new Date();
-    const yy = String(now.getFullYear()).substring(2);
-    const mm = String(now.getMonth() + 1).padStart(2, "0");
-    const dd = String(now.getDate()).padStart(2, "0");
-    const dateStr = `${yy}${mm}${dd}`;
-    const prefix = activeTab === "HUTANG" ? "HTG" : "PTG";
-    const sameDayCount = debtRecords.filter(r => r.type === activeTab && r.customId?.startsWith(`${prefix}-${dateStr}`)).length;
-    const seq = String(sameDayCount + 1).padStart(3, "0");
-    const customId = `${prefix}-${dateStr}-${seq}`;
-
-    const newRecord: Omit<DebtRecord, "id"> = {
-      type: activeTab,
-      customId,
-      ...formData,
-      amount: Number(formData.amount),
-      recordedBy: user.name,
-      timestamp: Date.now(),
-      payments: [],
-    };
-    await dbService.createDocument("debtRecords", newRecord);
-    await logActivity(
-      "DEBT",
-      "CREATE",
-      `Mencatat ${activeTab === "HUTANG" ? "Hutang" : "Piutang"} baru: [${customId}] ${newRecord.title} senilai Rp ${newRecord.amount.toLocaleString("id-ID")}`,
-    );
-    setShowAddModal(false);
-    setFormData({
-      title: "",
-      contactName: "",
-      amount: "",
-      dueDate: new Date().toISOString().split("T")[0],
-      description: "",
-      projectId: "",
-      status: "UNPAID",
-    });
-  };
-
-  const handleRecordPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!showPaymentModal) return;
-
-    const paymentAmount = Number(paymentForm.amount);
-    if (isNaN(paymentAmount) || paymentAmount <= 0) {
-      alert("Masukkan nominal pembayaran yang valid (lebih dari 0).");
-      return;
-    }
-    const currPayments = showPaymentModal.payments || [];
-    const totalPaidBefore = currPayments.reduce((a, b) => a + b.amount, 0);
-    const remainingBefore = Math.max(0, showPaymentModal.amount - totalPaidBefore);
-    if (paymentAmount > remainingBefore) {
-      alert(`Nominal pembayaran melebihi sisa hutang! Maksimal pembayaran: ${formatCurrencyIDR(remainingBefore)}`);
-      return;
-    }
-    const newTotalPaid = totalPaidBefore + paymentAmount;
-
-    let newStatus: DebtRecord["status"] = "PARTIAL";
-    if (newTotalPaid >= showPaymentModal.amount) {
-      newStatus = "PAID";
-    }
-
-    // Generate compliant customId for financial record
-    const parts = paymentForm.date.split("-");
-    const dd = parts[2] || "01";
-    const mm = parts[1] || "01";
-    const yy = (parts[0] || "2026").substring(2);
-    const dateFormatted = `${dd}${mm}${yy}`;
-
-    let prefix = showPaymentModal.type === "HUTANG" ? "BNK" : "INC";
-    if (showPaymentModal.type === "HUTANG" && paymentForm.paymentMethod === "CASH") {
-      prefix = "PRS";
-    }
-
-    const todaysMatches = financialRecords.filter((r) => {
-      const rId = r.customId || "";
-      return rId.startsWith(`${prefix}-${dateFormatted}-`);
-    });
-
-    let nextNum = todaysMatches.length + 1;
-    let nextNumStr = String(nextNum).padStart(3, "0");
-    while (financialRecords.some((r) => r.customId === `${prefix}-${dateFormatted}-${nextNumStr}`)) {
-      nextNum++;
-      nextNumStr = String(nextNum).padStart(3, "0");
-    }
-    const chosenCustomId = `${prefix}-${dateFormatted}-${nextNumStr}`;
-
-    // 1. Create Finance entry
-    const finRecord: any = {
-      type: showPaymentModal.type === "HUTANG" ? "OUT" : "IN",
-      flowType: showPaymentModal.type === "HUTANG"
-        ? (paymentForm.paymentMethod === "TRANSFER" ? "OUT_BANK_DIRECT" : "OUT_PERSONAL_SPEND")
-        : "IN",
-      amount: paymentAmount,
-      date: paymentForm.date,
-      paymentMethod: paymentForm.paymentMethod,
-      category:
-        showPaymentModal.type === "HUTANG"
-          ? "Pembayaran Hutang"
-          : "Penerimaan Piutang",
-      description: `[ANGSURAN] Angsuran ke-${currPayments.length + 1} untuk: [${showPaymentModal.customId || 'DBT'}] ${showPaymentModal.title}`,
-      referenceId: showPaymentModal.projectId || showPaymentModal.id,
-      linkedDebtId: showPaymentModal.id,
-      recordedBy: user.name,
-      timestamp: Date.now(),
-      customId: chosenCustomId,
-      sumberDana: paymentForm.sumberDana,
-      refHutang: showPaymentModal.type === "HUTANG" ? (showPaymentModal.customId || showPaymentModal.title) : "",
-      refPiutang: showPaymentModal.type === "PIUTANG" ? (showPaymentModal.customId || showPaymentModal.title) : "",
-    };
-
-    const finId = await dbService.createDocument("financialRecords", finRecord);
-    await logActivity(
-      "DEBT",
-      "UPDATE",
-      `Mencatat pembayaran ${showPaymentModal.type === "HUTANG" ? "Hutang" : "Piutang"} senilai Rp ${paymentAmount.toLocaleString("id-ID")} dengan ID Keuangan [${chosenCustomId}] untuk ${showPaymentModal.title}`,
-    );
-
-    // 2. Update Debt record
-    const newPaymentEntry: DebtPayment = {
-      id: Math.random().toString(36).substr(2, 9),
-      amount: paymentAmount,
-      date: paymentForm.date,
-      note: paymentForm.note || `Dibayar via ${paymentForm.sumberDana}`,
-      financialRecordId: finId,
-      recordedBy: user.name,
-    };
-
-    const updatedPaymentsList = [...currPayments, newPaymentEntry];
-
-    await dbService.setDocument("debtRecords", showPaymentModal.id, {
-      ...showPaymentModal,
-      payments: updatedPaymentsList,
-      status: newStatus,
-    });
-
-    setDebtRecords((prev) => {
-      const exists = prev.some((d) => d.id === showPaymentModal.id);
-      if (exists) {
-        return prev.map((d) =>
-          d.id === showPaymentModal.id
-            ? { ...d, payments: updatedPaymentsList, status: newStatus }
-            : d
-        );
-      }
-      return [{ ...showPaymentModal, payments: updatedPaymentsList, status: newStatus }, ...prev];
-    });
-
-    setFinancialRecords((prev) => [
-      { id: finId, ...finRecord } as FinancialRecord,
-      ...prev,
-    ]);
-
-    if (selectedTerminRecord && selectedTerminRecord.id === showPaymentModal.id) {
-      setSelectedTerminRecord({
-        ...selectedTerminRecord,
-        payments: updatedPaymentsList,
-        status: newStatus,
-      });
-    }
-
-    setShowPaymentModal(null);
-    setPaymentForm({
-      amount: "",
-      date: new Date().toISOString().split("T")[0],
-      note: "",
-      paymentMethod: "TRANSFER",
-      sumberDana: "REKENING PT",
-    });
-  };
-
-  const handleRecordGroupPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!showGroupPaymentModal) return;
-
-    const contactName = showGroupPaymentModal.contactName;
-    const paymentAmount = Number(groupPaymentForm.amount);
-    if (!paymentAmount || paymentAmount <= 0) {
-      alert("Masukkan nominal pembayaran yang valid.");
-      return;
-    }
-
-    const debtType = showGroupPaymentModal.debtType;
-    const matchingDebts = debtRecords.filter((d) => {
-      if (d.type !== debtType || d.status === "PAID") return false;
-      const cName = (d.contactName || d.title || "").trim().toLowerCase();
-      const targetName = contactName.trim().toLowerCase();
-      return cName === targetName || cName.includes(targetName) || targetName.includes(cName);
-    });
-
-    if (matchingDebts.length === 0) {
-      alert(`Tidak ditemukan catatan ${debtType} aktif untuk ${contactName}`);
-      return;
-    }
-
-    // Sort by remaining sisa ASCENDING (nominal terkecil dahulu dipotong)
-    const debtsWithRemaining = matchingDebts
-      .map((d) => {
-        const paid = (d.payments || []).reduce((sum, p) => sum + (p.amount || 0), 0);
-        const remaining = Math.max(0, (d.amount || 0) - paid);
-        return { debt: d, remaining };
-      })
-      .filter((item) => item.remaining > 0);
-
-    debtsWithRemaining.sort((a, b) => {
-      if (a.remaining !== b.remaining) {
-        return a.remaining - b.remaining;
-      }
-      return (a.debt.customId || "").localeCompare(b.debt.customId || "");
-    });
-
-    const parts = groupPaymentForm.date.split("-");
-    const dd = parts[2] || "01";
-    const mm = parts[1] || "01";
-    const yy = (parts[0] || "2026").substring(2);
-    const dateFormatted = `${dd}${mm}${yy}`;
-
-    let prefix = debtType === "HUTANG" ? "BNK" : "INC";
-    if (debtType === "HUTANG" && groupPaymentForm.paymentMethod === "CASH") {
-      prefix = "PRS";
-    }
-
-    let nextNum = financialRecords.filter((r) => (r.customId || "").startsWith(`${prefix}-${dateFormatted}-`)).length + 1;
-    let nextNumStr = String(nextNum).padStart(3, "0");
-    while (financialRecords.some((r) => r.customId === `${prefix}-${dateFormatted}-${nextNumStr}`)) {
-      nextNum++;
-      nextNumStr = String(nextNum).padStart(3, "0");
-    }
-    const chosenCustomId = `${prefix}-${dateFormatted}-${nextNumStr}`;
-
-    const finRecord: any = {
-      type: debtType === "HUTANG" ? "OUT" : "IN",
-      flowType: groupPaymentForm.paymentMethod === "CASH" ? "KAS BESAR" : "REKENING PT",
-      customId: chosenCustomId,
-      category: debtType === "HUTANG" ? "Pembayaran Hutang" : "Penerimaan Piutang",
-      amount: paymentAmount,
-      date: groupPaymentForm.date,
-      description: groupPaymentForm.note || `Pembayaran Total ${debtType} Kontak: ${contactName}`,
-      recordedBy: user.name,
-      timestamp: Date.now(),
-      refHutang: `GROUP_${debtType}_${contactName}`,
-    };
-
-    const finId = await dbService.createDocument("financialRecords", finRecord);
-
-    let unallocatedAmount = paymentAmount;
-    const brokenDownDetails: string[] = [];
-
-    for (const item of debtsWithRemaining) {
-      if (unallocatedAmount <= 0) break;
-
-      const deduct = Math.min(unallocatedAmount, item.remaining);
-      const newPayment: DebtPayment = {
-        id: Math.random().toString(36).substr(2, 9),
-        amount: deduct,
-        date: groupPaymentForm.date,
-        note: groupPaymentForm.note || `Pembayaran Total ${debtType} (${contactName})`,
-        financialRecordId: finId,
-        recordedBy: user.name,
-      };
-
-      const existingPayments = item.debt.payments || [];
-      const updatedPayments = [...existingPayments, newPayment];
-      const newTotalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
-      const newStatus = newTotalPaid >= item.debt.amount ? "PAID" : "PARTIAL";
-
-      await dbService.updateDocument("debtRecords", item.debt.id, {
-        payments: updatedPayments,
-        status: newStatus,
-      });
-
-      unallocatedAmount -= deduct;
-      brokenDownDetails.push(`ID ${item.debt.customId || item.debt.title}: Dipotong Rp ${deduct.toLocaleString("id-ID")}${newStatus === "PAID" ? " (LUNAS)" : ""}`);
-    }
-
-    await logActivity(
-      "DEBT",
-      "UPDATE",
-      `Pembayaran Total ${debtType} untuk ${contactName} senilai Rp ${paymentAmount.toLocaleString("id-ID")}. Memotong ${brokenDownDetails.length} ID: ${brokenDownDetails.join(", ")}`
-    );
-
-    setShowGroupPaymentModal(null);
-    setGroupPaymentForm({
-      amount: "",
-      date: new Date().toISOString().split("T")[0],
-      note: "",
-      paymentMethod: "TRANSFER",
-      sumberDana: "REKENING PT",
-    });
-
-    alert(`Sukses memotong Total ${debtType} ${contactName}! (${brokenDownDetails.length} ID terpotong)`);
-  };
-
-  const handleSaveMainDetails = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentRecord) return;
-    const mainAmount = Number(editForm.amount);
-    if (isNaN(mainAmount) || mainAmount <= 0) {
-      alert("Nilai buku awal harus berupa angka positif.");
-      return;
-    }
-
-    // Recalculate status based on current payments and new amount
-    const totalPaid = (currentRecord.payments || []).reduce((acc, curr) => acc + curr.amount, 0);
-    const newStatus =
-      totalPaid >= mainAmount
-        ? "PAID"
-        : totalPaid > 0
-          ? "PARTIAL"
-          : "UNPAID";
-
-    const customIdUpdate = editForm.type !== currentRecord.type && currentRecord.customId
-      ? {
-          customId: editForm.type === "PIUTANG"
-            ? currentRecord.customId.replace(/^HTG-/, "PTG-")
-            : currentRecord.customId.replace(/^PTG-/, "HTG-")
-        }
-      : {};
-
-    await dbService.setDocument("debtRecords", currentRecord.id, {
-      ...currentRecord,
-      title: editForm.title,
-      contactName: editForm.contactName,
-      amount: mainAmount,
-      dueDate: editForm.dueDate,
-      description: editForm.description,
-      projectId: editForm.projectId,
-      status: newStatus,
-      type: editForm.type,
-      ...customIdUpdate
-    });
-
-    await logActivity(
-      "DEBT",
-      "UPDATE",
-      `Mengubah detail utama ${currentRecord.type === "HUTANG" ? "Hutang" : "Piutang"} [${currentRecord.customId}]: ${editForm.title} senilai Rp ${mainAmount.toLocaleString("id-ID")}${editForm.type !== currentRecord.type ? ` (Diubah tipe ke ${editForm.type})` : ""}`,
-    );
-
-    setShowEditModal(null);
-  };
-
-  const handleSavePaymentEdit = async (payId: string) => {
-    if (!currentRecord) return;
-    const amountNum = Number(paymentEditForm.amount);
-    if (isNaN(amountNum) || amountNum <= 0) {
-      alert("Jumlah pembayaran harus berupa angka positif.");
-      return;
-    }
-
-    const chosenStatus = paymentEditForm.status || "LUNAS";
-
-    const updatedPayments = (currentRecord.payments || []).map((p) => {
-      if (p.id === payId) {
-        return {
-          ...p,
-          amount: amountNum,
-          date: paymentEditForm.date,
-          note: paymentEditForm.note,
-          status: chosenStatus,
-        };
-      }
-      return p;
-    });
-
-    const totalPaid = updatedPayments.reduce((acc, curr) => acc + curr.amount, 0);
-    const newStatus =
-      totalPaid >= currentRecord.amount
-        ? "PAID"
-        : totalPaid > 0
-          ? "PARTIAL"
-          : "UNPAID";
-
-    const targetPay = (currentRecord.payments || []).find((p) => p.id === payId);
-    if (targetPay && targetPay.financialRecordId) {
-      try {
-        await dbService.updateDocument("financialRecords", targetPay.financialRecordId, {
-          amount: amountNum,
-          date: paymentEditForm.date,
-          description: `[ANGSURAN] ${paymentEditForm.note || `Angsuran untuk: ${currentRecord.title}`}`,
-        });
-      } catch (e) {
-        console.error("Failed to update financial record:", e);
-      }
-    }
-
-    let updatedTerms = (currentRecord.terms && currentRecord.terms.length > 0)
-      ? JSON.parse(JSON.stringify(currentRecord.terms))
-      : (TERMIN_SCHEDULES[currentRecord.customId || ""]
-          ? JSON.parse(JSON.stringify(TERMIN_SCHEDULES[currentRecord.customId || ""].terms))
-          : undefined);
-
-    if (updatedTerms && updatedTerms.length > 0) {
-      const payIdx = (currentRecord.payments || []).findIndex((p) => p.id === payId);
-      updatedTerms = updatedTerms.map((t: any, idx: number) => {
-        const isNameMatch =
-          (paymentEditForm.note && t.name && paymentEditForm.note.toLowerCase().includes(t.name.toLowerCase())) ||
-          (targetPay && targetPay.note && t.name && targetPay.note.toLowerCase().includes(t.name.toLowerCase())) ||
-          (t.notes && paymentEditForm.note && paymentEditForm.note.toLowerCase().includes(t.notes.toLowerCase()));
-
-        const isFinIdMatch = targetPay && targetPay.financialRecordId && t.financialRecordId === targetPay.financialRecordId;
-        const isIdxMatch = payIdx !== -1 && idx === payIdx;
-
-        if (isFinIdMatch || isNameMatch || isIdxMatch) {
-          return {
-            ...t,
-            status: chosenStatus,
-            amount: amountNum > 0 ? amountNum : t.amount,
-            paymentDate: paymentEditForm.date || t.paymentDate,
-          };
-        }
-        return t;
-      });
-    }
-
-    const updatePayload: any = {
-      payments: updatedPayments,
-      status: newStatus,
-    };
-    if (updatedTerms) {
-      updatePayload.terms = updatedTerms;
-    }
-
-    await dbService.setDocument("debtRecords", currentRecord.id, {
-      ...currentRecord,
-      ...updatePayload,
-    });
-
-    if (selectedTerminRecord && selectedTerminRecord.id === currentRecord.id) {
-      setSelectedTerminRecord({
-        ...currentRecord,
-        ...updatePayload,
-      });
-    }
-
-    await logActivity(
-      "DEBT",
-      "UPDATE",
-      `Mengubah pembayaran/angsuran [Status: ${chosenStatus}] untuk ${currentRecord.type === "HUTANG" ? "Hutang" : "Piutang"} [${currentRecord.customId}] menjadi Rp ${amountNum.toLocaleString("id-ID")}`,
-    );
-
-    setEditingPaymentId(null);
-  };
-
-  const handleDeletePayment = async (payId: string) => {
-    if (!currentRecord) return;
-    if (!confirm("Apakah Anda yakin ingin menghapus pembayaran ini secara permanen? Catatan Keuangan terkait juga akan dihapus.")) {
-      return;
-    }
-
-    const targetPay = (currentRecord.payments || []).find((p) => p.id === payId);
-    const updatedPayments = (currentRecord.payments || []).filter((p) => p.id !== payId);
-
-    const totalPaid = updatedPayments.reduce((acc, curr) => acc + curr.amount, 0);
-    const newStatus =
-      totalPaid >= currentRecord.amount
-        ? "PAID"
-        : totalPaid > 0
-          ? "PARTIAL"
-          : "UNPAID";
-
-    let updatedTerms = [...(currentRecord.terms || [])];
-    if (targetPay && targetPay.financialRecordId) {
-      const staticSched = TERMIN_SCHEDULES[currentRecord.customId || ""];
-      const targetTermName = updatedTerms.find(ut => ut.financialRecordId === targetPay.financialRecordId)?.name || "";
-      const originalTerm = staticSched ? staticSched.terms.find(t => t.name.toUpperCase() === targetTermName.toUpperCase()) : null;
-
-      updatedTerms = updatedTerms.map((t: any) => {
-        if (t.financialRecordId === targetPay.financialRecordId) {
-          if (originalTerm) {
-            return {
-              ...originalTerm,
-              amount: 0,
-              invoiceDate: "-",
-              dueDate: "-",
-              paymentDate: "-",
-              status: "BELUM BAYAR",
-              notes: "-"
-            };
-          }
-          return null;
-        }
-        return t;
-      }).filter(Boolean);
-    }
-
-    if (targetPay && targetPay.financialRecordId) {
-      try {
-        await dbService.deleteDocument("financialRecords", targetPay.financialRecordId);
-      } catch (e) {
-        console.error("Failed to delete financial record:", e);
-      }
-    }
-
-    await dbService.updateDocument("debtRecords", currentRecord.id, {
-      payments: updatedPayments,
-      status: newStatus,
-      terms: updatedTerms,
-    });
-
-    await logActivity(
-      "DEBT",
-      "UPDATE",
-      `Menghapus pembayaran/angsuran senilai Rp ${(targetPay?.amount || 0).toLocaleString("id-ID")} dari ${currentRecord.type === "HUTANG" ? "Hutang" : "Piutang"} [${currentRecord.customId}]`,
-    );
-  };
-
-  const handleDeleteDebt = async (id: string, customId: string, type: string) => {
-    if (user?.role === "owner" || user?.role === "direktur") {
-      alert("Akses Ditolak: Peran Direktur dan Owner tidak diperbolehkan menghapus data.");
-      return;
-    }
-    if (!confirm(`Apakah Anda yakin ingin menghapus catatan ${type === "HUTANG" ? "Hutang" : "Piutang"} [${customId || id}] ini secara permanen?`)) {
-      return;
-    }
-    try {
-      await dbService.deleteDocument("debtRecords", id);
-      await logActivity(
-        "DEBT",
-        "DELETE",
-        `Menghapus catatan ${type === "HUTANG" ? "Hutang" : "Piutang"} [${customId || id}] secara permanen`
-      );
-    } catch (err) {
-      console.error("Failed to delete debt record:", err);
-      alert("Gagal menghapus data: " + err);
-    }
-  };
-
-  const downloadPDF = () => {
-    setIsExporting(true);
-    const doc = new jsPDF();
-
-    // Improved Header matching Finance style
-    doc.setFontSize(18);
-    doc.setTextColor(26, 43, 73);
-    doc.setFont("helvetica", "bold");
-    doc.text(`LAPORAN ${activeTab} - PT GARDA INOVASI GLOBALTECH`, 105, 20, {
-      align: "center",
-    });
-
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(100);
-    doc.text(`Dicetak pada: ${new Date().toLocaleString("id-ID")}`, 105, 27, {
-      align: "center",
-    });
-
-    // Summary Box like Finance
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(14, 35, 182, 25, 5, 5, "F");
-    doc.setFontSize(10);
-    doc.setTextColor(51, 65, 85);
-    
-    const activeAwal = activeTab === "HUTANG" ? debtTotals.hutangAwal : debtTotals.piutangAwal;
-    const activeTerbayar = activeTab === "HUTANG" ? debtTotals.hutangTerbayar : debtTotals.piutangTerbayar;
-    const activeSisa = activeTab === "HUTANG" ? debtTotals.hutangSisa : debtTotals.piutangSisa;
-
-    doc.text(
-      `Total Awal (Rp): ${formatCurrencyIDR(activeAwal).replace("Rp ", "")}`,
-      20,
-      44,
-    );
-    doc.text(
-      `Total Terbayar (Rp): ${formatCurrencyIDR(activeTerbayar).replace("Rp ", "")}`,
-      20,
-      52,
-    );
-    doc.text(
-      `Sisa Saldo (Rp): ${formatCurrencyIDR(activeSisa).replace("Rp ", "")}`,
-      110,
-      44,
-    );
-    doc.text(`Status: Aktif`, 110, 52);
-
-    const tableData = filteredRecords.map((r) => {
-      const paid = (r.payments || []).reduce((a, b) => a + b.amount, 0);
-      const remaining = r.amount - paid;
-      return [
-        new Date(r.timestamp).toLocaleDateString("id-ID"),
-        r.title,
-        r.contactName,
-        formatCurrencyIDR(r.amount).replace("Rp ", ""),
-        formatCurrencyIDR(paid).replace("Rp ", ""),
-        formatCurrencyIDR(remaining).replace("Rp ", ""),
-        r.status,
-      ];
-    });
-
-    autoTable(doc, {
-      startY: 70,
-      head: [
-        [
-          "Tanggal",
-          "Judul",
-          "Kontak",
-          "Total (Rp)",
-          "Dibayar (Rp)",
-          "Sisa (Rp)",
-          "Status",
-        ],
-      ],
-      body: tableData,
-      theme: "grid",
-      headStyles: { fillColor: [26, 43, 73], textColor: 255 },
-      styles: { fontSize: 7 },
-    });
-
-    doc.save(
-      `Laporan_${activeTab}_GIG_${new Date().toISOString().split("T")[0]}.pdf`,
-    );
-    setIsExporting(false);
-  };
-
-  const downloadContactSummaryPDF = (
-    contactInfo: { name: string; type: "HUTANG" | "PIUTANG" },
-    records: DebtRecord[],
-    finRecords: FinancialRecord[],
-    summary: { totalAmount: number; totalPaid: number; totalRemaining: number; count: number }
-  ) => {
-    if (!contactInfo) return;
-    setIsExporting(true);
-
-    try {
-      const doc = new jsPDF("p", "mm", "a4");
-      const isHutang = contactInfo.type === "HUTANG";
-      const titleLabel = isHutang
-        ? "LAPORAN RINCIAN HUTANG & REKAPITULASI VENDOR"
-        : "LAPORAN RINCIAN PIUTANG & REKAPITULASI DEBITUR";
-
-      // Outer border matching standard app PDF documents
-      doc.setDrawColor(226, 232, 240); // slate-200
-      doc.rect(5, 5, 200, 287);
-
-      // Top decorative bar
-      doc.setFillColor(26, 43, 73); // deep blue slate
-      doc.rect(10, 10, 190, 6, "F");
-
-      let currentY = 24;
-
-      // Header Title (STRICTLY NO KOP SURAT)
-      doc.setFontSize(13);
-      doc.setTextColor(26, 43, 73);
-      doc.setFont("helvetica", "bold");
-      doc.text(titleLabel, 12, currentY);
-
-      currentY += 5.5;
-      doc.setFontSize(8.5);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(100);
-      doc.text(`Kontak / Nama Pihak: ${contactInfo.name}`, 12, currentY);
-      doc.text(`Tanggal Cetak: ${new Date().toLocaleString("id-ID")}`, 138, currentY);
-
-      currentY += 4.5;
-      doc.text(`Kategori: ${isHutang ? "Kewajiban Hutang Usaha" : "Tagihan Piutang Usaha"} | Total: ${summary.count} Catatan Terdaftar`, 12, currentY);
-
-      currentY += 5;
-      doc.setDrawColor(226, 232, 240);
-      doc.line(10, currentY, 200, currentY);
-
-      currentY += 6;
-
-      // KPI / Ringkasan Finansial Box
-      const paidPct = summary.totalAmount > 0 ? ((summary.totalPaid / summary.totalAmount) * 100).toFixed(1) : "0";
-      const totalPengeluaran = (summary as any).totalPengeluaran || 0;
-      const labaKas = ((summary as any).totalPemasukan || summary.totalPaid) - totalPengeluaran;
-
-      const summaryTableData = isHutang
-        ? [
-            [
-              "TOTAL NILAI AWAL",
-              formatCurrencyIDR(summary.totalAmount),
-              "TOTAL TELAH DIBAYAR",
-              formatCurrencyIDR(summary.totalPaid),
-            ],
-            [
-              "SISA SALDO HUTANG",
-              formatCurrencyIDR(summary.totalRemaining),
-              "PERSENTASE REALISASI",
-              `${paidPct}%`,
-            ],
-          ]
-        : [
-            [
-              "TOTAL NILAI KONTRAK",
-              formatCurrencyIDR(summary.totalAmount),
-              "PEMASUKAN DARI KLIEN",
-              formatCurrencyIDR(summary.totalPaid),
-            ],
-            [
-              "SISA PIUTANG KLIEN",
-              formatCurrencyIDR(summary.totalRemaining),
-              "TOTAL BELANJA PROYEK",
-              formatCurrencyIDR(totalPengeluaran),
-            ],
-            [
-              "LABA KAS SAAT INI",
-              formatCurrencyIDR(labaKas),
-              "PERSENTASE TERBAYAR",
-              `${paidPct}%`,
-            ],
-          ];
-
-      autoTable(doc, {
-        startY: currentY,
-        margin: { left: 12, right: 12 },
-        body: summaryTableData,
-        theme: "grid",
-        bodyStyles: {
-          fontSize: 8,
-          textColor: [15, 23, 42],
-        },
-        columnStyles: {
-          0: { fontStyle: "bold", cellWidth: 42, fillColor: [248, 250, 252], textColor: [71, 85, 105] },
-          1: { fontStyle: "bold", cellWidth: 50, halign: "right", textColor: [15, 23, 42] },
-          2: { fontStyle: "bold", cellWidth: 44, fillColor: [248, 250, 252], textColor: [71, 85, 105] },
-          3: { fontStyle: "bold", cellWidth: 50, halign: "right", textColor: isHutang ? [225, 29, 72] : [16, 185, 129] },
-        },
-      });
-
-      currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 8 : currentY + 30;
-
-      // Section 1: Tabel Rincian Rekam Hutang / Piutang
-      doc.setFontSize(9.5);
-      doc.setTextColor(26, 43, 73);
-      doc.setFont("helvetica", "bold");
-      doc.text(`RINCIAN PERUNTUKAN ${isHutang ? "HUTANG" : "PIUTANG"} (${records.length} REKAM)`, 12, currentY);
-
-      currentY += 3;
-
-      const debtTableRows = records.map((rec, idx) => {
-        const sched = getScheduleForRecord(rec, projects, financialRecords);
-        const paid = sched.totalPaid;
-        const initialAmt = sched.contractValue || rec.amount || 0;
-        const rem = Math.max(0, initialAmt - paid);
-        const proj = projects.find((p) => p.id === rec.projectId)?.name || "-";
-        const statusLabel = rem <= 0 ? "LUNAS" : paid > 0 ? "DICICIL" : "BELUM BAYAR";
-        const titleAndDesc = rec.description ? `${rec.title}\n(${rec.description})` : rec.title;
-
-        return [
-          idx + 1,
-          rec.customId || rec.id || "-",
-          titleAndDesc,
-          proj,
-          rec.dueDate || "-",
-          formatCurrencyIDR(initialAmt).replace("Rp ", ""),
-          formatCurrencyIDR(paid).replace("Rp ", ""),
-          formatCurrencyIDR(rem).replace("Rp ", ""),
-          statusLabel,
-        ];
-      });
-
-      // Add Total Row
-      debtTableRows.push([
-        "",
-        "",
-        "TOTAL KESELURUHAN",
-        "",
-        "",
-        formatCurrencyIDR(summary.totalAmount).replace("Rp ", ""),
-        formatCurrencyIDR(summary.totalPaid).replace("Rp ", ""),
-        formatCurrencyIDR(summary.totalRemaining).replace("Rp ", ""),
-        "",
-      ]);
-
-      autoTable(doc, {
-        startY: currentY,
-        margin: { left: 12, right: 12 },
-        head: [
-          [
-            "NO",
-            "KODE REF",
-            "TUJUAN / PERUNTUKAN DANA",
-            "PROYEK",
-            "JATUH TEMPO",
-            "AWAL (RP)",
-            "DIBAYAR (RP)",
-            "SISA (RP)",
-            "STATUS",
-          ],
-        ],
-        body: debtTableRows,
-        theme: "grid",
-        headStyles: {
-          fillColor: [26, 43, 73],
-          textColor: [255, 255, 255],
-          fontSize: 7.5,
-          fontStyle: "bold",
-          halign: "left",
-        },
-        bodyStyles: {
-          fontSize: 7,
-          textColor: [51, 65, 85],
-        },
-        columnStyles: {
-          0: { cellWidth: 8, halign: "center" },
-          1: { cellWidth: 20, fontStyle: "bold" },
-          2: { cellWidth: 50 },
-          3: { cellWidth: 26 },
-          4: { cellWidth: 18, halign: "center" },
-          5: { cellWidth: 20, halign: "right", fontStyle: "bold" },
-          6: { cellWidth: 20, halign: "right", fontStyle: "bold", textColor: [16, 185, 129] },
-          7: { cellWidth: 20, halign: "right", fontStyle: "bold", textColor: isHutang ? [225, 29, 72] : [16, 185, 129] },
-          8: { cellWidth: 18, halign: "center", fontStyle: "bold" },
-        },
-        didParseCell: (data) => {
-          if (data.row.index === debtTableRows.length - 1) {
-            data.cell.styles.fontStyle = "bold";
-            data.cell.styles.fillColor = [241, 245, 249];
-            if (data.column.index === 2) {
-              data.cell.styles.halign = "right";
-            }
-          }
-        },
-      });
-
-      currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 8 : currentY + 40;
-
-      // Section 2: Riwayat Mutasi Transaksi Kas/Bank Terkait (jika ada)
-      if (currentY > 230) {
-        doc.addPage();
-        doc.setDrawColor(226, 232, 240);
-        doc.rect(5, 5, 200, 287);
-        currentY = 18;
-      }
-
-      doc.setFontSize(9.5);
-      doc.setTextColor(26, 43, 73);
-      doc.setFont("helvetica", "bold");
-      doc.text(`RIWAYAT MUTASI TRANSAKSI KAS & BANK TERKAIT (${finRecords.length} TRANSAKSI)`, 12, currentY);
-
-      currentY += 3;
-
-      if (finRecords.length === 0) {
-        autoTable(doc, {
-          startY: currentY,
-          margin: { left: 12, right: 12 },
-          body: [
-            [
-              "Catatan: Belum ada transaksi kas/bank langsung yang tercatat untuk kontak ini (catatan merupakan invoice/saldo awal).",
-            ],
-          ],
-          theme: "grid",
-          bodyStyles: {
-            fontSize: 7.5,
-            textColor: [100, 116, 139],
-            fontStyle: "italic",
-          },
-        });
-      } else {
-        const finRows = finRecords.map((fin, idx) => {
-          const isIncome = fin.type === "IN";
-          return [
-            idx + 1,
-            fin.date || "-",
-            fin.customId || fin.id || "-",
-            isIncome ? "PEMASUKAN" : "PENGELUARAN",
-            fin.category || "-",
-            fin.description || "-",
-            fin.sumberDana || "-",
-            formatCurrencyIDR(fin.amount || 0).replace("Rp ", ""),
-          ];
-        });
-
-        const totalFinAmount = finRecords.reduce((sum, f) => sum + (f.amount || 0), 0);
-        finRows.push([
-          "",
-          "",
-          "",
-          "",
-          "",
-          "TOTAL MUTASI",
-          "",
-          formatCurrencyIDR(totalFinAmount).replace("Rp ", ""),
-        ]);
-
-        autoTable(doc, {
-          startY: currentY,
-          margin: { left: 12, right: 12 },
-          head: [
-            [
-              "NO",
-              "TANGGAL",
-              "NO. BUKTI",
-              "TIPE",
-              "KATEGORI",
-              "KETERANGAN / DESKRIPSI",
-              "SUMBER DANA",
-              "NOMINAL (RP)",
-            ],
-          ],
-          body: finRows,
-          theme: "grid",
-          headStyles: {
-            fillColor: [26, 43, 73],
-            textColor: [255, 255, 255],
-            fontSize: 7.5,
-            fontStyle: "bold",
-            halign: "left",
-          },
-          bodyStyles: {
-            fontSize: 7,
-            textColor: [51, 65, 85],
-          },
-          columnStyles: {
-            0: { cellWidth: 8, halign: "center" },
-            1: { cellWidth: 18, halign: "center" },
-            2: { cellWidth: 22, fontStyle: "bold" },
-            3: { cellWidth: 22, halign: "center", fontStyle: "bold" },
-            4: { cellWidth: 22 },
-            5: { cellWidth: 52 },
-            6: { cellWidth: 22 },
-            7: { cellWidth: 20, halign: "right", fontStyle: "bold" },
-          },
-          didParseCell: (data) => {
-            if (data.row.index === finRows.length - 1) {
-              data.cell.styles.fontStyle = "bold";
-              data.cell.styles.fillColor = [241, 245, 249];
-            }
-          },
-        });
-      }
-
-      // Strictly NO KOP & NO SIGNATURES/MENGETAHUI as requested!
-
-      const sanitizedContact = contactInfo.name.replace(/[^a-zA-Z0-9]/g, "_");
-      doc.save(
-        `Laporan_Rincian_${contactInfo.type}_${sanitizedContact}_${new Date().toISOString().split("T")[0]}.pdf`
-      );
-    } catch (err) {
-      console.error("Error generating contact summary PDF:", err);
-      alert("Gagal membuat PDF. Silakan coba beberapa saat lagi.");
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const downloadSinglePiutangPDF = (record: DebtRecord, options?: typeof pdfOptions) => {
-    if (!record) return;
-    setIsExporting(true);
-    const doc = new jsPDF("p", "mm", "a4");
-    const sched = getScheduleForRecord(record, projects, financialRecords);
-    const totalPaid = sched.totalPaid;
-    const remaining = Math.max(0, sched.contractValue - totalPaid);
-
-    const companyName = options?.companyName?.trim() || "PT GARDA INOVASI GLOBALTECH";
-    const includeAddress = options?.includeAddress ?? true;
-    const addressText = options?.addressText?.trim() || "M-Gold Tower, Lantai 16, Bekasi, Indonesia | info@gig.co.id";
-    const includeLogo = options?.includeLogo || false;
-    const logoUrl = options?.logoUrl?.trim() || "";
-
-    const createdBy = options?.createdBy?.trim() || "FAISAL MUSTOPA";
-    const createdByRole = options?.createdByRole?.trim() || "Staf Administrasi Keuangan";
-    const approvedBy = options?.approvedBy?.trim() || "MUHAMMAD YASIN";
-    const approvedByRole = options?.approvedByRole?.trim() || "Direktur Utama";
-
-    // Outer Border
-    doc.setDrawColor(226, 232, 240); // slate-200
-    doc.rect(5, 5, 200, 287);
-
-    // Decorative Header bar
-    doc.setFillColor(26, 43, 73); // deep blue slate
-    doc.rect(10, 10, 190, 8, "F");
-
-    let currentY = 26;
-
-    // Optional Logo on Top Left
-    if (includeLogo && logoUrl) {
-      try {
-        doc.addImage(logoUrl, "PNG", 12, 18, 18, 18);
-      } catch (e) {
-        console.warn("Could not load logo image for PDF", e);
-      }
-    }
-
-    const textX = (includeLogo && logoUrl) ? 34 : 15;
-
-    // Company Title
-    doc.setFontSize(16);
-    doc.setTextColor(26, 43, 73);
-    doc.setFont("helvetica", "bold");
-    doc.text(companyName, textX, currentY);
-
-    if (includeAddress && addressText) {
-      currentY += 5;
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(100);
-      doc.text(addressText, textX, currentY);
-    }
-
-    currentY += 6;
-    // Line separator
-    doc.setDrawColor(226, 232, 240);
-    doc.line(10, currentY, 200, currentY);
-
-    currentY += 7;
-    // Document title
-    doc.setFontSize(13);
-    doc.setTextColor(26, 43, 73);
-    doc.setFont("helvetica", "bold");
-    doc.text("LAPORAN REALISASI TERMIN & PIUTANG PROYEK", 15, currentY);
-
-    currentY += 5;
-    doc.setFontSize(8.5);
-    doc.setTextColor(120);
-    doc.setFont("helvetica", "normal");
-    doc.text(`Kode Rekam: ${record.customId || record.id}`, 15, currentY);
-    doc.text(`Tanggal Cetak: ${new Date().toLocaleString("id-ID")}`, 145, currentY);
-
-    currentY += 5;
-
-    // Table 1: INFORMASI PROYEK & KONTRAK (Left Side)
-    const table1Body = [
-      ["Nama Proyek", sched.projectName || "-"],
-      ["No. Kontrak", sched.contractNo || "-"],
-      ["Client / Owner", sched.owner || record.contactName || "-"],
-      ["Tanggal Mulai", sched.startDate || "-"],
-    ];
-
-    // PPN setup for PDF calculations (extracting PPN from Gross contract value)
-    const linkedProj = projects.find((p) => p.id === record.projectId);
-    const isPpnEnabled = linkedProj ? linkedProj.hasPpn !== false : true;
-    const dppTotal = isPpnEnabled ? Math.round(record.amount / 1.11) : record.amount;
-    const ppnTotal = isPpnEnabled ? record.amount - dppTotal : 0;
-    const dppPaid = isPpnEnabled ? Math.round(totalPaid / 1.11) : totalPaid;
-    const ppnPaid = isPpnEnabled ? totalPaid - dppPaid : 0;
-    const dppRemaining = isPpnEnabled ? Math.round(remaining / 1.11) : remaining;
-    const ppnRemaining = isPpnEnabled ? remaining - dppRemaining : 0;
-    const pct = record.amount > 0 ? ((totalPaid / record.amount) * 100).toFixed(1) : "0";
-
-    // Table 2: REALISASI & TAGIHAN KONTRAK (Right Side)
-    const table2Body = [
-      ["Nilai Kontrak Inc. PPN", formatCurrencyIDR(record.amount)],
-      ["Nilai Sebelum PPN (DPP)", formatCurrencyIDR(dppTotal)],
-      ["Total Diterima", formatCurrencyIDR(totalPaid)],
-      ["Sisa Tagihan", formatCurrencyIDR(remaining)],
-      ["Persentase Lunas", `${pct}%`],
-      [`PPN ${isPpnEnabled ? "11%" : "0%"} (Total Kontrak)`, formatCurrencyIDR(ppnTotal)],
-      ["PPN Realisasi", formatCurrencyIDR(ppnPaid)],
-      ["Sisa PPN Belum Realisasi", formatCurrencyIDR(ppnRemaining)],
-    ];
-
-    // Render Table 1 (Left Side)
-    autoTable(doc, {
-      startY: currentY,
-      margin: { left: 12 },
-      tableWidth: 88,
-      head: [["INFORMASI PROYEK & KONTRAK", ""]],
-      body: table1Body,
-      theme: "grid",
-      headStyles: {
-        fillColor: [26, 43, 73],
-        textColor: [255, 255, 255],
-        fontSize: 8,
-        fontStyle: "bold",
-        halign: "left",
-      },
-      bodyStyles: {
-        fontSize: 7.5,
-        textColor: [51, 65, 85],
-      },
-      columnStyles: {
-        0: { fontStyle: "bold", cellWidth: 30, fillColor: [248, 250, 252] },
-        1: { fontStyle: "bold", textColor: [15, 23, 42] },
-      },
-    });
-
-    // Render Table 2 (Right Side)
-    autoTable(doc, {
-      startY: currentY,
-      margin: { left: 104 },
-      tableWidth: 94,
-      head: [["REALISASI & TAGIHAN KONTRAK", ""]],
-      body: table2Body,
-      theme: "grid",
-      headStyles: {
-        fillColor: [26, 43, 73],
-        textColor: [255, 255, 255],
-        fontSize: 8,
-        fontStyle: "bold",
-        halign: "left",
-      },
-      bodyStyles: {
-        fontSize: 7.5,
-        textColor: [51, 65, 85],
-      },
-      columnStyles: {
-        0: { fontStyle: "bold", cellWidth: 42, fillColor: [248, 250, 252] },
-        1: { fontStyle: "bold", halign: "right", textColor: [15, 23, 42] },
-      },
-    });
-
-    // Get bottom Y position of the two tables
-    const table1FinalY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY : currentY + 50;
-    const nextTableY = Math.max(table1FinalY, currentY + 48) + 7;
-
-    // Table title
-    doc.setFontSize(9.5);
-    doc.setTextColor(26, 43, 73);
-    doc.setFont("helvetica", "bold");
-    doc.text("TABEL DETAIL TAHAPAN TERMIN & REALISASI PEMBAYARAN", 12, nextTableY);
-
-    // Build Table Data for Terms (NO ID column!)
-    const tableBody = sched.terms.map((t: any) => {
-      const termAmt = t.amount && t.amount > 0 ? t.amount : (t.expectedAmount || 0);
-      return [
-        t.name,
-        t.description || "-",
-        termAmt > 0 ? formatCurrencyIDR(termAmt).replace("Rp ", "") : "-",
-        t.percentage > 0 ? `${t.percentage}%` : "-",
-        t.invoiceDate || "-",
-        t.paymentDate || "-",
-        t.status,
-        t.notes || "-",
-      ];
-    });
-
-    autoTable(doc, {
-      startY: nextTableY + 3,
-      margin: { left: 12, right: 12 },
-      head: [
-        [
-          "TERMIN/TAHAP",
-          "DESKRIPSI",
-          "JUMLAH (RP)",
-          "PROP.",
-          "TGL INVOICE",
-          "TGL BAYAR",
-          "STATUS",
-          "KETERANGAN",
-        ],
-      ],
-      body: tableBody,
-      theme: "grid",
-      headStyles: {
-        fillColor: [26, 43, 73],
-        textColor: [255, 255, 255],
-        fontSize: 7.5,
-        fontStyle: "bold",
-        halign: "center",
-      },
-      styles: {
-        fontSize: 7,
-        textColor: [51, 65, 85],
-      },
-      columnStyles: {
-        0: { fontStyle: "bold", textColor: [15, 23, 42] },
-        2: { halign: "right", fontStyle: "bold", textColor: [16, 124, 65] },
-        3: { halign: "center" },
-        4: { halign: "center" },
-        5: { halign: "center" },
-        6: { halign: "center" },
-        7: { halign: "center", fontStyle: "bold" },
-      },
-      didParseCell: (data) => {
-        if (data.section === "body" && data.column.index === 7) {
-          const val = data.cell.raw;
-          if (val === "LUNAS") {
-            data.cell.styles.textColor = [16, 124, 65];
-          } else if (val === "BELUM LUNAS" || val === "BELUM BAYAR") {
-            data.cell.styles.textColor = [180, 83, 9];
-          } else if (val === "DICICIL") {
-            data.cell.styles.textColor = [79, 70, 229];
-          }
-        }
-      },
-    });
-
-    // Signature Block at the bottom (2 Columns: Dibuat Oleh Admin & Disetujui Oleh Direktur)
-    const lastY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY : 160;
-    const signY = Math.max(lastY + 12, 222);
-
-    doc.setFontSize(8.5);
-    doc.setTextColor(100);
-    doc.setFont("helvetica", "normal");
-
-    // 1. Dibuat Oleh (Admin)
-    doc.text("Dibuat Oleh,", 30, signY);
-    doc.text(createdByRole, 30, signY + 4);
-    doc.line(30, signY + 22, 80, signY + 22);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(26, 43, 73);
-    doc.text(createdBy, 30, signY + 26);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(120);
-    doc.text(createdByRole || "Admin", 30, signY + 30);
-
-    // 2. Disetujui Oleh (Direktur)
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(100);
-    doc.text("Disetujui Oleh,", 130, signY);
-    doc.text(approvedByRole, 130, signY + 4);
-    doc.line(130, signY + 22, 180, signY + 22);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(26, 43, 73);
-    doc.text(approvedBy, 130, signY + 26);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(120);
-    doc.text(approvedByRole || "Direktur Utama", 130, signY + 30);
-
-    // Save PDF
-    const safeTitle = (sched.projectName || "piutang").replace(/[^a-z0-9]/gi, "_").toLowerCase();
-    doc.save(`Realisasi_Termin_${safeTitle}_${record.customId || record.id}.pdf`);
-    setIsExporting(false);
-  };
-
-  return (
-    <AdminLayout
-      activeScreen="admin-debt"
-      onNavigate={onNavigate}
-      user={user}
-      roles={roles}
-    >
-      <div className="space-y-8 pb-24">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-          <div>
-            <h1 className="text-3xl font-black text-slate-900 tracking-tight italic uppercase">
-              Hutang & Piutang
-            </h1>
-            <p className="text-slate-500 font-medium">
-              Kelola kewajiban pembayaran dan tagihan tertunda bisnis.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={downloadPDF}
-              disabled={isExporting}
-              className="h-12 px-6 bg-white border border-slate-200 text-slate-900 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-sm flex items-center gap-2 hover:bg-slate-50 transition-all"
-            >
-              <Download size={16} />{" "}
-              {isExporting ? "Exporting..." : "Unduh Laporan"}
-            </button>
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="h-12 px-8 bg-slate-900 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl shadow-slate-200 flex items-center gap-2"
-            >
-              <Plus size={16} /> Tambah Data
-            </button>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-rose-500/5 rounded-full -mr-16 -mt-16 blur-3xl group-hover:scale-110 transition-transform duration-700" />
-            <div className="flex justify-between items-start mb-4">
-              <div className="w-12 h-12 bg-rose-50 text-rose-500 rounded-2xl flex items-center justify-center">
-                <ArrowUpRight size={24} />
-              </div>
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full">
-                Total Hutang
-              </span>
-            </div>
-            <div className="space-y-1">
-              <h3 className="text-3xl font-black text-rose-600">
-                {formatCurrencyIDR(debtTotals.hutangSisa)}
-              </h3>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest italic flex items-center gap-1">
-                <AlertCircle size={12} /> Belum Terbayar (Sisa)
-              </p>
-            </div>
-            <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-slate-500">
-              <div>
-                <p className="text-[10px] uppercase font-black tracking-wider text-slate-400">Total Awal</p>
-                <p className="text-slate-700 font-extrabold mt-0.5">{formatCurrencyIDR(debtTotals.hutangAwal)}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] uppercase font-black tracking-wider text-slate-400">Telah Terbayar</p>
-                <p className="text-emerald-600 font-extrabold mt-0.5">{formatCurrencyIDR(debtTotals.hutangTerbayar)}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white p-8 rounded-[3rem] border border-slate-100 shadow-sm relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full -mr-16 -mt-16 blur-3xl group-hover:scale-110 transition-transform duration-700" />
-            <div className="flex justify-between items-start mb-4">
-              <div className="w-12 h-12 bg-emerald-50 text-emerald-500 rounded-2xl flex items-center justify-center">
-                <ArrowDownRight size={24} />
-              </div>
-              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-50 px-3 py-1 rounded-full">
-                Total Piutang
-              </span>
-            </div>
-            <div className="space-y-1">
-              <h3 className="text-3xl font-black text-emerald-600">
-                {formatCurrencyIDR(debtTotals.piutangSisa)}
-              </h3>
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest italic flex items-center gap-1">
-                <Clock size={12} /> Menunggu Penagihan (Sisa)
-              </p>
-            </div>
-            <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-slate-500">
-              <div>
-                <p className="text-[10px] uppercase font-black tracking-wider text-slate-400">Total Awal</p>
-                <p className="text-slate-700 font-extrabold mt-0.5">{formatCurrencyIDR(debtTotals.piutangAwal)}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-[10px] uppercase font-black tracking-wider text-slate-400">Telah Terbayar</p>
-                <p className="text-emerald-600 font-extrabold mt-0.5">{formatCurrencyIDR(debtTotals.piutangTerbayar)}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-2xl w-fit">
-          <button
-            onClick={() => setActiveTab("HUTANG")}
-            className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === "HUTANG" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}
-          >
-            Hutang (Payable)
-          </button>
-          <button
-            onClick={() => setActiveTab("PIUTANG")}
-            className={`px-8 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${activeTab === "PIUTANG" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-900"}`}
-          >
-            Piutang (Receivable)
-          </button>
-        </div>
-
-        {/* RANGKUMAN SALDO PER NAMA */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-              {activeTab === "HUTANG" ? "Rangkuman Sisa Hutang Per Vendor / Kreditur" : "Rangkuman Sisa Piutang Per Proyek / Client"}
-            </h3>
-            <span className="text-[10px] font-bold text-slate-400">
-              {contactGroupedTotals.length} {activeTab === "HUTANG" ? "Kontak Terdaftar" : "Proyek / Client Terdaftar"}
-            </span>
-          </div>
-
-          {contactGroupedTotals.length === 0 ? (
-            <div className="bg-slate-50/50 p-8 rounded-[2rem] border border-slate-100 text-center">
-              <p className="text-xs font-semibold text-slate-400">Tidak ada rekam data untuk filter ini.</p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-              {contactGroupedTotals.map((group) => {
-                const paidPct = group.totalAmount > 0 ? (group.totalPaid / group.totalAmount) * 100 : 0;
-                return (
-                  <div
-                    key={group.name}
-                    onClick={() => {
-                      setSelectedContactDetail({ name: group.name, type: activeTab });
-                      setContactDetailTab("DEBTS");
-                    }}
-                    className="bg-white border border-slate-200/90 rounded-[2rem] p-5 shadow-xs hover:shadow-lg hover:border-slate-300 transition-all relative overflow-hidden group/card cursor-pointer active:scale-[0.99]"
-                    title={`Klik untuk melihat rincian ${activeTab === "HUTANG" ? "hutang" : "piutang"} & riwayat mutasi ${group.name}`}
-                  >
-                    {/* Decorative accent side bar */}
-                    <div
-                      className={`absolute left-0 top-0 bottom-0 w-1.5 transition-all ${
-                        activeTab === "HUTANG"
-                          ? "bg-rose-500 group-hover/card:w-2.5"
-                          : "bg-emerald-500 group-hover/card:w-2.5"
-                      }`}
-                    />
-
-                    <div className="space-y-3">
-                      {/* Name & Badge */}
-                      <div className="flex items-start justify-between gap-2 pl-1.5">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          {activeTab === "HUTANG" ? (
-                            <Users2 size={13} className="text-slate-400 shrink-0 group-hover/card:text-indigo-600 transition-colors" />
-                          ) : (
-                            <Briefcase size={13} className="text-slate-400 shrink-0 group-hover/card:text-indigo-600 transition-colors" />
-                          )}
-                          <h4 className="text-xs font-black text-slate-800 tracking-tight truncate uppercase group-hover/card:text-indigo-600 transition-colors">
-                            {group.name}
-                          </h4>
-                        </div>
-                        <span className="text-[9px] font-black bg-slate-50 border border-slate-100 text-slate-500 px-2 py-0.5 rounded-full shrink-0 group-hover/card:bg-indigo-50 group-hover/card:text-indigo-600 group-hover/card:border-indigo-100 transition-colors">
-                          {group.count} Rekam
-                        </span>
-                      </div>
-
-                      {/* Remaining sisa */}
-                      <div className="bg-slate-50/70 p-3 rounded-xl border border-slate-100/50 pl-4 group-hover/card:bg-slate-50 transition-colors">
-                        <p className="text-[9px] font-black uppercase text-slate-400 tracking-widest leading-none mb-1">
-                          Sisa {activeTab === "HUTANG" ? "Hutang" : "Piutang"}
-                        </p>
-                        <p
-                          className={`text-base font-black ${
-                            activeTab === "HUTANG" ? "text-rose-600" : "text-emerald-600"
-                          }`}
-                        >
-                          {formatCurrencyIDR(group.totalRemaining)}
-                        </p>
-                      </div>
-
-                      {/* Detail breakdown & Progress */}
-                      <div className="space-y-2 pl-1.5">
-                        <div className="flex justify-between text-[10px] font-bold text-slate-500">
-                          <span>Awal: {formatCurrencyIDR(group.totalAmount)}</span>
-                          <span>Lunas: {paidPct.toFixed(0)}%</span>
-                        </div>
-                        
-                        {/* Custom progress bar */}
-                        <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full rounded-full transition-all duration-500 ${
-                              activeTab === "HUTANG" ? "bg-rose-500" : "bg-emerald-500"
-                            }`}
-                            style={{ width: `${Math.min(100, paidPct)}%` }}
-                          />
-                        </div>
-
-                        <div className="flex justify-between text-[9px] text-slate-400 font-bold">
-                          <span>Telah Dibayar:</span>
-                          <span className="text-emerald-600 font-extrabold">{formatCurrencyIDR(group.totalPaid)}</span>
-                        </div>
-
-                        {/* Interactive action prompt */}
-                        <div className="pt-2 mt-1 border-t border-slate-100 flex items-center justify-between text-[9.5px] font-bold text-slate-400 group-hover/card:text-indigo-600 transition-colors">
-                          <span className="flex items-center gap-1">
-                            <Eye size={12} /> Klik untuk rincian & mutasi
-                          </span>
-                          <ChevronRight size={13} className="group-hover/card:translate-x-0.5 transition-transform" />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="bg-white rounded-[3rem] border border-slate-100 shadow-sm overflow-hidden">
-          <div className="p-8 border-b border-slate-50 flex flex-col md:flex-row items-center gap-4">
-            <div className="relative flex-1 w-full">
-              <Search
-                size={18}
-                className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300"
-              />
-              <input
-                type="text"
-                placeholder="Cari berdasarkan judul atau nama kontak..."
-                className="w-full pl-14 pr-6 py-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 ring-primary/10 border border-slate-100 text-sm font-bold transition-all"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-            </div>
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <Filter size={16} className="text-slate-400" />
-              <select
-                value={filterProject}
-                onChange={(e) => setFilterProject(e.target.value)}
-                className="w-full md:w-64 pl-4 pr-10 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 ring-primary/10 transition-all appearance-none cursor-pointer"
-              >
-                <option value="ALL">Semua Proyek (Global)</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead className="bg-[#112a46] text-white">
-                <tr>
-                  <th className="p-5 text-xs font-bold font-sans tracking-wide border-r border-[#1e3d64]/30">
-                    {activeTab === "HUTANG" ? "ID Hutang" : "ID Piutang"}
-                  </th>
-                  <th className="p-5 text-xs font-bold font-sans tracking-wide border-r border-[#1e3d64]/30">
-                    {activeTab === "HUTANG" ? "Nama Vendor / Kreditur" : "Nama Client / Debitur"}
-                  </th>
-                  <th className="p-5 text-xs font-bold font-sans tracking-wide border-r border-[#1e3d64]/30">
-                    Deskripsi & Proyek
-                  </th>
-                  <th className="p-5 text-xs font-bold font-sans tracking-wide text-right border-r border-[#1e3d64]/30">
-                    {activeTab === "HUTANG" ? "Total Hutang Awal (Rp)" : "Total Piutang Awal (Rp)"}
-                  </th>
-                  <th className="p-5 text-xs font-bold font-sans tracking-wide text-right border-r border-[#1e3d64]/30">
-                    Jumlah Terbayar (Rp)
-                  </th>
-                  <th className="p-5 text-xs font-bold font-sans tracking-wide text-right border-r border-[#1e3d64]/30">
-                    {activeTab === "HUTANG" ? "Sisa Saldo Hutang (Rp)" : "Sisa Saldo Piutang (Rp)"}
-                  </th>
-                  <th className="p-5 text-xs font-bold font-sans tracking-wide text-center border-r border-[#1e3d64]/30">
-                    Status
-                  </th>
-                  <th className="p-5 text-xs font-bold font-sans tracking-wide text-center">
-                    Aksi
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredRecords.map((r) => {
-                  const sched = getScheduleForRecord(r, projects, financialRecords);
-                  const totalPaid = sched.totalPaid;
-                  const remaining = Math.max(0, sched.contractValue - totalPaid);
-
-                  return (
-                    <tr
-                      key={r.id}
-                      onClick={(e) => {
-                        const target = e.target as HTMLElement;
-                        if (target.closest('button') || target.closest('a') || target.closest('select') || target.closest('input')) {
-                          return;
-                        }
-                        if (activeTab === "PIUTANG") {
-                          setSelectedTerminRecord(r);
-                        }
-                      }}
-                      className={`transition-colors group border-b border-slate-100 ${
-                        activeTab === "PIUTANG" ? "cursor-pointer hover:bg-indigo-50/30" : "hover:bg-slate-50/55"
-                      }`}
-                    >
-                      {/* ID Hutang / Piutang */}
-                      <td className="p-5 align-top">
-                        <span className="px-3 py-1.5 bg-slate-100 text-slate-800 font-mono text-[11px] font-black rounded-lg border border-slate-200 uppercase tracking-wider block w-fit">
-                          {r.customId || `${activeTab === "HUTANG" ? "HTG" : "PTG"}-${r.id.substring(0, 6).toUpperCase()}`}
-                        </span>
-                        {activeTab === "PIUTANG" && (
-                          <span className="text-[9px] text-indigo-600 font-black mt-2 hover:underline flex items-center gap-1 cursor-pointer select-none">
-                            <Calendar size={10} />
-                            Lihat Rincian Termin
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Nama Vendor/Kreditur atau Client/Debitur */}
-                      <td className="p-5 align-top">
-                        <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-lg bg-slate-100 flex items-center justify-center text-slate-500 font-extrabold text-xs shrink-0">
-                            {r.contactName.substring(0, 2).toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="font-extrabold text-slate-900 text-sm leading-tight">
-                              {r.contactName}
-                            </p>
-                            <p className="text-[10px] text-slate-400 font-bold mt-0.5">
-                              Pencatat: {r.recordedBy || "System"}
-                            </p>
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* Deskripsi & Proyek */}
-                      <td className="p-5 align-top max-w-xs">
-                        <div className="space-y-1">
-                          <p className="font-bold text-slate-700 text-xs leading-snug">
-                            {r.title}
-                          </p>
-                          {r.projectId && (
-                            <p className="text-[9px] font-black text-indigo-700 bg-indigo-50 border border-indigo-100/50 px-2 py-0.5 rounded w-fit uppercase tracking-wider">
-                              Proyek: {projects.find((p) => p.id === r.projectId)?.name || "Umum"}
-                            </p>
-                          )}
-                          {(() => {
-                            const sched = getScheduleForRecord(r, projects, financialRecords);
-                            const invDates = Array.from(new Set(sched.terms.map(t => t.invoiceDate).filter(d => d && d !== "-")));
-                            const payDates = Array.from(new Set(sched.terms.map(t => t.paymentDate).filter(d => d && d !== "-")));
-                            
-                            return (
-                              <div className="space-y-0.5 mt-1">
-                                {invDates.length > 0 && (
-                                  <p className="text-[10px] text-indigo-700 font-bold flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                                    Tgl Invoice: <span className="font-mono bg-indigo-50 px-1 py-0.2 rounded">{invDates.join(", ")}</span>
-                                  </p>
-                                )}
-                                {payDates.length > 0 && (
-                                  <p className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                    Tgl Terbayar: <span className="font-mono bg-emerald-50 px-1 py-0.2 rounded">{payDates.join(", ")}</span>
-                                  </p>
-                                )}
-                                {invDates.length === 0 && payDates.length === 0 && r.dueDate && (
-                                  <p className="text-[10px] text-indigo-700 font-bold flex items-center gap-1">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-indigo-500" />
-                                    Tgl Jatuh Tempo: <span className="font-mono bg-indigo-50 px-1 py-0.2 rounded">{r.dueDate}</span>
-                                  </p>
-                                )}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      </td>
-
-                      {/* Total Hutang Awal */}
-                      <td className="p-5 align-top text-right font-mono font-bold text-slate-900 text-sm">
-                        {formatCurrencyIDR(sched.contractValue)}
-                      </td>
-
-                      {/* Jumlah Terbayar */}
-                      <td className="p-5 align-top text-right font-mono font-bold text-emerald-600 text-sm">
-                        {formatCurrencyIDR(totalPaid)}
-                      </td>
-
-                      {/* Sisa Saldo Hutang */}
-                      <td className="p-5 align-top text-right font-mono font-black text-sm">
-                        <span className={remaining > 0 ? "text-rose-600" : "text-emerald-600"}>
-                          {formatCurrencyIDR(remaining)}
-                        </span>
-                      </td>
-
-                      {/* Status */}
-                      <td className="p-5 align-top text-center">
-                        <span
-                          className={`inline-block px-3 py-1.5 rounded-full text-[9px] font-black tracking-wider uppercase border ${
-                            remaining === 0
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : totalPaid > 0
-                                ? "bg-amber-50 text-amber-700 border-amber-200"
-                                : "bg-rose-50 text-rose-700 border-rose-200"
-                          }`}
-                        >
-                          {remaining === 0
-                            ? "LUNAS"
-                            : totalPaid > 0
-                              ? "DICICIL"
-                              : "BELUM BAYAR"}
-                        </span>
-                      </td>
-
-                      {/* Aksi */}
-                      <td className="p-5 align-top text-center">
-                        <div className="flex items-center justify-center gap-1.5">
-                          {remaining > 0 && (
-                            <button
-                              onClick={() => {
-                                setShowPaymentModal(r);
-                                setPaymentForm((prev) => ({
-                                  ...prev,
-                                  amount: remaining.toString(),
-                                }));
-                              }}
-                              className="p-2.5 bg-[#112a46] hover:bg-slate-800 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-slate-100 flex items-center justify-center"
-                              title="Cicil / Bayar"
-                            >
-                              <DollarSign size={14} />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => {
-                              setShowEditModal(r);
-                              setEditForm({
-                                title: r.title,
-                                contactName: r.contactName,
-                                amount: r.amount.toString(),
-                                dueDate: r.dueDate,
-                                description: r.description || "",
-                                projectId: r.projectId || "",
-                                type: r.type,
-                              });
-                            }}
-                            className="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-indigo-100 flex items-center justify-center"
-                            title="Edit Catatan & Cicilan"
-                          >
-                            <Edit size={14} />
-                          </button>
-                           {activeTab === "PIUTANG" && (
-                            <button
-                              onClick={() => setSelectedTerminRecord(r)}
-                              className="p-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-sky-100 flex items-center justify-center"
-                              title="Lihat Rincian Termin"
-                            >
-                              <Calendar size={14} />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => onNavigate("admin-finance")}
-                            className="p-2.5 bg-white border border-slate-200 text-slate-400 rounded-xl hover:border-slate-800 hover:text-slate-800 transition-all flex items-center justify-center shadow-xs"
-                            title="Ke Menu Keuangan"
-                          >
-                            <ArrowRightLeft size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteDebt(r.id, r.customId, r.type)}
-                            className="p-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-rose-100 flex items-center justify-center"
-                            title="Hapus Catatan"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-              {filteredRecords.length > 0 && (
-                <tfoot className="bg-slate-50 border-t border-slate-200 font-bold">
-                  <tr className="border-b border-slate-200">
-                    <td colSpan={3} className="p-5 text-xs font-black text-slate-500 uppercase tracking-wider text-center align-middle">
-                      TOTAL REKAP ({activeTab})
-                    </td>
-                    <td className="p-5 text-right font-mono text-xs font-extrabold text-slate-900 align-middle">
-                      {formatCurrencyIDR(
-                        filteredRecords.reduce((sum, r) => {
-                          const sched = getScheduleForRecord(r, projects, financialRecords);
-                          return sum + (sched.contractValue || r.amount || 0);
-                        }, 0)
-                      )}
-                    </td>
-                    <td className="p-5 text-right font-mono text-xs font-extrabold text-emerald-600 align-middle">
-                      {formatCurrencyIDR(
-                        filteredRecords.reduce((sum, r) => {
-                          const sched = getScheduleForRecord(r, projects, financialRecords);
-                          return sum + sched.totalPaid;
-                        }, 0)
-                      )}
-                    </td>
-                    <td className="p-5 text-right font-mono text-xs font-black align-middle">
-                      <span className="text-rose-600">
-                        {formatCurrencyIDR(
-                          filteredRecords.reduce((sum, r) => {
-                            const sched = getScheduleForRecord(r, projects, financialRecords);
-                            return sum + Math.max(0, sched.contractValue - sched.totalPaid);
-                          }, 0)
-                        )}
-                      </span>
-                    </td>
-                    <td colSpan={2} className="p-5"></td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <AnimatePresence>
-        {showAddModal && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-start justify-center p-6 overflow-y-auto">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white w-full max-w-4xl rounded-[3rem] shadow-2xl p-10 relative overflow-hidden my-auto"
-            >
-              <div className="flex justify-between items-center mb-8">
-                <div>
-                  <h3 className="text-2xl font-black">
-                    Tambah {activeTab === "HUTANG" ? "Hutang" : "Piutang"} Baru
-                  </h3>
-                  <p className="text-slate-500 font-medium text-sm mt-1">
-                    Catat transaksi kewajiban secara rapi.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowAddModal(false)}
-                  className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center hover:bg-slate-100 transition-all"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              <form onSubmit={handleCreate} className="space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Keterangan / Judul
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Mis: Pembelian Material X"
-                      className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                      value={formData.title}
-                      onChange={(e) =>
-                        setFormData({ ...formData, title: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Nama Kontak / Pihak
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Mis: Toko Bangunan Jaya"
-                      className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                      value={formData.contactName}
-                      onChange={(e) =>
-                        setFormData({
-                          ...formData,
-                          contactName: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Jumlah (Rp)
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      placeholder="0"
-                      className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                      value={formData.amount}
-                      onChange={(e) =>
-                        setFormData({ ...formData, amount: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      {formData.type === "PIUTANG" ? "Tanggal Invoice" : "Tanggal Jatuh Tempo"}
-                    </label>
-                    <input
-                      type="date"
-                      required
-                      className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                      value={formData.dueDate}
-                      onChange={(e) =>
-                        setFormData({ ...formData, dueDate: e.target.value })
-                      }
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                    Kategori Project (Opsional)
-                  </label>
-                  <select
-                    className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all appearance-none cursor-pointer"
-                    value={formData.projectId}
-                    onChange={(e) =>
-                      setFormData({ ...formData, projectId: e.target.value })
-                    }
-                  >
-                    <option value="">-- Pilih Project --</option>
-                    {projects
-                      .filter(isProjectActive)
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                    Catatan Tambahan
-                  </label>
-                  <textarea
-                    rows={3}
-                    className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all resize-none"
-                    placeholder="Detail transaksi lainnya..."
-                    value={formData.description}
-                    onChange={(e) =>
-                      setFormData({ ...formData, description: e.target.value })
-                    }
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full py-5 bg-slate-900 text-white rounded-[2rem] font-black text-[10px] uppercase tracking-[0.2em] shadow-2xl transition-all hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  Simpan Catatan {activeTab === "HUTANG" ? "Hutang" : "Piutang"}
-                </button>
-              </form>
-            </motion.div>
-          </div>
-        )}
-
-        {showPaymentModal && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-start justify-center p-6 overflow-y-auto">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white w-full max-w-lg rounded-[3rem] shadow-2xl p-10 my-auto"
-            >
-              <div className="flex justify-between items-center mb-8">
-                <div>
-                  <h3 className="text-2xl font-black">
-                    Cicil / Bayar {showPaymentModal.type}
-                  </h3>
-                  <p className="text-slate-500 font-medium text-sm mt-1">
-                    {showPaymentModal.title} - {showPaymentModal.contactName}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowPaymentModal(null)}
-                  className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <form onSubmit={handleRecordPayment} className="space-y-6">
-                <div className="p-6 bg-slate-50 rounded-[2rem] border border-slate-100 border-dashed">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-                    Total Sisa Tagihan
-                  </p>
-                  <p className="text-2xl font-black text-slate-900">
-                    {formatCurrencyIDR(
-                      showPaymentModal.amount -
-                        (showPaymentModal.payments || []).reduce(
-                          (a, b) => a + b.amount,
-                          0,
-                        ),
-                    )}
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Nominal Cicilan (Rp)
-                    </label>
-                    <input
-                      type="number"
-                      required
-                      className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                      value={paymentForm.amount}
-                      onChange={(e) =>
-                        setPaymentForm({
-                          ...paymentForm,
-                          amount: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                        Tanggal Bayar
-                      </label>
-                      <input
-                        type="date"
-                        required
-                        className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                        value={paymentForm.date}
-                        onChange={(e) =>
-                          setPaymentForm({
-                            ...paymentForm,
-                            date: e.target.value,
-                          })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                        Metode
-                      </label>
-                      <select
-                        className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                        value={paymentForm.paymentMethod}
-                        onChange={(e) =>
-                          setPaymentForm({
-                            ...paymentForm,
-                            paymentMethod: e.target.value as any,
-                            sumberDana: e.target.value === "CASH" ? "REKENING PRIBADI" : "REKENING PT"
-                          })
-                        }
-                      >
-                        <option value="TRANSFER">TRANSFER</option>
-                        <option value="CASH">TUNAI (CASH)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Sumber Dana (Dari/Ke) */}
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Sumber / Alur Dana (Koneksi Keuangan)
-                    </label>
-                    <select
-                      className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                      value={paymentForm.sumberDana}
-                      onChange={(e) =>
-                        setPaymentForm({
-                          ...paymentForm,
-                          sumberDana: e.target.value,
-                        })
-                      }
-                    >
-                      <option value="REKENING PT">REKENING PT</option>
-                      <option value="REKENING PRIBADI">REKENING PRIBADI</option>
-                    </select>
-                  </div>
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full py-5 bg-emerald-500 text-white rounded-[2rem] font-black text-[10px] uppercase tracking-[0.2em] shadow-xl shadow-emerald-100 transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
-                >
-                  <CheckCircle size={16} /> Konfirmasi Pembayaran
-                </button>
-              </form>
-            </motion.div>
-          </div>
-        )}
-
-        {showGroupPaymentModal && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-start justify-center p-6 overflow-y-auto">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white w-full max-w-xl rounded-[3rem] shadow-2xl p-8 my-auto space-y-6"
-            >
-              <div className="flex justify-between items-center border-b border-slate-100 pb-4">
-                <div>
-                  <h3 className="text-xl font-black text-slate-900">
-                    Bayar Total {showGroupPaymentModal.debtType === "HUTANG" ? "Hutang" : "Piutang"}
-                  </h3>
-                  <p className="text-xs font-bold text-indigo-600 mt-0.5 uppercase tracking-wider">
-                    {showGroupPaymentModal.contactName}
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowGroupPaymentModal(null)}
-                  className="w-10 h-10 bg-slate-50 hover:bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-700"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-
-              <div className="p-5 bg-rose-50/60 border border-rose-100 rounded-2xl space-y-2">
-                <div className="flex justify-between items-center text-xs font-bold text-rose-800">
-                  <span>Total Sisa Saldo:</span>
-                  <span className="text-base font-black font-mono text-rose-700">
-                    {formatCurrencyIDR(showGroupPaymentModal.totalRemaining)}
-                  </span>
-                </div>
-                <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
-                  üí° <b>Otomatis Pemecahan ID:</b> Pembayaran akan memotong catatan hutang dengan <b>nominal sisa terkecil dahulu</b> hingga total pembayaran terpenuhi.
-                </p>
-              </div>
-
-              <form onSubmit={handleRecordGroupPayment} className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                    Nominal Pembayaran (Rp)
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-rose-500/20"
-                    value={groupPaymentForm.amount}
-                    onChange={(e) =>
-                      setGroupPaymentForm({
-                        ...groupPaymentForm,
-                        amount: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Tanggal Pembayaran
-                    </label>
-                    <input
-                      type="date"
-                      required
-                      className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none"
-                      value={groupPaymentForm.date}
-                      onChange={(e) =>
-                        setGroupPaymentForm({
-                          ...groupPaymentForm,
-                          date: e.target.value,
-                        })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Metode
-                    </label>
-                    <select
-                      className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none"
-                      value={groupPaymentForm.paymentMethod}
-                      onChange={(e) =>
-                        setGroupPaymentForm({
-                          ...groupPaymentForm,
-                          paymentMethod: e.target.value as any,
-                        })
-                      }
-                    >
-                      <option value="TRANSFER">TRANSFER</option>
-                      <option value="CASH">TUNAI (CASH)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                    Catatan Pembayaran
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="mis: Pelunasan / Cicilan Hutang Bahan"
-                    className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none"
-                    value={groupPaymentForm.note}
-                    onChange={(e) =>
-                      setGroupPaymentForm({
-                        ...groupPaymentForm,
-                        note: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-
-                <button
-                  type="submit"
-                  className="w-full py-4 bg-rose-600 hover:bg-rose-700 text-white rounded-[2rem] font-black text-[10px] uppercase tracking-[0.2em] shadow-lg shadow-rose-600/20 transition-all active:scale-95 flex items-center justify-center gap-2"
-                >
-                  <CheckCircle size={16} /> Konfirmasi Bayar Total Hutang
-                </button>
-              </form>
-            </motion.div>
-          </div>
-        )}
-
-        {showEditModal && currentRecord && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-start justify-center p-6 overflow-y-auto">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white w-full max-w-5xl rounded-[3rem] shadow-2xl p-10 relative overflow-hidden my-auto space-y-8 text-slate-800"
-            >
-              <div className="flex justify-between items-center">
-                <div>
-                  <span className="px-2.5 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 font-mono text-[9px] font-black rounded uppercase tracking-wider">
-                    {currentRecord.customId || currentRecord.id}
-                  </span>
-                  <h3 className="text-2xl font-black mt-1">
-                    Edit Data {currentRecord.type === "HUTANG" ? "Hutang" : "Piutang"}
-                  </h3>
-                  <p className="text-slate-500 font-medium text-xs mt-1">
-                    Sesuaikan informasi utama atau kelola riwayat angsuran/pembayaran di bawah.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowEditModal(null)}
-                  className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center hover:bg-slate-100 transition-all"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* SECTION 1: Detail Utama (Main Fields) */}
-              <form onSubmit={handleSaveMainDetails} className="space-y-6">
-                <div className="bg-slate-50/50 p-6 rounded-2xl border border-slate-100 space-y-4">
-                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-1.5 border-b border-slate-200/50 pb-2">
-                    <Edit size={12} className="text-indigo-600" /> Detail Utama
-                  </h4>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                        Tipe Catatan
-                      </label>
-                      <select
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none ring-primary/10 focus:ring-4 transition-all appearance-none cursor-pointer"
-                        value={editForm.type}
-                        onChange={(e) => setEditForm({ ...editForm, type: e.target.value as any })}
-                      >
-                        <option value="HUTANG">HUTANG (Kewajiban)</option>
-                        <option value="PIUTANG">PIUTANG (Tagihan / Kasbon)</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1.5 md:col-span-2">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                        Keterangan / Judul
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                        value={editForm.title}
-                        onChange={(e) => setEditForm({ ...editForm, title: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-1 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                        Nama Kontak ({editForm.type === "HUTANG" ? "Vendor/Kreditur" : "Debitur/Staff"})
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                        value={editForm.contactName}
-                        onChange={(e) => setEditForm({ ...editForm, contactName: e.target.value })}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                        Nilai Buku Awal (Rp)
-                      </label>
-                      <input
-                        type="number"
-                        required
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold font-mono outline-none ring-primary/10 focus:ring-4 transition-all"
-                        value={editForm.amount}
-                        onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                        {editForm.type === "PIUTANG" ? "Tanggal Invoice" : "Tanggal Jatuh Tempo"}
-                      </label>
-                      <input
-                        type="date"
-                        required
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
-                        value={editForm.dueDate}
-                        onChange={(e) => setEditForm({ ...editForm, dueDate: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                        Proyek Terkait
-                      </label>
-                      <select
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none ring-primary/10 focus:ring-4 transition-all appearance-none cursor-pointer"
-                        value={editForm.projectId}
-                        onChange={(e) => setEditForm({ ...editForm, projectId: e.target.value })}
-                      >
-                        <option value="">-- Hubungkan ke Proyek (Opsional) --</option>
-                        {projects.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                      Deskripsi Catatan
-                    </label>
-                    <textarea
-                      rows={2}
-                      className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none ring-primary/10 focus:ring-4 transition-all resize-none"
-                      value={editForm.description}
-                      onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="flex justify-end pt-2">
-                    <button
-                      type="submit"
-                      className="px-5 py-3 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-md shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <Check size={14} /> Simpan Perubahan Detail
-                    </button>
-                  </div>
-                </div>
-              </form>
-
-              {/* SECTION 2: Daftar Pembayaran / Riwayat Cicilan */}
-              <div className="space-y-4">
-                <h4 className="text-xs font-black text-slate-800 uppercase tracking-widest flex items-center gap-1.5 border-b border-slate-200/50 pb-2">
-                  <DollarSign size={12} className="text-emerald-500" /> Riwayat Pembayaran / Angsuran ({currentRecord.payments?.length || 0})
-                </h4>
-
-                {(!currentRecord.payments || currentRecord.payments.length === 0) ? (
-                  <p className="text-xs text-slate-400 italic font-medium py-2">Belum ada pembayaran atau cicilan tercatat untuk data ini.</p>
-                ) : (
-                  <div className="border border-slate-100 rounded-2xl overflow-hidden max-h-60 overflow-y-auto">
-                    <table className="w-full text-left border-collapse text-xs">
-                      <thead className="bg-slate-50 text-slate-500">
-                        <tr>
-                          <th className="p-3 font-black text-[10px] uppercase tracking-wider">Tanggal</th>
-                          <th className="p-3 font-black text-[10px] uppercase tracking-wider">Keterangan</th>
-                          <th className="p-3 font-black text-[10px] uppercase tracking-wider text-center">Status</th>
-                          <th className="p-3 font-black text-[10px] uppercase tracking-wider text-right">Jumlah (Rp)</th>
-                          <th className="p-3 font-black text-[10px] uppercase tracking-wider text-center">Aksi</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 font-bold">
-                        {currentRecord.payments.map((p) => {
-                          const isEditingThis = editingPaymentId === p.id;
-                          const currentStatus = p.status || "LUNAS";
-                          return (
-                            <tr key={p.id} className="hover:bg-slate-50/50">
-                              {isEditingThis ? (
-                                <td colSpan={5} className="p-3 bg-indigo-50/30">
-                                  <div className="space-y-3 p-2">
-                                    <p className="text-[10px] font-black text-indigo-700 uppercase tracking-wider">Edit Pembayaran / Termin:</p>
-                                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                                      <div className="space-y-1">
-                                        <label className="text-[9px] font-black text-slate-400 uppercase">Tanggal</label>
-                                        <input
-                                          type="date"
-                                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold outline-none"
-                                          value={paymentEditForm.date}
-                                          onChange={(e) => setPaymentEditForm({ ...paymentEditForm, date: e.target.value })}
-                                        />
-                                      </div>
-                                      <div className="space-y-1">
-                                        <label className="text-[9px] font-black text-slate-400 uppercase">Keterangan</label>
-                                        <input
-                                          type="text"
-                                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold outline-none"
-                                          value={paymentEditForm.note}
-                                          onChange={(e) => setPaymentEditForm({ ...paymentEditForm, note: e.target.value })}
-                                        />
-                                      </div>
-                                      <div className="space-y-1">
-                                        <label className="text-[9px] font-black text-slate-400 uppercase">Status Termin</label>
-                                        <select
-                                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold outline-none cursor-pointer"
-                                          value={paymentEditForm.status}
-                                          onChange={(e) => setPaymentEditForm({ ...paymentEditForm, status: e.target.value })}
-                                        >
-                                          <option value="LUNAS">üü¢ Lunas</option>
-                                          <option value="DICICIL">üü° Dicicil / Angsuran</option>
-                                          <option value="BELUM LUNAS">üî¥ Belum Lunas</option>
-                                          <option value="BELUM BAYAR">‚ö™ Belum Bayar</option>
-                                        </select>
-                                      </div>
-                                      <div className="space-y-1">
-                                        <label className="text-[9px] font-black text-slate-400 uppercase">Jumlah (Rp)</label>
-                                        <input
-                                          type="number"
-                                          className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold font-mono outline-none"
-                                          value={paymentEditForm.amount}
-                                          onChange={(e) => setPaymentEditForm({ ...paymentEditForm, amount: e.target.value })}
-                                        />
-                                      </div>
-                                    </div>
-                                    <div className="flex justify-end gap-1.5">
-                                      <button
-                                        onClick={() => setEditingPaymentId(null)}
-                                        className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded font-black text-[9px] uppercase tracking-wider cursor-pointer"
-                                      >
-                                        Batal
-                                      </button>
-                                      <button
-                                        onClick={() => handleSavePaymentEdit(p.id)}
-                                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded font-black text-[9px] uppercase tracking-wider flex items-center gap-1 cursor-pointer"
-                                      >
-                                        <Check size={10} /> Simpan
-                                      </button>
-                                    </div>
-                                  </div>
-                                </td>
-                              ) : (
-                                <>
-                                  <td className="p-3 text-slate-600">{p.date}</td>
-                                  <td className="p-3 text-slate-700">
-                                    <div>
-                                      <p>{p.note || "No note"}</p>
-                                      {p.recordedBy && <p className="text-[9px] text-slate-400 font-medium">Recorded by: {p.recordedBy}</p>}
-                                    </div>
-                                  </td>
-                                  <td className="p-3 text-center">
-                                    <span className={`inline-block px-2.5 py-0.5 rounded-md text-[9px] font-black tracking-wider uppercase border ${
-                                      currentStatus === "LUNAS" || currentStatus === "PAID"
-                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                        : currentStatus === "DICICIL" || currentStatus === "PARTIAL"
-                                          ? "bg-amber-50 text-amber-700 border-amber-200"
-                                          : currentStatus === "BELUM LUNAS"
-                                            ? "bg-rose-50 text-rose-700 border-rose-200"
-                                            : "bg-slate-50 text-slate-600 border-slate-200"
-                                    }`}>
-                                      {currentStatus}
-                                    </span>
-                                  </td>
-                                  <td className="p-3 text-right font-mono text-emerald-600">{formatCurrencyIDR(p.amount)}</td>
-                                  <td className="p-3">
-                                    <div className="flex items-center justify-center gap-1.5">
-                                      <button
-                                        onClick={() => {
-                                          setEditingPaymentId(p.id);
-                                          setPaymentEditForm({
-                                            amount: p.amount.toString(),
-                                            date: p.date,
-                                            note: p.note || "",
-                                            status: p.status || "LUNAS",
-                                          });
-                                        }}
-                                        className="p-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-indigo-50 hover:text-indigo-600 transition-colors cursor-pointer"
-                                        title="Edit Pembayaran"
-                                      >
-                                        <Edit size={12} />
-                                      </button>
-                                      <button
-                                        onClick={() => handleDeletePayment(p.id)}
-                                        className="p-1.5 bg-slate-100 text-slate-400 rounded-lg hover:bg-rose-50 hover:text-rose-600 transition-colors cursor-pointer"
-                                        title="Hapus Pembayaran"
-                                      >
-                                        <Trash2 size={12} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </>
-                              )}
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </div>
-        )}
-
-        {/* NEW DETAIL TERMIN MODAL */}
-        {selectedTerminRecord && (() => {
-          const sched = getScheduleForRecord(selectedTerminRecord, projects, financialRecords);
-          const totalPaid = sched.totalPaid;
-          const remaining = Math.max(0, sched.contractValue - totalPaid);
-          const isPpnEnabled = sched.isPpnEnabled;
-          
-          const dppTotal = sched.dppValue;
-          const ppnTotal = sched.ppnValue;
-          const dppPaid = isPpnEnabled ? Math.round(totalPaid / 1.11) : totalPaid;
-          const ppnPaid = isPpnEnabled ? totalPaid - dppPaid : 0;
-          const dppRemaining = isPpnEnabled ? Math.round(remaining / 1.11) : remaining;
-          const ppnRemaining = isPpnEnabled ? remaining - dppRemaining : 0;
-
-          return (
-            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-start justify-center p-4 sm:p-6 overflow-y-auto">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="bg-white w-full max-w-[95vw] lg:max-w-[90vw] xl:max-w-7xl rounded-[2.5rem] shadow-2xl p-6 sm:p-8 relative overflow-hidden my-auto space-y-6 text-slate-800"
-              >
-                {/* Header */}
-                <div className="flex justify-between items-start gap-4">
-                  <div>
-                    <span className="px-3 py-1 bg-indigo-50 border border-indigo-100 text-indigo-700 font-mono text-[10px] font-black rounded-lg uppercase tracking-widest inline-block mb-1">
-                      {selectedTerminRecord.customId || selectedTerminRecord.id}
-                    </span>
-                    <h3 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
-                      Rincian Realisasi Pembayaran Proyek
-                    </h3>
-                    <p className="text-slate-500 font-medium text-xs">
-                      Termin penagihan dan realisasi pembayaran piutang proyek terkait.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => setSelectedTerminRecord(null)}
-                    className="w-10 h-10 bg-slate-50 hover:bg-slate-100 rounded-xl flex items-center justify-center transition-all cursor-pointer"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-
-                {/* Info Cards Row */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Left Column: Informasi Kontrak */}
-                  <div className="bg-slate-50/75 p-5 rounded-2xl border border-slate-200/50 space-y-3">
-                    <h4 className="text-[10px] font-black text-indigo-700 uppercase tracking-widest border-b border-slate-200/50 pb-1.5 flex items-center gap-1.5">
-                      <Briefcase size={12} /> Informasi Kontrak & Proyek
-                    </h4>
-                    <div className="grid grid-cols-3 gap-y-2.5 text-xs font-bold">
-                      <div className="text-slate-400">Nama Proyek</div>
-                      <div className="col-span-2 text-slate-800 break-words">{sched.projectName}</div>
-                      
-                      <div className="text-slate-400">No. Kontrak</div>
-                      <div className="col-span-2 text-slate-800 font-mono text-[11px]">{sched.contractNo}</div>
-                      
-                      <div className="text-slate-400">Pemilik Proyek</div>
-                      <div className="col-span-2 text-slate-800">{sched.owner}</div>
-                      
-                      <div className="text-slate-400">Kontraktor</div>
-                      <div className="col-span-2 text-slate-800">PT. GARDA INOVASI GLOBALTECH</div>
-                      
-                      <div className="text-slate-400">Tanggal Mulai</div>
-                      <div className="col-span-2 text-slate-800 font-mono">{sched.startDate}</div>
-                    </div>
-                  </div>
-
-                  {/* Right Column: Realisasi Finansial */}
-                  <div className="bg-slate-50/75 p-5 rounded-2xl border border-slate-200/50 space-y-3">
-                    <h4 className="text-[10px] font-black text-emerald-700 uppercase tracking-widest border-b border-slate-200/50 pb-1.5 flex items-center gap-1.5">
-                      <Coins size={12} /> Realisasi Finansial
-                    </h4>
-                    <div className="grid grid-cols-3 gap-y-2.5 text-xs font-bold">
-                      <div className="text-slate-400">Nilai Kontrak {isPpnEnabled ? "(+ PPN 11%)" : ""}</div>
-                      <div className="col-span-2 text-slate-900 font-mono text-sm font-extrabold">
-                        {formatCurrencyIDR(sched.contractValue)}
-                        {isPpnEnabled && (
-                          <span className="block text-[10px] font-sans text-indigo-600 font-bold">
-                            DPP (Sebelum PPN): {formatCurrencyIDR(dppTotal)}
-                          </span>
-                        )}
-                      </div>
-                      
-                      <div className="text-slate-400">Total Masuk</div>
-                      <div className="col-span-2 text-emerald-600 font-mono text-sm font-black">
-                        {formatCurrencyIDR(totalPaid)}
-                      </div>
-                      
-                      <div className="text-slate-400">Sisa Tagihan</div>
-                      <div className="col-span-2 font-mono text-sm font-black">
-                        <span className={remaining > 0 ? "text-rose-600" : "text-emerald-600"}>
-                          {formatCurrencyIDR(remaining)}
-                        </span>
-                      </div>
-                      
-                      <div className="text-slate-400">Realisasi (%)</div>
-                      <div className="col-span-2">
-                        <div className="flex items-center gap-2 mt-0.5">
-                          <div className="flex-1 bg-slate-200 h-2 rounded-full overflow-hidden">
-                            <div 
-                              className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
-                              style={{ width: `${sched.contractValue > 0 ? Math.min(100, (totalPaid / sched.contractValue) * 100) : 0}%` }}
-                            />
-                          </div>
-                          <span className="font-mono text-[11px] font-black text-slate-600">
-                            {sched.contractValue > 0 ? ((totalPaid / sched.contractValue) * 100).toFixed(1) : 0}%
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* PPN 11% Tax Breakdown Section */}
-                      <div className="col-span-3 border-t border-slate-200/50 my-1 pt-2.5">
-                        <div className="text-[9px] font-black text-indigo-600 uppercase tracking-widest mb-2 flex items-center gap-1">
-                          <Percent size={10} /> ESTIMASI PAJAK PPN {!isPpnEnabled && <span className="text-rose-600 font-black bg-rose-50 border border-rose-200/50 px-2 py-0.5 rounded ml-1 text-[8px] normal-case">NON-AKTIF (0%)</span>}
-                        </div>
-                        <div className="grid grid-cols-3 gap-y-2 text-xs font-bold bg-indigo-50/50 p-3.5 rounded-xl border border-indigo-100/50">
-                          <div className="text-slate-500">Nilai Sebelum PPN (DPP)</div>
-                          <div className="col-span-2 font-mono text-slate-800 text-xs font-black">
-                            {formatCurrencyIDR(dppTotal)}
-                          </div>
-
-                          <div className="text-slate-500">PPN (Jika Lunas)</div>
-                          <div className="col-span-2 font-mono text-slate-900 text-xs font-black">
-                            {formatCurrencyIDR(ppnTotal)}
-                          </div>
-                          
-                          <div className="text-slate-500">PPN (Realisasi)</div>
-                          <div className="col-span-2 font-mono text-emerald-600 text-xs font-black">
-                            {formatCurrencyIDR(ppnPaid)}
-                          </div>
-                          
-                          <div className="text-slate-500">Sisa PPN Belum Realisasi</div>
-                          <div className="col-span-2 font-mono text-rose-600 text-xs font-black">
-                            {formatCurrencyIDR(ppnRemaining)}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Termin Schedule Table */}
-                <div className="space-y-2">
-                  <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
-                    <CalendarClock size={12} /> Tabel Realisasi Masuk, Estimasi {isPpnEnabled ? "PPN 11%" : "PPN 0%"} & Persentase Kontrak
-                  </h4>
-                  <div className="border border-slate-100 rounded-2xl overflow-hidden shadow-xs">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-900 text-white font-mono font-black text-[10px] uppercase tracking-wider">
-                            <th className="p-3.5 pl-5">ID TERMIN</th>
-                            <th className="p-3.5">TERMIN / TAHAPAN</th>
-                            <th className="p-3.5">DESKRIPSI / CATATAN</th>
-                            <th className="p-3.5 text-right">NOMINAL MASUK (IDR)</th>
-                            <th className="p-3.5 text-right text-indigo-300">{isPpnEnabled ? "PPN 11%" : "PPN 0%"} (IDR)</th>
-                            <th className="p-3.5 text-center">PERSENTASE</th>
-                            <th className="p-3.5 text-center">TGL INVOICE</th>
-                            <th className="p-3.5 text-center">TGL BAYAR</th>
-                            <th className="p-3.5 text-center">STATUS</th>
-                            <th className="p-3.5 pr-5">KETERANGAN</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
-                          {sched.terms.map((term: any, idx: number) => {
-                            const termAmt = term.amount;
-                            const expectedAmt = term.expectedAmount !== undefined ? term.expectedAmount : (termAmt || ((term.percentage / 100) * sched.contractValue));
-                            const termDpp = isPpnEnabled ? Math.round(expectedAmt / 1.11) : expectedAmt;
-                            const ppnValue = isPpnEnabled ? expectedAmt - termDpp : 0;
-
-                            return (
-                              <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-3 pl-5 font-mono font-black text-indigo-600 bg-indigo-50/20 text-[11px]">
-                                  {term.customId || "-"}
-                                </td>
-                                <td className="p-3 font-extrabold text-slate-900">{term.name}</td>
-                                <td className="p-3 text-slate-500 max-w-xs truncate" title={term.description}>{term.description}</td>
-                                <td className="p-3 text-right font-mono text-emerald-600 font-extrabold">
-                                  {termAmt > 0 ? formatCurrencyIDR(termAmt) : "-"}
-                                </td>
-                                <td className="p-3 text-right font-mono text-indigo-700 bg-indigo-50/20">
-                                  {expectedAmt > 0 ? formatCurrencyIDR(ppnValue) : "-"}
-                                </td>
-                                <td className="p-3 text-center font-mono text-slate-500">{term.percentage > 0 ? `${term.percentage}%` : "-"}</td>
-                                <td className="p-3 text-center font-mono text-slate-500">{term.invoiceDate}</td>
-                                <td className="p-3 text-center font-mono text-slate-500">{term.paymentDate}</td>
-                                <td className="p-3 text-center">
-                                  <select
-                                    value={term.status}
-                                    onChange={(e) => {
-                                      const newSt = e.target.value;
-                                      if (selectedTerminRecord) {
-                                        handleUpdateTermStatus(selectedTerminRecord, idx, newSt);
-                                      }
-                                    }}
-                                    className={`px-2 py-1 rounded-md text-[9px] font-black tracking-wider uppercase border cursor-pointer outline-none transition-all ${
-                                      term.status === "LUNAS"
-                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                        : term.status === "BELUM LUNAS"
-                                          ? "bg-amber-50 text-amber-700 border-amber-200"
-                                          : term.status === "DICICIL"
-                                            ? "bg-indigo-50 text-indigo-700 border-indigo-200"
-                                            : "bg-slate-50 text-slate-500 border-slate-200"
-                                    }`}
-                                  >
-                                    <option value="LUNAS">üü¢ LUNAS</option>
-                                    <option value="BELUM LUNAS">üü° BELUM LUNAS</option>
-                                    <option value="DICICIL">üîµ DICICIL</option>
-                                    <option value="BELUM BAYAR">‚ö™ BELUM BAYAR</option>
-                                  </select>
-                                </td>
-                                <td className="p-3 pr-5 text-slate-400 italic text-[11px] font-medium">{term.notes}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Riwayat Transaksi Pembayaran / Cicilan Masuk */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1.5">
-                      <Coins size={12} className="text-emerald-600" /> Riwayat Realisasi Pembayaran / Cicilan / DP Masuk
-                    </h4>
-                    <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                      Total {sched.allPayments.length} Transaksi Masuk
-                    </span>
-                  </div>
-                  <div className="border border-slate-100 rounded-2xl overflow-hidden shadow-xs">
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse text-xs">
-                        <thead>
-                          <tr className="bg-slate-800 text-white font-mono font-black text-[10px] uppercase tracking-wider">
-                            <th className="p-3 pl-5">NO</th>
-                            <th className="p-3">TANGGAL MASUK</th>
-                            <th className="p-3 text-right">NOMINAL BAYAR (IDR)</th>
-                            <th className="p-3">CATATAN / KETERANGAN</th>
-                            <th className="p-3 pr-5">DICATAT OLEH</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
-                          {sched.allPayments && sched.allPayments.length > 0 ? (
-                            sched.allPayments.map((pym: any, pIdx: number) => (
-                              <tr key={pIdx} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-3 pl-5 font-mono text-slate-400 text-[11px]">{pIdx + 1}</td>
-                                <td className="p-3 font-mono text-slate-800">{pym.date || "-"}</td>
-                                <td className="p-3 text-right font-mono text-emerald-600 font-black">
-                                  {formatCurrencyIDR(pym.amount || 0)}
-                                </td>
-                                <td className="p-3 text-slate-600">{pym.note || "Pembayaran Piutang / DP / Cicilan"}</td>
-                                <td className="p-3 pr-5 text-slate-400 text-[11px]">{pym.recordedBy || "Sistem"}</td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td colSpan={5} className="p-6 text-center text-slate-400 font-medium italic">
-                                Belum ada riwayat pembayaran / cicilan yang dicatat untuk piutang proyek ini.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Footer */}
-                <div className="flex flex-wrap justify-end gap-3 pt-4 border-t border-slate-100 shrink-0">
-                  <button
-                    onClick={() => {
-                      const rec = selectedTerminRecord;
-                      if (!rec) return;
-                      setSelectedTerminRecord(null);
-                      setShowEditModal(rec);
-                      setEditForm({
-                        title: rec.title,
-                        contactName: rec.contactName,
-                        amount: rec.amount.toString(),
-                        dueDate: rec.dueDate,
-                        description: rec.description || "",
-                        projectId: rec.projectId || "",
-                        type: rec.type,
-                      });
-                    }}
-                    className="px-6 py-3 bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 text-indigo-700 rounded-2xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2"
-                  >
-                    <Edit size={14} /> Edit Data
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (selectedTerminRecord) {
-                        const sched = getScheduleForRecord(selectedTerminRecord, projects, financialRecords);
-                        setPdfConfigRecord(selectedTerminRecord);
-                        setPdfOptions((prev) => ({
-                          ...prev,
-                          ownerBy: prev.ownerBy || sched.owner || selectedTerminRecord.contactName || "",
-                        }));
-                        setShowPdfConfigModal(true);
-                      }
-                    }}
-                    className="px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2 shadow-md shadow-emerald-100"
-                    disabled={isExporting}
-                  >
-                    <Download size={14} /> Unduh PDF Profesional
-                  </button>
-                  <button
-                    onClick={() => setSelectedTerminRecord(null)}
-                    className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-2xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm"
-                  >
-                    Tutup Rincian
-                  </button>
-                </div>
-              </motion.div>
-            </div>
-          );
-        })()}
-      </AnimatePresence>
-
-      {/* Contact Detailed Debts & Mutations Modal */}
-      <AnimatePresence>
-        {selectedContactDetail && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-start justify-center p-4 sm:p-6 overflow-y-auto">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="bg-white w-full max-w-6xl rounded-[3rem] shadow-2xl p-6 sm:p-10 relative overflow-hidden my-auto space-y-6 text-slate-800"
-            >
-              {/* Header */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-6 border-b border-slate-100">
-                <div className="flex items-start gap-4">
-                  <div
-                    className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${
-                      selectedContactDetail.type === "HUTANG"
-                        ? "bg-rose-50 text-rose-600"
-                        : "bg-emerald-50 text-emerald-600"
-                    }`}
-                  >
-                    <Users2 size={26} />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span
-                        className={`px-3 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          selectedContactDetail.type === "HUTANG"
-                            ? "bg-rose-100 text-rose-700"
-                            : "bg-emerald-100 text-emerald-700"
-                        }`}
-                      >
-                        {selectedContactDetail.type === "HUTANG" ? "Hutang Perusahaan (Kewajiban)" : "Piutang Perusahaan (Tagihan)"}
-                      </span>
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider">
-                        {contactDetailSummary.count} Catatan Terdaftar
-                      </span>
-                    </div>
-                    <h3 className="text-2xl sm:text-3xl font-black text-slate-900 uppercase tracking-tight mt-1">
-                      {selectedContactDetail.name}
-                    </h3>
-                    <p className="text-xs text-slate-500 font-medium mt-0.5">
-                      Rincian seluruh catatan {selectedContactDetail.type === "HUTANG" ? "hutang & peruntukan dananya" : "piutang/kasbon"} serta riwayat transaksi kas/bank terkait.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 self-end md:self-center">
-                  <button
-                    onClick={() =>
-                      downloadContactSummaryPDF(
-                        selectedContactDetail,
-                        contactDetailRecords,
-                        contactFinancialRecords,
-                        contactDetailSummary
-                      )
-                    }
-                    className="px-4 py-3 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-wider shadow-sm transition-all flex items-center gap-2 cursor-pointer"
-                    title="Unduh Laporan Rincian PDF"
-                  >
-                    <Download size={14} /> Unduh PDF
-                  </button>
-                  {selectedContactDetail.type === "HUTANG" && contactDetailSummary.totalRemaining > 0 && (
-                    <button
-                      onClick={() => {
-                        const targetName = selectedContactDetail.name;
-                        const rem = contactDetailSummary.totalRemaining;
-                        setShowGroupPaymentModal({
-                          contactName: targetName,
-                          totalRemaining: rem,
-                          debtType: "HUTANG",
-                        });
-                        setGroupPaymentForm((prev) => ({
-                          ...prev,
-                          amount: rem.toString(),
-                          note: `Pelunasan Total Hutang Vendor ${targetName}`,
-                        }));
-                      }}
-                      className="px-5 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl font-black text-[10px] uppercase tracking-wider shadow-md shadow-rose-200 transition-all flex items-center gap-2 cursor-pointer"
-                    >
-                      <CheckCircle size={14} /> Bayar Total ({formatCurrencyIDR(contactDetailSummary.totalRemaining)})
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setSelectedContactDetail(null)}
-                    className="w-12 h-12 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-2xl flex items-center justify-center transition-all cursor-pointer"
-                    title="Tutup Modal"
-                  >
-                    <X size={20} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Metric Highlights Strip */}
-              {selectedContactDetail.type === "PIUTANG" ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
-                  <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 shadow-xs">
-                    <p className="text-[9.5px] font-black uppercase text-slate-500 tracking-wider">Nilai Kontrak Proyek</p>
-                    <p className="text-base sm:text-lg font-black text-slate-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalAmount)}</p>
-                    <p className="text-[10px] text-slate-400 font-medium mt-0.5">{contactDetailSummary.count} Rekam Terdaftar</p>
-                  </div>
-                  <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200/80 shadow-xs">
-                    <p className="text-[9.5px] font-black uppercase text-emerald-700 tracking-wider">Pemasukan (Telah Dibayar)</p>
-                    <p className="text-base sm:text-lg font-black text-emerald-700 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalPaid)}</p>
-                    <p className="text-[10px] text-emerald-600 font-medium mt-0.5">Uang Masuk dari Klien</p>
-                  </div>
-                  <div className="bg-blue-50/70 p-4 rounded-2xl border border-blue-200/80 shadow-xs">
-                    <p className="text-[9.5px] font-black uppercase text-blue-700 tracking-wider">Sisa Tagihan Piutang</p>
-                    <p className="text-base sm:text-lg font-black text-blue-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalRemaining)}</p>
-                    <p className="text-[10px] text-blue-600 font-medium mt-0.5">Belum Diterima</p>
-                  </div>
-                  <div className="bg-rose-50/70 p-4 rounded-2xl border border-rose-200/80 shadow-xs">
-                    <p className="text-[9.5px] font-black uppercase text-rose-700 tracking-wider">Total Belanja Proyek</p>
-                    <p className="text-base sm:text-lg font-black text-rose-700 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalPengeluaran)}</p>
-                    <p className="text-[10px] text-rose-600 font-medium mt-0.5">Biaya / Pengeluaran PT</p>
-                  </div>
-                  <div className={`p-4 rounded-2xl border shadow-xs ${contactDetailSummary.keuntungan >= 0 ? "bg-teal-50/80 border-teal-200/80" : "bg-amber-50/80 border-amber-200/80"}`}>
-                    <p className={`text-[9.5px] font-black uppercase tracking-wider ${contactDetailSummary.keuntungan >= 0 ? "text-teal-700" : "text-amber-700"}`}>Laba Kas Proyek</p>
-                    <p className={`text-base sm:text-lg font-black mt-1 font-mono ${contactDetailSummary.keuntungan >= 0 ? "text-teal-800" : "text-amber-800"}`}>{formatCurrencyIDR(contactDetailSummary.keuntungan)}</p>
-                    <p className={`text-[10px] font-medium mt-0.5 ${contactDetailSummary.keuntungan >= 0 ? "text-teal-600" : "text-amber-600"}`}>Pemasukan - Belanja</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-slate-50/70 p-4 rounded-2xl border border-slate-100">
-                    <p className="text-[9.5px] font-black uppercase text-slate-400 tracking-wider">Total Catatan</p>
-                    <p className="text-lg font-black text-slate-800 mt-1">{contactDetailSummary.count} Rekam</p>
-                  </div>
-                  <div className="bg-slate-50/70 p-4 rounded-2xl border border-slate-100">
-                    <p className="text-[9.5px] font-black uppercase text-slate-400 tracking-wider">Total Nilai Awal</p>
-                    <p className="text-lg font-black text-slate-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalAmount)}</p>
-                  </div>
-                  <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100/60">
-                    <p className="text-[9.5px] font-black uppercase text-emerald-600 tracking-wider">Telah Dibayar</p>
-                    <p className="text-lg font-black text-emerald-700 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalPaid)}</p>
-                  </div>
-                  <div className="bg-rose-50/60 p-4 rounded-2xl border border-rose-100/80">
-                    <p className="text-[9.5px] font-black uppercase text-rose-600 tracking-wider">Sisa Saldo Hutang</p>
-                    <p className="text-lg font-black text-rose-700 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalRemaining)}</p>
-                  </div>
-                </div>
-              )}
-
-              {/* Modal Tabs Bar */}
-              <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-2xl w-fit">
-                <button
-                  onClick={() => setContactDetailTab("DEBTS")}
-                  className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
-                    contactDetailTab === "DEBTS"
-                      ? "bg-white text-slate-900 shadow-xs"
-                      : "text-slate-500 hover:text-slate-900"
-                  }`}
-                >
-                  <FileText size={14} /> Daftar Rekam {selectedContactDetail.type === "HUTANG" ? "Hutang" : "Piutang"} ({contactDetailRecords.length})
-                </button>
-                <button
-                  onClick={() => setContactDetailTab("FINANCIAL")}
-                  className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
-                    contactDetailTab === "FINANCIAL"
-                      ? "bg-white text-slate-900 shadow-xs"
-                      : "text-slate-500 hover:text-slate-900"
-                  }`}
-                >
-                  <Receipt size={14} /> Mutasi Kas/Bank Terkait ({contactFinancialRecords.length})
-                </button>
-              </div>
-
-              {/* Tab 1: Daftar Rekam Hutang / Piutang */}
-              {contactDetailTab === "DEBTS" && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between text-xs text-slate-500">
-                    <p className="font-semibold">
-                      Berikut daftar seluruh invoice/catatan {selectedContactDetail.type === "HUTANG" ? "kewajiban hutang ke" : "piutang dari"}{" "}
-                      <span className="font-bold text-slate-900">{selectedContactDetail.name}</span> beserta peruntukan dana dan status pelunasannya:
-                    </p>
-                  </div>
-
-                  {contactDetailRecords.length === 0 ? (
-                    <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100 text-center">
-                      <p className="text-xs font-semibold text-slate-400">Tidak ada rekam data hutang/piutang ditemukan untuk kontak ini.</p>
-                    </div>
-                  ) : (
-                    <div className="border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
-                      <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
-                        <table className="w-full text-left border-collapse text-xs">
-                          <thead className="sticky top-0 bg-slate-800 text-white font-mono font-black text-[10px] uppercase tracking-wider z-10">
-                            <tr>
-                              <th className="p-3.5 pl-4">NO</th>
-                              <th className="p-3.5">ID REKAM</th>
-                              <th className="p-3.5 min-w-[220px]">TUJUAN / JUDUL HUTANG</th>
-                              <th className="p-3.5">PROYEK</th>
-                              <th className="p-3.5">JATUH TEMPO</th>
-                              <th className="p-3.5 text-right font-mono">NILAI AWAL</th>
-                              <th className="p-3.5 text-right font-mono">DIBAYAR</th>
-                              <th className="p-3.5 text-right font-mono">SISA SALDO</th>
-                              <th className="p-3.5 text-center">STATUS</th>
-                              <th className="p-3.5 pr-4 text-center">AKSI</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
-                            {contactDetailRecords.map((rec, rIdx) => {
-                              const sched = getScheduleForRecord(rec, projects, financialRecords);
-                              const paid = sched.totalPaid;
-                              const initialAmt = sched.contractValue || rec.amount || 0;
-                              const remaining = Math.max(0, initialAmt - paid);
-                              const projName = projects.find((p) => p.id === rec.projectId)?.name || "-";
-                              const status = remaining <= 0 ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID";
-
-                              return (
-                                <tr key={rec.id || rIdx} className="hover:bg-slate-50/70 transition-colors">
-                                  <td className="p-3.5 pl-4 font-mono text-slate-400 text-[11px]">{rIdx + 1}</td>
-                                  <td className="p-3.5 font-mono text-indigo-600 font-black text-[11px]">
-                                    {rec.customId || rec.id}
-                                  </td>
-                                  <td className="p-3.5">
-                                    <div>
-                                      <p className="font-extrabold text-slate-800 uppercase tracking-tight text-xs">
-                                        {rec.title || "Tanpa Judul"}
-                                      </p>
-                                      {rec.description && (
-                                        <p className="text-[11px] text-slate-500 font-medium mt-0.5 max-w-sm">
-                                          {rec.description}
-                                        </p>
-                                      )}
-                                    </div>
-                                  </td>
-                                  <td className="p-3.5">
-                                    <span className="text-slate-600 font-semibold text-[11px] truncate block max-w-[140px]" title={projName}>
-                                      {projName}
-                                    </span>
-                                  </td>
-                                  <td className="p-3.5 font-mono text-slate-600 text-[11px]">
-                                    {rec.dueDate || "-"}
-                                  </td>
-                                  <td className="p-3.5 text-right font-mono text-slate-800">
-                                    {formatCurrencyIDR(initialAmt)}
-                                  </td>
-                                  <td className="p-3.5 text-right font-mono text-emerald-600">
-                                    {formatCurrencyIDR(paid)}
-                                  </td>
-                                  <td className="p-3.5 text-right font-mono">
-                                    <span className={remaining > 0 ? (selectedContactDetail.type === "HUTANG" ? "text-rose-600 font-black" : "text-emerald-600 font-black") : "text-slate-400"}>
-                                      {formatCurrencyIDR(remaining)}
-                                    </span>
-                                  </td>
-                                  <td className="p-3.5 text-center">
-                                    <span
-                                      className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                                        status === "PAID"
-                                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                          : status === "PARTIAL"
-                                            ? "bg-amber-50 text-amber-700 border-amber-200"
-                                            : "bg-rose-50 text-rose-700 border-rose-200"
-                                      }`}
-                                    >
-                                      {status === "PAID" ? "Lunas" : status === "PARTIAL" ? "Dicicil" : "Belum Bayar"}
-                                    </span>
-                                  </td>
-                                  <td className="p-3.5 pr-4">
-                                    <div className="flex items-center justify-center gap-1.5">
-                                      {remaining > 0 && (
-                                        <button
-                                          onClick={() => setShowPaymentModal(rec)}
-                                          className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors cursor-pointer"
-                                          title="Bayar Cicilan Item Ini"
-                                        >
-                                          Bayar
-                                        </button>
-                                      )}
-                                      <button
-                                        onClick={() => {
-                                          setShowEditModal(rec);
-                                          setEditForm({
-                                            title: rec.title,
-                                            contactName: rec.contactName,
-                                            amount: rec.amount.toString(),
-                                            dueDate: rec.dueDate,
-                                            description: rec.description || "",
-                                            projectId: rec.projectId || "",
-                                            type: rec.type,
-                                          });
-                                        }}
-                                        className="p-1.5 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 rounded-lg transition-colors cursor-pointer"
-                                        title="Edit Rincian"
-                                      >
-                                        <Edit size={12} />
-                                      </button>
-                                      <button
-                                        onClick={() => setSelectedTerminRecord(rec)}
-                                        className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors cursor-pointer"
-                                        title="Lihat Rincian Termin / Cicilan"
-                                      >
-                                        <Eye size={12} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Tab 2: Riwayat Mutasi Transaksi Kas/Bank */}
-              {contactDetailTab === "FINANCIAL" && (
-                <div className="space-y-4">
-                  {/* Financial Flow Overview */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div className="bg-emerald-50/70 p-3.5 rounded-2xl border border-emerald-200/80 flex items-center justify-between">
-                      <div>
-                        <p className="text-[9.5px] font-black uppercase text-emerald-700 tracking-wider">Total Pemasukan</p>
-                        <p className="text-base font-black text-emerald-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.totalPemasukan)}</p>
-                      </div>
-                      <span className="px-2 py-0.5 bg-emerald-200/60 text-emerald-800 text-[10px] font-black rounded-lg">
-                        {contactFinancialRecords.filter((f) => f.type === "IN").length} Trx
-                      </span>
-                    </div>
-                    <div className="bg-rose-50/70 p-3.5 rounded-2xl border border-rose-200/80 flex items-center justify-between">
-                      <div>
-                        <p className="text-[9.5px] font-black uppercase text-rose-700 tracking-wider">Total Pengeluaran / Belanja</p>
-                        <p className="text-base font-black text-rose-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.totalPengeluaran)}</p>
-                      </div>
-                      <span className="px-2 py-0.5 bg-rose-200/60 text-rose-800 text-[10px] font-black rounded-lg">
-                        {contactFinancialRecords.filter((f) => f.type === "OUT").length} Trx
-                      </span>
-                    </div>
-                    <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${contactDetailSummary.keuntungan >= 0 ? "bg-teal-50/70 border-teal-200/80" : "bg-amber-50/70 border-amber-200/80"}`}>
-                      <div>
-                        <p className={`text-[9.5px] font-black uppercase tracking-wider ${contactDetailSummary.keuntungan >= 0 ? "text-teal-700" : "text-amber-700"}`}>Arus Kas Bersih (Laba)</p>
-                        <p className={`text-base font-black mt-0.5 font-mono ${contactDetailSummary.keuntungan >= 0 ? "text-teal-800" : "text-amber-800"}`}>{formatCurrencyIDR(contactDetailSummary.keuntungan)}</p>
-                      </div>
-                      <span className={`px-2 py-0.5 text-[10px] font-black rounded-lg ${contactDetailSummary.keuntungan >= 0 ? "bg-teal-200/60 text-teal-800" : "bg-amber-200/60 text-amber-800"}`}>
-                        {contactDetailSummary.keuntungan >= 0 ? "Surplus" : "Defisit"}
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Filter bar */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                    <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl w-fit">
-                      <button
-                        onClick={() => setContactFinancialFilter("ALL")}
-                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                          contactFinancialFilter === "ALL" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"
-                        }`}
-                      >
-                        Semua ({contactFinancialRecords.length})
-                      </button>
-                      <button
-                        onClick={() => setContactFinancialFilter("IN")}
-                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                          contactFinancialFilter === "IN" ? "bg-emerald-600 text-white shadow-xs" : "text-emerald-700 hover:bg-emerald-50"
-                        }`}
-                      >
-                        Pemasukan Klien ({contactFinancialRecords.filter((f) => f.type === "IN").length})
-                      </button>
-                      <button
-                        onClick={() => setContactFinancialFilter("OUT")}
-                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                          contactFinancialFilter === "OUT" ? "bg-rose-600 text-white shadow-xs" : "text-rose-700 hover:bg-rose-50"
-                        }`}
-                      >
-                        Pengeluaran Belanja ({contactFinancialRecords.filter((f) => f.type === "OUT").length})
-                      </button>
-                    </div>
-
-                    <p className="text-xs text-slate-400 font-medium">
-                      Menampilkan mutasi kas & bank yang terhubung dengan proyek / kontak ini.
-                    </p>
-                  </div>
-
-                  {contactFinancialRecords.length === 0 ? (
-                    <div className="bg-slate-50/80 p-8 sm:p-12 rounded-3xl border border-slate-200/80 text-center space-y-3">
-                      <div className="w-14 h-14 bg-slate-100 text-slate-400 rounded-2xl flex items-center justify-center mx-auto">
-                        <Receipt size={28} />
-                      </div>
-                      <div className="max-w-lg mx-auto space-y-1">
-                        <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">
-                          Belum Ada Mutasi Transaksi Kas/Bank
-                        </h4>
-                        <p className="text-xs text-slate-500 font-medium leading-relaxed">
-                          Belum ditemukan catatan transaksi langsung di data pemasukan/pengeluaran untuk kontak{" "}
-                          <span className="font-bold text-slate-700">{selectedContactDetail.name}</span>. Hal ini wajar karena tanggal pencatatan mutasi kas/bank di sistem baru dimulai dari periode terkini, atau pencatatan hutang/piutang di atas merupakan saldo awal/tagihan yang belum dicairkan melalui buku kas.
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
-                      <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
-                        <table className="w-full text-left border-collapse text-xs">
-                          <thead className="sticky top-0 bg-slate-800 text-white font-mono font-black text-[10px] uppercase tracking-wider z-10">
-                            <tr>
-                              <th className="p-3.5 pl-4">NO</th>
-                              <th className="p-3.5">TANGGAL</th>
-                              <th className="p-3.5">NO. BUKTI</th>
-                              <th className="p-3.5 text-center">TIPE</th>
-                              <th className="p-3.5">KATEGORI</th>
-                              <th className="p-3.5 min-w-[200px]">KETERANGAN / DESKRIPSI</th>
-                              <th className="p-3.5">REKENING / SUMBER DANA</th>
-                              <th className="p-3.5 pr-4 text-right font-mono">NOMINAL (IDR)</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
-                            {contactFinancialRecords
-                              .filter((fin) => (contactFinancialFilter === "ALL" ? true : fin.type === contactFinancialFilter))
-                              .map((fin, fIdx) => {
-                                const isIncome = fin.type === "IN";
-                                return (
-                                  <tr key={fin.id || fIdx} className="hover:bg-slate-50/70 transition-colors">
-                                    <td className="p-3.5 pl-4 font-mono text-slate-400 text-[11px]">{fIdx + 1}</td>
-                                    <td className="p-3.5 font-mono text-slate-800 text-[11px]">{fin.date || "-"}</td>
-                                    <td className="p-3.5 font-mono text-indigo-600 font-black text-[11px]">{fin.customId || fin.id}</td>
-                                    <td className="p-3.5 text-center">
-                                      <span
-                                        className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                                          isIncome
-                                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                            : "bg-rose-50 text-rose-700 border-rose-200"
-                                        }`}
-                                      >
-                                        {isIncome ? "Pemasukan" : "Pengeluaran (Belanja)"}
-                                      </span>
-                                    </td>
-                                    <td className="p-3.5 text-slate-700 text-[11px]">{fin.category || "-"}</td>
-                                    <td className="p-3.5 text-slate-600 text-[11px] max-w-sm">{fin.description || "-"}</td>
-                                    <td className="p-3.5 text-slate-500 text-[11px]">{fin.sumberDana || "-"}</td>
-                                    <td className={`p-3.5 pr-4 text-right font-mono font-black ${isIncome ? "text-emerald-600" : "text-rose-600"}`}>
-                                      {formatCurrencyIDR(fin.amount || 0)}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Modal Footer */}
-              <div className="flex flex-wrap justify-between items-center gap-3 pt-4 border-t border-slate-100">
-                <button
-                  onClick={() => {
-                    setSearchQuery(selectedContactDetail.name);
-                    setSelectedContactDetail(null);
-                  }}
-                  className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs transition-colors cursor-pointer flex items-center gap-2"
-                >
-                  <Search size={14} /> Filter di Tabel Utama
-                </button>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() =>
-                      downloadContactSummaryPDF(
-                        selectedContactDetail,
-                        contactDetailRecords,
-                        contactFinancialRecords,
-                        contactDetailSummary
-                      )
-                    }
-                    className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm flex items-center gap-2"
-                  >
-                    <Download size={14} /> Download PDF
-                  </button>
-                  <button
-                    onClick={() => setSelectedContactDetail(null)}
-                    className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer shadow-sm"
-                  >
-                    Tutup Rincian
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-      {/* PDF Configuration Modal */}
-      <AnimatePresence>
-        {showPdfConfigModal && pdfConfigRecord && (
-          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="bg-white rounded-3xl p-6 sm:p-8 max-w-2xl w-full shadow-2xl border border-slate-100 space-y-6 my-auto max-h-[90vh] overflow-y-auto"
-            >
-              <div className="flex items-center justify-between pb-4 border-b border-slate-100 sticky top-0 bg-white z-10">
-                <div className="flex items-center gap-3">
-                  <div className="p-3 bg-emerald-50 rounded-2xl text-emerald-600">
-                    <FileText size={22} />
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-black text-slate-800">
-                      Pengaturan Kop & Cetak PDF
-                    </h3>
-                    <p className="text-xs text-slate-500 font-medium">
-                      Atur nama perusahaan, alamat, logo, serta pejabat penandatangan laporan
-                    </p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setShowPdfConfigModal(false)}
-                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              <div className="space-y-5">
-                {/* Section 1: Kop Surat */}
-                <div className="space-y-4">
-                  <div className="text-xs font-black uppercase tracking-wider text-emerald-700 bg-emerald-50/80 px-3 py-1.5 rounded-lg inline-block">
-                    1. Identitas & Kop Surat
-                  </div>
-
-                  {/* Nama PT */}
-                  <div>
-                    <label className="block text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">
-                      Nama Perusahaan / PT (Kop Surat)
-                    </label>
-                    <input
-                      type="text"
-                      value={pdfOptions.companyName}
-                      onChange={(e) =>
-                        setPdfOptions({ ...pdfOptions, companyName: e.target.value })
-                      }
-                      placeholder="PT GARDA INOVASI GLOBALTECH"
-                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-semibold text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                  </div>
-
-                  {/* Checkbox & Input Alamat */}
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={pdfOptions.includeAddress}
-                        onChange={(e) =>
-                          setPdfOptions({ ...pdfOptions, includeAddress: e.target.checked })
-                        }
-                        className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer"
-                      />
-                      <span className="text-xs font-bold text-slate-700">
-                        Sertakan Alamat & Informasi Kontak di Kop Surat
-                      </span>
-                    </label>
-
-                    {pdfOptions.includeAddress && (
-                      <div className="pt-2">
-                        <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                          Ketik Alamat & Kontak Perusahaan:
-                        </label>
-                        <textarea
-                          rows={2}
-                          value={pdfOptions.addressText}
-                          onChange={(e) =>
-                            setPdfOptions({ ...pdfOptions, addressText: e.target.value })
-                          }
-                          placeholder="M-Gold Tower, Lantai 16, Jl. KH. Noer Ali, Bekasi | Email: info@gig.co.id | Telp: (021) 88997766"
-                          className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl font-medium text-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 resize-none"
-                        />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Checkbox & Input Logo */}
-                  <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-3">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={pdfOptions.includeLogo}
-                        onChange={(e) =>
-                          setPdfOptions({ ...pdfOptions, includeLogo: e.target.checked })
-                        }
-                        className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer"
-                      />
-                      <span className="text-xs font-bold text-slate-700">
-                        Sertakan Logo Perusahaan
-                      </span>
-                    </label>
-
-                    {pdfOptions.includeLogo && (
-                      <div className="pt-2">
-                        <label className="block text-[11px] font-semibold text-slate-500 mb-1">
-                          URL Gambar Logo (Format PNG / JPG)
-                        </label>
-                        <input
-                          type="text"
-                          value={pdfOptions.logoUrl}
-                          onChange={(e) =>
-                            setPdfOptions({ ...pdfOptions, logoUrl: e.target.value })
-                          }
-                          placeholder="https://domain.com/logo.png"
-                          className="w-full px-3.5 py-2 bg-white border border-slate-200 rounded-xl font-medium text-slate-800 text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Section 2: Tanda Tangan */}
-                <div className="space-y-3 pt-2">
-                  <div className="text-xs font-black uppercase tracking-wider text-emerald-700 bg-emerald-50/80 px-3 py-1.5 rounded-lg inline-block">
-                    2. Pejabat Penandatangan & Pengesahan PDF
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Dibuat Oleh (Admin) */}
-                    <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2.5">
-                      <div className="text-[11px] font-black uppercase text-indigo-700 flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
-                        Dibuat Oleh (Admin / Staf)
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
-                          Nama Lengkap
-                        </label>
-                        <input
-                          type="text"
-                          value={pdfOptions.createdBy}
-                          onChange={(e) =>
-                            setPdfOptions({ ...pdfOptions, createdBy: e.target.value })
-                          }
-                          placeholder="FAISAL MUSTOPA"
-                          className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
-                          Jabatan
-                        </label>
-                        <input
-                          type="text"
-                          value={pdfOptions.createdByRole}
-                          onChange={(e) =>
-                            setPdfOptions({ ...pdfOptions, createdByRole: e.target.value })
-                          }
-                          placeholder="Staf Administrasi Keuangan"
-                          className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Disetujui Oleh (Direktur) */}
-                    <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200/80 space-y-2.5">
-                      <div className="text-[11px] font-black uppercase text-emerald-700 flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                        Disetujui Oleh (Direktur)
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
-                          Nama Direktur / Pejabat
-                        </label>
-                        <input
-                          type="text"
-                          value={pdfOptions.approvedBy}
-                          onChange={(e) =>
-                            setPdfOptions({ ...pdfOptions, approvedBy: e.target.value })
-                          }
-                          placeholder="MUHAMMAD YASIN"
-                          className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
-                          Jabatan
-                        </label>
-                        <input
-                          type="text"
-                          value={pdfOptions.approvedByRole}
-                          onChange={(e) =>
-                            setPdfOptions({ ...pdfOptions, approvedByRole: e.target.value })
-                          }
-                          placeholder="Direktur Utama"
-                          className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setShowPdfConfigModal(false)}
-                  className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (pdfConfigRecord) {
-                      downloadSinglePiutangPDF(pdfConfigRecord, pdfOptions);
-                    }
-                    setShowPdfConfigModal(false);
-                  }}
-                  disabled={isExporting}
-                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs uppercase tracking-wider rounded-xl shadow-md shadow-emerald-100 transition-all cursor-pointer flex items-center gap-2"
-                >
-                  <Download size={14} /> {isExporting ? "Mengekspor..." : "Cetak & Unduh PDF"}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-    </AdminLayout>
-  );
-};
-
-const generateNewCustomId = (
-  type: string,
-  flowType: string,
-  date: string,
-  records: FinancialRecord[],
-  excludeRecordId?: string
-) => {
-  let idType = type;
-  if (type === "OUT") {
-    if (flowType === "OUT_PERSONAL_SPEND" || flowType === "PERSONAL_TALANGAN_REIMBURSE") {
-      idType = "OUT_PERSONAL_SPEND"; // Generates PRS-
-    } else {
-      idType = "OUT_BANK_DIRECT"; // Generates BNK-
-    }
-  }
-  
-  if (!date) return "";
-  const parts = date.split("-");
-  if (parts.length !== 3) return "";
-  const dd = parts[2];
-  const mm = parts[1];
-  const yy = parts[0].substring(2);
-  const dateFormatted = `${dd}${mm}${yy}`;
-  
-  let prefix = "BNK";
-  if (idType === "IN") prefix = "INC";
-  else if (idType === "OUT_PERSONAL_SPEND" || idType === "PERSONAL_TALANGAN_REIMBURSE") prefix = "PRS";
-  
-  const otherRecords = excludeRecordId ? records.filter(r => r.id !== excludeRecordId) : records;
-  
-  const todaysMatches = otherRecords.filter((r) => {
-    const rId = r.customId || "";
-    return rId.startsWith(`${prefix}-${dateFormatted}-`);
-  });
-  
-  let nextNum = todaysMatches.length + 1;
-  let nextNumStr = String(nextNum).padStart(3, "0");
-  
-  while (otherRecords.some((r) => r.customId === `${prefix}-${dateFormatted}-${nextNumStr}`)) {
-    nextNum++;
-    nextNumStr = String(nextNum).padStart(3, "0");
-  }
-  
-  return `${prefix}-${dateFormatted}-${nextNumStr}`;
-};
-
-const parseBankAllocations = (refIdBankStr: string, totalAmount: number): Array<{ bankId: string; amount: number }> => {
-  if (!refIdBankStr) return [];
-  const ref = refIdBankStr.trim();
-  
-  if (ref.startsWith("{")) {
-    try {
-      const alloc = JSON.parse(ref);
-      return Object.entries(alloc).map(([bankId, amt]) => ({
-        bankId,
-        amount: Number(amt) || 0
-      }));
-    } catch (e) {}
-  }
-  
-  if (ref.includes(":") || ref.includes("|")) {
-    const parts = ref.split("|");
-    const results: Array<{ bankId: string; amount: number }> = [];
-    for (const part of parts) {
-      const [bankId, amtStr] = part.split(":");
-      if (bankId) {
-        results.push({
-          bankId: bankId.trim(),
-          amount: Number(amtStr) || 0
-        });
-      }
-    }
-    return results;
-  }
-
-  if (ref.includes(",")) {
-    const ids = ref.split(",").map((x) => x.trim()).filter(Boolean);
-    const divided = totalAmount / (ids.length || 1);
-    return ids.map((id) => ({
-      bankId: id,
-      amount: divided
-    }));
-  }
-
-  return [{ bankId: ref, amount: totalAmount }];
-};
-
-const serializeAllocations = (allocations: Array<{ bankId: string; amount: number }>) => {
-  const valid = allocations.filter((a) => a.bankId && a.amount > 0);
-  if (valid.length === 0) return "";
-  if (valid.length === 1) return valid[0].bankId; // backward-compatible single string
-  return valid.map((a) => `${a.bankId}:${a.amount}`).join("|");
-};
-
-const formatRefIdBankDisplay = (refIdBankStr: string, totalAmount: number): string => {
-  if (!refIdBankStr) return "-";
-  const allocations = parseBankAllocations(refIdBankStr, totalAmount);
-  if (allocations.length === 0) return "-";
-  if (allocations.length === 1) return allocations[0].bankId;
-  return allocations
-    .map((alloc) => `${alloc.bankId} (Rp ${alloc.amount.toLocaleString("id-ID")})`)
-    .join(" + ");
-};
-
-const RefIdBankBadgeList = ({ refIdBankStr, totalAmount }: { refIdBankStr: string; totalAmount: number }) => {
-  if (!refIdBankStr) return <span className="text-slate-400">-</span>;
-  const allocations = parseBankAllocations(refIdBankStr, totalAmount);
-  if (allocations.length === 0) return <span className="text-slate-400">-</span>;
-  
-  return (
-    <div className="flex flex-col gap-1 items-center justify-center">
-      {allocations.map((alloc, idx) => (
-        <span 
-          key={idx} 
-          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black bg-slate-50 text-slate-800 border border-slate-200"
-        >
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="font-mono text-slate-600">{alloc.bankId}</span>
-          <span className="text-slate-300">|</span>
-          <span className="text-emerald-600 font-extrabold">Rp {alloc.amount.toLocaleString("id-ID")}</span>
-        </span>
-      ))}
-    </div>
-  );
-};
-
-const AdminFinanceScreen = ({
-  financialRecords,
-  debtRecords,
-  projects,
-  onNavigate,
-  user,
-  roles,
-  logActivity,
-  employees,
-  handleClearOnlyFinanceAndDebt,
-  isImportingFinanceData,
-  setDebtRecords,
-  setFinancialRecords,
-  setProjects,
-}: {
-  financialRecords: FinancialRecord[];
-  debtRecords: DebtRecord[];
-  projects: Project[];
-  onNavigate: (s: ScreenId) => void;
-  user: any;
-  roles: RoleConfig[];
-  logActivity: (m: string, a: string, d: string) => Promise<void>;
-  employees: Employee[];
-  handleClearOnlyFinanceAndDebt?: () => Promise<void>;
-  isImportingFinanceData?: boolean;
-  setDebtRecords?: React.Dispatch<React.SetStateAction<DebtRecord[]>>;
-  setFinancialRecords?: React.Dispatch<React.SetStateAction<FinancialRecord[]>>;
-  setProjects?: React.Dispatch<React.SetStateAction<Project[]>>;
-}) => {
-  const [timeframe, setTimeframe] = useState("monthly");
-  const effectiveDebtRecords = useMemo(() => {
-    return getEffectiveDebtRecords(debtRecords, projects, financialRecords);
-  }, [debtRecords, projects, financialRecords]);
-  const [selectedMonth, setSelectedMonth] = useState(6); // Default to July (6) since we have seeded financial records up to July 4, 2026
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-
-  const years = useMemo(
-    () => Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i),
-    [],
-  );
-
-  const [period, setPeriod] = useState("Bulan Ini");
-  const [filterProject, setFilterProject] = useState("ALL");
-  const [filterCategory, setFilterCategory] = useState("ALL");
-
-  const kasbonLedgerData = useMemo(() => {
-    const known = (projects || []).flatMap((p: any) => [
-      ...(p.personnel || []).map((x: any) => typeof x === "string" ? x : x?.name),
-      ...(p.teamMembers || []).map((x: any) => typeof x === "string" ? x : x?.name),
-    ]).filter(Boolean);
-    return calculateKasbonBalances(financialRecords, debtRecords, known);
-  }, [financialRecords, debtRecords, projects]);
-  const [filterTimeRange, setFilterTimeRange] = useState("ALL");
-  const [filterFlowType, setFilterFlowType] = useState("ALL");
-  const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [showExportModal, setShowExportModal] = useState(false);
-  const [selectedPattyCashDetail, setSelectedPattyCashDetail] = useState<{
-    bankId?: string;
-    holder?: string;
-    topupInfo?: any;
-  } | null>(null);
-  const [pattyCashModalSearch, setPattyCashModalSearch] = useState("");
-  const [pattyCashModalProject, setPattyCashModalProject] = useState("ALL");
-  const [pattyCashModalCategory, setPattyCashModalCategory] = useState("ALL");
-  const [filterPattyCashBankId, setFilterPattyCashBankId] = useState("ALL");
-
-  const [editingTransaction, setEditingTransaction] = useState<FinancialRecord | null>(null);
-  const [editFormData, setEditFormData] = useState({
-    date: "",
-    type: "OUT" as "IN" | "OUT",
-    flowType: "OUT_BANK_DIRECT" as 'IN' | 'OUT_BANK_DIRECT' | 'OUT_PERSONAL_TRANSFER' | 'OUT_PERSONAL_SPEND' | 'PERSONAL_TALANGAN_REIMBURSE',
-    personalHolder: "",
-    amount: "",
-    paymentMethod: "TRANSFER" as "CASH" | "TRANSFER",
-    adminFee: "",
-    category: "",
-    description: "",
-    projectId: "",
-    linkedDebtId: "",
-    customId: "",
-    sumberDana: "",
-    rekPenerima: "",
-    refIdBank: "",
-    refPiutang: "",
-    refHutang: "",
-    senderName: "",
-    totalGaji: "",
-    potonganKasbon: "",
-    terminName: "",
-    terminDescription: "",
-    terminPercentage: "",
-    terminInvoiceDate: "",
-    terminDueDate: "",
-    terminPaymentDate: "",
-    terminStatus: "LUNAS",
-    terminNotes: "",
-  });
-
-  const [useManualPICEdit, setUseManualPICEdit] = useState(false);
-  const [useManualRefPiutangEdit, setUseManualRefPiutangEdit] = useState(false);
-  const [useManualRefHutangEdit, setUseManualRefHutangEdit] = useState(false);
-  const [useManualRefIdBankEdit, setUseManualRefIdBankEdit] = useState(false);
-
-  // Synchronize edit form when transaction selected
-  useEffect(() => {
-    if (editingTransaction) {
-      const linkedDebt = editingTransaction.linkedDebtId ? debtRecords.find(d => d.id === editingTransaction.linkedDebtId) : null;
-      const associatedTerm = linkedDebt?.terms?.find((t: any) => t.financialRecordId === editingTransaction.id);
-
-      setEditFormData({
-        date: editingTransaction.date || "",
-        type: editingTransaction.type || "OUT",
-        flowType: editingTransaction.flowType || "OUT_BANK_DIRECT",
-        personalHolder: editingTransaction.personalHolder || "",
-        amount: String(editingTransaction.amount || ""),
-        paymentMethod: editingTransaction.paymentMethod || "TRANSFER",
-        adminFee: String(editingTransaction.adminFee || ""),
-        category: editingTransaction.category || "",
-        description: editingTransaction.description || "",
-        projectId: editingTransaction.referenceId || "",
-        linkedDebtId: editingTransaction.linkedDebtId || "",
-        customId: editingTransaction.customId || "",
-        sumberDana: editingTransaction.sumberDana || "",
-        rekPenerima: editingTransaction.rekPenerima || "",
-        refIdBank: editingTransaction.refIdBank || "",
-        refPiutang: editingTransaction.refPiutang || "",
-        refHutang: editingTransaction.refHutang || "",
-        senderName: editingTransaction.senderName || "",
-        totalGaji: String((editingTransaction as any).totalGaji || ""),
-        potonganKasbon: String((editingTransaction as any).potonganKasbon || ""),
-        terminName: associatedTerm?.name || editingTransaction.terminName || "",
-        terminDescription: associatedTerm?.description || editingTransaction.terminDescription || "",
-        terminPercentage: associatedTerm?.percentage !== undefined ? String(associatedTerm.percentage) : (editingTransaction.terminPercentage !== undefined ? String(editingTransaction.terminPercentage) : ""),
-        terminInvoiceDate: associatedTerm?.invoiceDate || editingTransaction.terminInvoiceDate || "",
-        terminDueDate: associatedTerm?.dueDate || editingTransaction.terminDueDate || "",
-        terminPaymentDate: associatedTerm?.paymentDate || editingTransaction.terminPaymentDate || "",
-        terminStatus: associatedTerm?.status || editingTransaction.terminStatus || "LUNAS",
-        terminNotes: associatedTerm?.notes || editingTransaction.terminNotes || "",
-      });
-      setUseManualPICEdit(false);
-      setUseManualRefPiutangEdit(false);
-      setUseManualRefHutangEdit(false);
-      setUseManualRefIdBankEdit(false);
-    }
-  }, [editingTransaction, debtRecords]);
-
-  const [bankAllocations, setBankAllocations] = useState<Array<{ bankId: string; amount: number }>>([{ bankId: "", amount: 0 }]);
-  const [editBankAllocations, setEditBankAllocations] = useState<Array<{ bankId: string; amount: number }>>([{ bankId: "", amount: 0 }]);
-
-  // Synchronize editBankAllocations when editingTransaction is selected
-  useEffect(() => {
-    if (editingTransaction) {
-      const parsed = parseBankAllocations(editingTransaction.refIdBank || "", editingTransaction.amount || 0);
-      if (parsed.length > 0) {
-        setEditBankAllocations(parsed);
-      } else {
-        setEditBankAllocations([{ bankId: editingTransaction.refIdBank || "", amount: editingTransaction.amount || 0 }]);
-      }
-    }
-  }, [editingTransaction]);
-
-  // Handle auto customId regeneration during edit when date/type/flowType changes
-  useEffect(() => {
-    if (editingTransaction) {
-      const dateChanged = editFormData.date !== editingTransaction.date;
-      const typeChanged = editFormData.type !== editingTransaction.type;
-      const flowTypeChanged = editFormData.flowType !== editingTransaction.flowType;
-      
-      if (dateChanged || typeChanged || flowTypeChanged) {
-        if (editFormData.date) {
-          const newId = generateNewCustomId(
-            editFormData.type,
-            editFormData.flowType,
-            editFormData.date,
-            financialRecords,
-            editingTransaction.id
-          );
-          if (newId) {
-            setEditFormData(prev => ({ ...prev, customId: newId }));
-          }
-        }
-      } else {
-        setEditFormData(prev => ({ ...prev, customId: editingTransaction.customId || "" }));
-      }
-    }
-  }, [editFormData.date, editFormData.type, editFormData.flowType, editingTransaction, financialRecords]);
-
-  // Find all active bank IDs that have children breakdowns in financialRecords
-  const activeBankIds = useMemo(() => {
-    const ids = new Set<string>();
-    financialRecords.forEach((r) => {
-      if (r.refIdBank) {
-        ids.add(r.refIdBank);
-      }
-    });
-    return ids;
-  }, [financialRecords]);
-
-  // Map each active bank ID to a background class
-  const uiBankColorMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    const classes = [
-      "bg-blue-50/60 border-l-4 border-l-blue-500",
-      "bg-emerald-50/60 border-l-4 border-l-emerald-500",
-      "bg-amber-50/60 border-l-4 border-l-amber-500",
-      "bg-purple-50/60 border-l-4 border-l-purple-500",
-      "bg-yellow-50/60 border-l-4 border-l-yellow-500",
-      "bg-rose-50/60 border-l-4 border-l-rose-500",
-      "bg-orange-50/60 border-l-4 border-l-orange-500",
-      "bg-teal-50/60 border-l-4 border-l-teal-500",
-      "bg-indigo-50/60 border-l-4 border-l-indigo-500",
-    ];
-    let idx = 0;
-    Array.from(activeBankIds).forEach((bankId) => {
-      map[bankId as string] = classes[idx % classes.length];
-      idx++;
-    });
-    return map;
-  }, [activeBankIds]);
-
-  // Independent scroll lock for FinanceScreen modals
-  useEffect(() => {
-    if (showAddModal || showExportModal || editingTransaction || selectedPattyCashDetail) {
-      const scrollY = window.pageYOffset;
-      document.body.style.position = "fixed";
-      document.body.style.top = `-${scrollY}px`;
-      document.body.style.width = "100vw";
-      document.body.style.overflow = "hidden";
-    } else {
-      const scrollY = document.body.style.top;
-      document.body.style.position = "";
-      document.body.style.top = "";
-      document.body.style.width = "";
-      document.body.style.overflow = "";
-      if (scrollY) {
-        window.scrollTo(0, parseInt(scrollY || "0") * -1);
-      }
-    }
-    return () => {
-      document.body.style.position = "";
-      document.body.style.top = "";
-      document.body.style.width = "";
-      document.body.style.overflow = "";
-    };
-  }, [showAddModal, showExportModal, editingTransaction, selectedPattyCashDetail]);
-
-  const [searchQuery, setSearchQuery] = useState("");
-  const [useManualPIC, setUseManualPIC] = useState(false);
-  const [useManualRefPiutang, setUseManualRefPiutang] = useState(false);
-  const [useManualRefHutang, setUseManualRefHutang] = useState(false);
-  const [useManualRefIdBank, setUseManualRefIdBank] = useState(false);
-  const [formData, setFormData] = useState({
-    date: new Date().toISOString().split("T")[0],
-    type: "OUT" as "IN" | "OUT",
-    flowType: "OUT_BANK_DIRECT" as 'IN' | 'OUT_BANK_DIRECT' | 'OUT_PERSONAL_TRANSFER' | 'OUT_PERSONAL_SPEND' | 'PERSONAL_TALANGAN_REIMBURSE',
-    personalHolder: "Faisal Mustopa (Admin)" as string,
-    amount: "",
-    paymentMethod: "TRANSFER" as "CASH" | "TRANSFER",
-    adminFee: "",
-    category: "Operasional",
-    description: "",
-    projectId: "",
-    linkedDebtId: "",
-    customId: "",
-    sumberDana: "REKENING PT",
-    rekPenerima: "",
-    refIdBank: "",
-    refPiutang: "",
-    refHutang: "",
-    senderName: "",
-    totalGaji: "",
-    potonganKasbon: "",
-    penerimaKasbon: "",
-    pemilikUangPribadi: "",
-    terminName: "",
-    terminDescription: "",
-    terminPercentage: "",
-    terminInvoiceDate: "",
-    terminDueDate: "",
-    terminPaymentDate: "",
-    terminStatus: "LUNAS",
-    terminNotes: "",
-    selectedTermId: "",
-  });
-
-  // Automatic ID Generator matching Faisal Mustopa's Excel format
-  const autoGeneratedId = useMemo(() => {
-    let idType = formData.type as string;
-    if (formData.type === "OUT") {
-      if (formData.flowType === "OUT_PERSONAL_SPEND" || formData.flowType === "PERSONAL_TALANGAN_REIMBURSE") {
-        idType = "OUT_PERSONAL_SPEND"; // Generates PRS-
-      } else {
-        idType = "OUT_BANK_DIRECT"; // Generates BNK-
-      }
-    }
-    
-    if (!formData.date) return "";
-    const parts = formData.date.split("-");
-    if (parts.length !== 3) return "";
-    const dd = parts[2];
-    const mm = parts[1];
-    const yy = parts[0].substring(2);
-    const dateFormatted = `${dd}${mm}${yy}`;
-    
-    let prefix = "BNK";
-    if (idType === "IN") prefix = "INC";
-    else if (idType === "OUT_PERSONAL_SPEND" || idType === "PERSONAL_TALANGAN_REIMBURSE") prefix = "PRS";
-    
-    const todaysMatches = financialRecords.filter((r) => {
-      const rId = r.customId || "";
-      return rId.startsWith(`${prefix}-${dateFormatted}-`);
-    });
-    
-    let nextNum = todaysMatches.length + 1;
-    let nextNumStr = String(nextNum).padStart(3, "0");
-    
-    while (financialRecords.some((r) => r.customId === `${prefix}-${dateFormatted}-${nextNumStr}`)) {
-      nextNum++;
-      nextNumStr = String(nextNum).padStart(3, "0");
-    }
-    
-    return `${prefix}-${dateFormatted}-${nextNumStr}`;
-  }, [formData.type, formData.flowType, formData.date, financialRecords]);
-
-  // Synchronize bankAllocations and customId when showAddModal opens
-  useEffect(() => {
-    if (showAddModal) {
-      setBankAllocations([{ bankId: "", amount: 0 }]);
-      if (autoGeneratedId) {
-        setFormData((prev) => ({
-          ...prev,
-          customId: prev.customId || autoGeneratedId,
-        }));
-      }
-    }
-  }, [showAddModal, autoGeneratedId]);
-
-  // Sync custom ID with form when type/date/flowType changes
-  useEffect(() => {
-    if (autoGeneratedId) {
-      setFormData((prev) => ({
-        ...prev,
-        customId: autoGeneratedId,
-      }));
-    }
-  }, [autoGeneratedId]);
-
-  // Helper to get previous termin dates for the selected debt/receivable
-  const getPreviousTerminInfo = (debtId: string) => {
-    if (!debtId) return null;
-    const linkedRecords = financialRecords
-      .filter((r) => r.linkedDebtId === debtId)
-      .sort((a, b) => {
-        const dateA = a.date || "";
-        const dateB = b.date || "";
-        return dateB.localeCompare(dateA); // most recent first
-      });
-
-    if (linkedRecords.length > 0) {
-      const lastRec = linkedRecords[0];
-      return {
-        terminName: lastRec.terminName || "Termin Sebelumnya",
-        terminInvoiceDate: lastRec.terminInvoiceDate,
-        terminDueDate: lastRec.terminDueDate,
-        terminPaymentDate: lastRec.terminPaymentDate || lastRec.date,
-        amount: lastRec.amount,
-      };
-    }
-
-    const d = debtRecords.find((doc) => doc.id === debtId);
-    if (d && d.customId && TERMIN_SCHEDULES[d.customId]) {
-      const sched = TERMIN_SCHEDULES[d.customId];
-      const paidTerms = sched.terms.filter((t) => t.status === "LUNAS");
-      if (paidTerms.length > 0) {
-        const lastTerm = paidTerms[paidTerms.length - 1];
-        return {
-          terminName: lastTerm.name,
-          terminInvoiceDate: lastTerm.invoiceDate,
-          terminDueDate: lastTerm.dueDate,
-          terminPaymentDate: lastTerm.paymentDate,
-          amount: lastTerm.amount,
-        };
-      }
-    }
-    return null;
-  };
-
-  // Auto-calculate terminPercentage for Add Form
-  useEffect(() => {
-    if (formData.linkedDebtId && formData.amount) {
-      const d = effectiveDebtRecords.find((doc) => doc.id === formData.linkedDebtId);
-      if (d && d.amount > 0) {
-        const numAmt = Number(formData.amount);
-        if (!isNaN(numAmt) && numAmt > 0) {
-          const pct = parseFloat(((numAmt / d.amount) * 100).toFixed(2));
-          setFormData((prev) => {
-            if (prev.terminPercentage !== String(pct)) {
-              return { ...prev, terminPercentage: String(pct) };
-            }
-            return prev;
-          });
-        }
-      }
-    }
-  }, [formData.linkedDebtId, formData.amount, effectiveDebtRecords]);
-
-  // Auto-calculate terminPercentage for Edit Form
-  useEffect(() => {
-    if (editFormData && editFormData.linkedDebtId && editFormData.amount) {
-      const d = effectiveDebtRecords.find((doc) => doc.id === editFormData.linkedDebtId);
-      if (d && d.amount > 0) {
-        const numAmt = Number(editFormData.amount);
-        if (!isNaN(numAmt) && numAmt > 0) {
-          const pct = parseFloat(((numAmt / d.amount) * 100).toFixed(2));
-          setEditFormData((prev) => {
-            if (prev && prev.terminPercentage !== String(pct)) {
-              return { ...prev, terminPercentage: String(pct) };
-            }
-            return prev;
-          });
-        }
-      }
-    }
-  }, [editFormData?.linkedDebtId, editFormData?.amount, effectiveDebtRecords]);
-
-  // Auto-sync terminPaymentDate to transaction date (tanggal pemasukan)
-  useEffect(() => {
-    setFormData((prev) => {
-      if (prev.terminPaymentDate !== prev.date) {
-        return { ...prev, terminPaymentDate: prev.date };
-      }
-      return prev;
-    });
-  }, [formData.date]);
-
-  useEffect(() => {
-    if (editFormData) {
-      setEditFormData((prev) => {
-        if (prev && prev.terminPaymentDate !== prev.date) {
-          return { ...prev, terminPaymentDate: prev.date };
-        }
-        return prev;
-      });
-    }
-  }, [editFormData?.date]);
-
-  const [exportRange, setExportRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .split("T")[0],
-    end: new Date().toISOString().split("T")[0],
-  });
-  const [exportFlowType, setExportFlowType] = useState<"ALL" | "PERSONAL" | "OUT_BANK_DIRECT" | "IN">("ALL");
-
-  // Check if we are using the default dataset containing Faisal's June records
-  const isUsingJuneBaseline = useMemo(() => {
-    // If the database has detailed bank expenses for June, we calculate dynamically.
-    // June records from the full 58 PDF dataset total more than 2, so if we have more than 2, isUsingJuneBaseline is false.
-    const juneRecordsCount = financialRecords.filter((r) => r.date.startsWith("2026-06")).length;
-    return juneRecordsCount > 0 && juneRecordsCount <= 2;
-  }, [financialRecords]);
-
-  // Base Offset Constants for June 2026 (Laporan Saldo Utama Bulan Juni)
-  const BASE_INCOME = isUsingJuneBaseline ? 335264802 : 0;
-  const BASE_DIRECT_EXPENSE = isUsingJuneBaseline ? 247956249 : 0; // B - transfers = 320168249 - 72212000
-  const BASE_ADMIN_FEE = isUsingJuneBaseline ? 135000 : 0;
-  const BASE_TRANSFERS_TO_PERSONAL = isUsingJuneBaseline ? 72212000 : 0;
-  const BASE_SPENT_BY_PERSONAL = isUsingJuneBaseline ? 47392339 : 0;
-
-  // Helper to check if a category is PATTYCASH (ignoring other categories as per user request)
-  const isPattyCashCategory = useCallback((category?: string) => {
-    if (!category) return false;
-    const normalized = category.toUpperCase().replace(/\s+/g, "");
-    return (
-      normalized === "PATTYCASH" ||
-      normalized === "PETTYCASH" ||
-      normalized === "KASKECIL" ||
-      normalized === "TARIKCASH" ||
-      normalized === "PATTYCASHPROYEK" ||
-      normalized === "PETTYCASHPROYEK" ||
-      normalized.includes("PETTYCASHDI") ||
-      normalized.includes("PATTYCASHDI")
-    );
-  }, []);
-
-  // Helper to identify custody transfers (patty cash top-ups to personnel, NOT actual direct expenses)
-  const isCustodyTransfer = useCallback((r: any) => {
-    if (r.category && r.category.toUpperCase().replace(/\s+/g, "") === "KASBON") return false;
-    if (r.flowType === "OUT_PERSONAL_TRANSFER") return true;
-    return isPattyCashCategory(r.category) && r.flowType !== "OUT_PERSONAL_SPEND";
-  }, [isPattyCashCategory]);
-
-  const getBankRemainingBalance = useCallback((bankRec: FinancialRecord, isEdit: boolean) => {
-    const spentOnThis = financialRecords
-      .filter((r) => {
-        if (isEdit && editingTransaction && r.id === editingTransaction.id) {
-          return false;
-        }
-        return r.flowType === "OUT_PERSONAL_SPEND";
-      })
-      .reduce((sum, r) => {
-        const allocs = parseBankAllocations(r.refIdBank || "", r.amount);
-        const match = allocs.find((a) => a.bankId === bankRec.customId);
-        return sum + (match ? match.amount : 0);
-      }, 0);
-    return bankRec.amount - spentOnThis;
-  }, [financialRecords, editingTransaction]);
-
-  const handleAutoPecah = useCallback((allocs: Array<{ bankId: string; amount: number }>, totalAmountStr: string, isEdit: boolean) => {
-    const totalToAllocate = Number(totalAmountStr || 0);
-    if (totalToAllocate <= 0) return;
-
-    let remainingToAllocate = totalToAllocate;
-    const updated = allocs.map((alloc) => {
-      if (!alloc.bankId) {
-        return { ...alloc, amount: 0 };
-      }
-      const bankRec = financialRecords.find((r) => (r.customId || r.id) === alloc.bankId);
-      if (!bankRec) {
-        return { ...alloc, amount: 0 };
-      }
-
-      const availableBalance = getBankRemainingBalance(bankRec, isEdit);
-      const allocatedAmount = Math.max(0, Math.min(availableBalance, remainingToAllocate));
-      remainingToAllocate -= allocatedAmount;
-
-      return { ...alloc, amount: allocatedAmount };
-    });
-
-    if (remainingToAllocate > 0 && updated.length > 0) {
-      updated[updated.length - 1].amount += remainingToAllocate;
-    }
-
-    if (isEdit) {
-      setEditBankAllocations(updated);
-      const str = serializeAllocations(updated);
-      setEditFormData((prev) => ({ ...prev, refIdBank: str }));
-    } else {
-      setBankAllocations(updated);
-      const str = serializeAllocations(updated);
-      setFormData((prev) => ({ ...prev, refIdBank: str }));
-    }
-  }, [financialRecords, getBankRemainingBalance]);
-
-  // Advanced PT Accounting Formulas with Dynamic June Baseline Integration
-  // 1. Total Pemasukan Riil (Income)
-  const income = useMemo(() => {
-    const postJuneIncome = financialRecords
-      .filter(
-        (r) =>
-          r.type === "IN" &&
-          (isUsingJuneBaseline ? !r.date.startsWith("2026-06") : true) &&
-          (filterProject === "ALL" || r.referenceId === filterProject),
-      )
-      .reduce((acc, curr) => acc + curr.amount, 0);
-
-    if (filterProject !== "ALL") {
-      // If a specific project is selected, compute completely dynamically from all records
-      return financialRecords
-        .filter(
-          (r) =>
-            r.type === "IN" &&
-            (r.referenceId === filterProject),
-        )
-        .reduce((acc, curr) => acc + curr.amount, 0);
-    }
-
-    return BASE_INCOME + postJuneIncome;
-  }, [financialRecords, filterProject, isUsingJuneBaseline]);
-
-  // 2. Total Pengeluaran Riil (Actual Cost: direct supplier payments + real staff gastros/spends)
-  // This EXCLUDES transfer of custody (OUT_PERSONAL_TRANSFER) to prevent double counting as requested!
-  const expense = useMemo(() => {
-    const postJuneExpense = financialRecords
-      .filter(
-        (r) =>
-          r.type === "OUT" &&
-          (isUsingJuneBaseline ? !r.date.startsWith("2026-06") : true) &&
-          !isCustodyTransfer(r) &&
-          !isReimbursementOrDebtRepayment(r) &&
-          (filterProject === "ALL" || r.referenceId === filterProject),
-      )
-      .reduce((acc, curr) => acc + (curr.amount + (curr.adminFee || 0)), 0);
-
-    if (filterProject !== "ALL") {
-      // If a specific project is selected, compute completely dynamically
-      return financialRecords
-        .filter(
-          (r) =>
-            r.type === "OUT" &&
-            !isCustodyTransfer(r) &&
-            !isReimbursementOrDebtRepayment(r) &&
-            (r.referenceId === filterProject),
-        )
-        .reduce((acc, curr) => acc + (curr.amount + (curr.adminFee || 0)), 0);
-    }
-
-    // June Net Expense baseline was 295,483,588
-    const baseJuneExpense = isUsingJuneBaseline ? 295483588 : 0;
-    return baseJuneExpense + postJuneExpense;
-  }, [financialRecords, filterProject, isCustodyTransfer, isUsingJuneBaseline]);
-
-  // Consolidated Net Balance is now defined downstream as bankBalance + personalHoldBalance to ensure alignment with user intent.
-
-  // 3. Saldo Bank Utama PT (Main PT Account)
-  // Reduced by bank-direct payments and transfers of custody to personnel
-  const bankBalance = useMemo(() => {
-    const postJuneIncome = financialRecords
-      .filter((r) => r.type === "IN" && (isUsingJuneBaseline ? !r.date.startsWith("2026-06") : true))
-      .reduce((acc, curr) => acc + curr.amount, 0);
-
-    const postJuneOutFromBank = financialRecords
-      .filter(
-        (r) =>
-          r.type === "OUT" &&
-          (isUsingJuneBaseline ? !r.date.startsWith("2026-06") : true) &&
-          r.sumberDana === "REKENING PT" &&
-          r.flowType !== "OUT_PERSONAL_SPEND"
-      )
-      .reduce((acc, curr) => acc + curr.amount + (curr.adminFee || 0), 0);
-
-    if (filterProject !== "ALL") {
-      // For specific project, compute completely dynamically
-      const projIncome = financialRecords
-        .filter((r) => r.type === "IN" && r.referenceId === filterProject)
-        .reduce((acc, curr) => acc + curr.amount, 0);
-      const projOutFromBank = financialRecords
-        .filter(
-          (r) =>
-            r.type === "OUT" &&
-            r.referenceId === filterProject &&
-            r.sumberDana === "REKENING PT" &&
-            r.flowType !== "OUT_PERSONAL_SPEND"
-        )
-        .reduce((acc, curr) => acc + curr.amount + (curr.adminFee || 0), 0);
-      return projIncome - projOutFromBank;
-    }
-
-    // June Bank Balance baseline adjusted to 15,464,852 to match the exact current bank balance of 16,961,553 at the end of July
-    const baseJuneBankBalance = isUsingJuneBaseline ? 15464852 : 0;
-    return baseJuneBankBalance + postJuneIncome - postJuneOutFromBank;
-  }, [financialRecords, filterProject, isUsingJuneBaseline]);
-
-  // Clean, sanitized detailed list of all Sisa Talangan / Petty Cash per Bank ID
-  const detailedTalanganList = useMemo(() => {
-    // 1. Baselines (June 2026 remnants)
-    const list = isUsingJuneBaseline ? [
-      {
-        id: "BASE-JIDAN",
-        customId: "SISA JUNI",
-        date: "2026-06-30",
-        holder: "Jidan Ramadhan",
-        description: "Saldo Kasbon / Patty Cash bawaan dari bulan Juni 2026",
-        initialAmount: 17559000,
-        spentAmount: 13660500,
-        balance: 3898500,
-      },
-      {
-        id: "BASE-FAISAL",
-        customId: "SISA JUNI",
-        date: "2026-06-30",
-        holder: "Faisal Mustopa (Admin)",
-        description: "Saldo Kasbon / Patty Cash bawaan dari bulan Juni 2026",
-        initialAmount: 19653000,
-        spentAmount: 3731839,
-        balance: 15921161,
-      },
-      {
-        id: "BASE-YASIN",
-        customId: "SISA JUNI",
-        date: "2026-06-30",
-        holder: "Muhammad Yasin (Owner)",
-        description: "Saldo Kasbon / Patty Cash bawaan dari bulan Juni 2026",
-        initialAmount: 35000000,
-        spentAmount: 30000000,
-        balance: 5000000,
-      }
-    ] : [];
-
-    // 2. Scan through all OUT records from Bank PT that are custody transfers (Patty Cash / Kasbon topups)
-    financialRecords.forEach((record) => {
-      if (isUsingJuneBaseline && record.date.startsWith("2026-06")) return;
-      if (record.type !== "OUT") return;
-      if (record.flowType === "OUT_PERSONAL_SPEND" || record.customId?.startsWith("PRS-") || record.sumberDana !== "REKENING PT") return; // Filter out personal spending or PRS records so only Bank PT top-ups are counted!
-
-      const isTalanganType = isPattyCashCategory(record.category);
-
-      if (isTalanganType) {
-        const rawHolder = record.rekPenerima || record.personalHolder || "Faisal Mustopa (Admin)";
-        let holder = rawHolder;
-        const normalized = rawHolder.toLowerCase();
-        if (normalized.includes("jidan")) {
-          holder = "Jidan Ramadhan";
-        } else if (normalized.includes("yasin")) {
-          holder = "Muhammad Yasin (Owner)";
-        } else if (normalized.includes("faisal") || normalized.includes("mustopa")) {
-          holder = "Faisal Mustopa (Admin)";
-        }
-
-        // Total spending from this specific bank topup
-        const linkedSpent = financialRecords
-          .filter((sp) => (isUsingJuneBaseline ? !sp.date.startsWith("2026-06") : true) && sp.flowType === "OUT_PERSONAL_SPEND")
-          .reduce((sum, sp) => {
-            const allocations = parseBankAllocations(sp.refIdBank || "", sp.amount);
-            const matching = allocations.find((alloc) => alloc.bankId === record.customId);
-            return sum + (matching ? matching.amount : 0);
-          }, 0);
-
-        list.push({
-          id: record.id,
-          customId: record.customId || "BNK-TOPUP",
-          date: record.date,
-          holder,
-          description: record.description,
-          initialAmount: record.amount,
-          spentAmount: linkedSpent,
-          balance: record.amount - linkedSpent,
-        });
-      }
-    });
-
-    return list;
-  }, [financialRecords, isPattyCashCategory, isUsingJuneBaseline]);
-
-  // Clean, sanitized Dana Talangan & Patty Cash summary for Jidan, Faisal, and Yasin grouped from the detailed list
-  const talanganSummary = useMemo(() => {
-    const holders: Record<string, { name: string; received: number; spent: number; balance: number }> = {
-      "Jidan Ramadhan": { name: "Jidan Ramadhan", received: 0, spent: 0, balance: 0 },
-      "Faisal Mustopa (Admin)": { name: "Faisal Mustopa (Admin)", received: 0, spent: 0, balance: 0 },
-      "Muhammad Yasin (Owner)": { name: "Muhammad Yasin (Owner)", received: 0, spent: 0, balance: 0 }
-    };
-
-    detailedTalanganList.forEach((item) => {
-      if (!holders[item.holder]) {
-        holders[item.holder] = { name: item.holder, received: 0, spent: 0, balance: 0 };
-      }
-      holders[item.holder].received += item.initialAmount;
-      holders[item.holder].spent += item.spentAmount;
-      holders[item.holder].balance += item.balance;
-    });
-
-    return Object.values(holders);
-  }, [detailedTalanganList]);
-
-  // Helper to count expenses for a given Patty Cash top-up item
-  const getPattyCashExpenseCount = useCallback(
-    (item: any) => {
-      return financialRecords.filter((rec) => {
-        if (rec.flowType !== "OUT_PERSONAL_SPEND") return false;
-        if (item.customId === "SISA JUNI") {
-          const normRecHolder = (rec.personalHolder || "").toLowerCase();
-          const normItemHolder = item.holder.toLowerCase();
-          const matchesHolder = normRecHolder.includes(
-            normItemHolder.includes("jidan") ? "jidan" : normItemHolder.includes("yasin") ? "yasin" : "faisal"
-          );
-          const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
-          const hasBnkAlloc = allocs.some((a) => a.bankId && a.bankId.startsWith("BNK-"));
-          return matchesHolder && (!hasBnkAlloc || rec.date.startsWith("2026-06"));
-        } else {
-          const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
-          return allocs.some((a) => a.bankId === item.customId);
-        }
-      }).length;
-    },
-    [financialRecords]
-  );
-
-  // Memoized records for Patty Cash Expense Detail Modal
-  const selectedPattyCashRecords = useMemo(() => {
-    if (!selectedPattyCashDetail) return [];
-
-    const { bankId, holder } = selectedPattyCashDetail;
-
-    return financialRecords
-      .filter((rec) => {
-        if (rec.flowType !== "OUT_PERSONAL_SPEND") return false;
-
-        // Match Holder
-        if (holder && holder !== "ALL") {
-          const normRecHolder = (rec.personalHolder || "").toLowerCase();
-          const normFilterHolder = holder.toLowerCase();
-          const matchesHolder =
-            normRecHolder.includes(normFilterHolder) ||
-            (normFilterHolder.includes("jidan") && normRecHolder.includes("jidan")) ||
-            (normFilterHolder.includes("faisal") && normRecHolder.includes("faisal")) ||
-            (normFilterHolder.includes("yasin") && normRecHolder.includes("yasin"));
-          if (!matchesHolder) return false;
-        }
-
-        // Match Bank ID
-        if (bankId && bankId !== "ALL") {
-          if (bankId === "SISA JUNI") {
-            const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
-            const hasBnkAlloc = allocs.some((a) => a.bankId && a.bankId.startsWith("BNK-"));
-            if (hasBnkAlloc && !rec.date.startsWith("2026-06")) return false;
-          } else {
-            const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
-            const hasMatchingBank = allocs.some((a) => a.bankId === bankId);
-            if (!hasMatchingBank) return false;
-          }
-        }
-
-        // Search Filter inside Modal
-        if (pattyCashModalSearch) {
-          const query = pattyCashModalSearch.toLowerCase();
-          const matchesQuery =
-            rec.description.toLowerCase().includes(query) ||
-            rec.category.toLowerCase().includes(query) ||
-            (rec.customId || "").toLowerCase().includes(query) ||
-            (rec.personalHolder || "").toLowerCase().includes(query);
-          if (!matchesQuery) return false;
-        }
-
-        // Project Filter
-        if (pattyCashModalProject !== "ALL") {
-          if (rec.referenceId !== pattyCashModalProject) return false;
-        }
-
-        // Category Filter
-        if (pattyCashModalCategory !== "ALL") {
-          if (rec.category !== pattyCashModalCategory) return false;
-        }
-
-        return true;
-      })
-      .sort((a, b) => {
-        const dateA = a.date || "";
-        const dateB = b.date || "";
-        if (dateA !== dateB) return dateB.localeCompare(dateA);
-        return (b.timestamp || 0) - (a.timestamp || 0);
-      });
-  }, [
-    selectedPattyCashDetail,
-    financialRecords,
-    pattyCashModalSearch,
-    pattyCashModalProject,
-    pattyCashModalCategory,
-  ]);
-
-  const selectedPattyCashTotalSpent = useMemo(() => {
-    if (!selectedPattyCashDetail) return 0;
-    const { bankId } = selectedPattyCashDetail;
-
-    return selectedPattyCashRecords.reduce((sum, rec) => {
-      if (bankId && bankId !== "ALL" && bankId !== "SISA JUNI") {
-        const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
-        const match = allocs.find((a) => a.bankId === bankId);
-        return sum + (match ? match.amount : rec.amount);
-      }
-      return sum + rec.amount;
-    }, 0);
-  }, [selectedPattyCashRecords, selectedPattyCashDetail]);
-
-  const openPattyCashModalForRecord = useCallback(
-    (record: FinancialRecord) => {
-      const customId = record.customId || "BNK-TOPUP";
-      const holder = record.rekPenerima || record.personalHolder || "Faisal Mustopa (Admin)";
-
-      const foundItem = detailedTalanganList.find((t) => t.customId === customId);
-      if (foundItem) {
-        setSelectedPattyCashDetail({
-          bankId: customId,
-          holder: foundItem.holder,
-          topupInfo: foundItem,
-        });
-      } else {
-        const linkedSpent = financialRecords
-          .filter((r) => r.flowType === "OUT_PERSONAL_SPEND")
-          .reduce((sum, r) => {
-            const allocs = parseBankAllocations(r.refIdBank || "", r.amount);
-            const match = allocs.find((a) => a.bankId === customId);
-            return sum + (match ? match.amount : 0);
-          }, 0);
-
-        setSelectedPattyCashDetail({
-          bankId: customId,
-          holder: holder,
-          topupInfo: {
-            id: record.id,
-            customId: customId,
-            date: record.date,
-            holder: holder,
-            description: record.description,
-            initialAmount: record.amount,
-            spentAmount: linkedSpent,
-            balance: record.amount - linkedSpent,
-          },
-        });
-      }
-      setPattyCashModalSearch("");
-      setPattyCashModalProject("ALL");
-      setPattyCashModalCategory("ALL");
-    },
-    [detailedTalanganList, financialRecords]
-  );
-
-  const handleDownloadPattyCashPDF = useCallback(() => {
-    if (!selectedPattyCashDetail) return;
-    const doc = new jsPDF("p", "mm", "a4");
-
-    // Title / Header
-    doc.setFillColor(30, 41, 59); // Slate-900
-    doc.rect(0, 0, 210, 26, "F");
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(13);
-    doc.setTextColor(255, 255, 255);
-    doc.text("LAPORAN BUKTI REALISASI PENGELUARAN PATTY CASH", 14, 11);
-
-    doc.setFontSize(8);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(203, 213, 225);
-    doc.text(
-      `Dicetak pada: ${new Date().toLocaleDateString("id-ID", {
-        day: "numeric",
-        month: "long",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })}`,
-      14,
-      19
-    );
-
-    // Info Box
-    let startY = 32;
-    doc.setDrawColor(226, 232, 240);
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(14, startY, 182, 32, 3, 3, "FD");
-
-    doc.setFontSize(8.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(15, 23, 42);
-
-    const bankIdStr =
-      selectedPattyCashDetail.bankId === "ALL"
-        ? "Semua Top-up"
-        : selectedPattyCashDetail.bankId || "-";
-    const holderStr = selectedPattyCashDetail.holder || "Semua PIC";
-    const topupAmtStr = selectedPattyCashDetail.topupInfo
-      ? formatCurrency(selectedPattyCashDetail.topupInfo.initialAmount)
-      : "-";
-    const spentAmtStr = formatCurrency(selectedPattyCashTotalSpent);
-    const remainingStr = selectedPattyCashDetail.topupInfo
-      ? formatCurrency(selectedPattyCashDetail.topupInfo.balance)
-      : "-";
-
-    doc.text(`ID Reference Top-Up  : ${bankIdStr}`, 18, startY + 8);
-    doc.text(`Penanggung Jawab (PIC): ${holderStr}`, 18, startY + 15);
-    if (selectedPattyCashDetail.topupInfo?.description) {
-      doc.setFont("helvetica", "normal");
-      const descShort =
-        selectedPattyCashDetail.topupInfo.description.length > 55
-          ? selectedPattyCashDetail.topupInfo.description.substring(0, 55) + "..."
-          : selectedPattyCashDetail.topupInfo.description;
-      doc.text(`Keterangan Top-Up    : ${descShort}`, 18, startY + 22);
-    }
-
-    doc.setFont("helvetica", "bold");
-    doc.text(`Total Top-Up   : ${topupAmtStr}`, 120, startY + 8);
-    doc.setTextColor(225, 29, 72); // Rose
-    doc.text(`Total Terpakai: -${spentAmtStr}`, 120, startY + 15);
-    doc.setTextColor(16, 185, 129); // Emerald
-    doc.text(`Sisa Saldo     : ${remainingStr}`, 120, startY + 22);
-
-    startY += 38;
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(9.5);
-    doc.setTextColor(15, 23, 42);
-    doc.text("RINCIAN DOKUMEN REALISASI BELANJA (LOG PENGELUARAN)", 14, startY);
-
-    const tableBody = selectedPattyCashRecords.map((rec, idx) => {
-      const projName = rec.referenceId
-        ? projects.find((p) => p.id === rec.referenceId)?.name || "-"
-        : "-";
-      return [
-        idx + 1,
-        rec.date,
-        rec.customId || "-",
-        projName,
-        rec.personalHolder || "-",
-        rec.category,
-        rec.description,
-        `-${formatCurrency(rec.amount)}`,
-      ];
-    });
-
-    autoTable(doc, {
-      startY: startY + 4,
-      margin: { left: 14, right: 14 },
-      head: [
-        ["No", "Tanggal", "ID Trans", "Proyek", "PIC", "Kategori", "Deskripsi Pengeluaran", "Jumlah (Rp)"],
-      ],
-      body: tableBody,
-      theme: "grid",
-      headStyles: {
-        fillColor: [30, 41, 59],
-        textColor: [255, 255, 255],
-        fontSize: 7.5,
-        fontStyle: "bold",
-        halign: "center",
-      },
-      bodyStyles: {
-        fontSize: 7.5,
-        cellPadding: 2,
-      },
-      columnStyles: {
-        0: { halign: "center", cellWidth: 8 },
-        1: { cellWidth: 20 },
-        2: { cellWidth: 22, fontStyle: "bold" },
-        3: { cellWidth: 22 },
-        4: { cellWidth: 22 },
-        5: { cellWidth: 22 },
-        6: { cellWidth: "auto" },
-        7: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 26 },
-      },
-      foot: [
-        [
-          {
-            content: "TOTAL REALISASI PENGELUARAN",
-            colSpan: 7,
-            styles: { halign: "right", fontStyle: "bold" },
-          },
-          {
-            content: `-${formatCurrency(selectedPattyCashTotalSpent)}`,
-            styles: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72] },
-          },
-        ],
-      ],
-      footStyles: {
-        fillColor: [241, 245, 249],
-        fontSize: 7.5,
-      },
-    });
-
-    const finalY = (doc as any).lastAutoTable?.finalY || startY + 50;
-
-    // Signatures Section
-    if (finalY + 40 < 280) {
-      const sigY = finalY + 12;
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "normal");
-      doc.setTextColor(100, 116, 139);
-
-      doc.text("Disiapkan Oleh,", 30, sigY);
-      doc.text("Diketahui / Disetujui,", 145, sigY);
-
-      doc.line(30, sigY + 20, 75, sigY + 20);
-      doc.line(145, sigY + 20, 190, sigY + 20);
-
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(15, 23, 42);
-      doc.text(holderStr, 30, sigY + 24);
-      doc.text("Direktur / Finance PT", 145, sigY + 24);
-    }
-
-    const safeBankId = bankIdStr.replace(/[^a-zA-Z0-9_-]/g, "_");
-    doc.save(`Laporan_PattyCash_${safeBankId}_${new Date().toISOString().slice(0, 10)}.pdf`);
-  }, [selectedPattyCashDetail, selectedPattyCashRecords, selectedPattyCashTotalSpent, projects]);
-
-  // 4. Saldo yang Masih Berada di Tangan Personal (Petty Cash/Kasbon held by Staff)
-  const personalHoldBalance = useMemo(() => {
-    return talanganSummary.reduce((sum, s) => sum + s.balance, 0);
-  }, [talanganSummary]);
-
-  const totalTransferKePribadiGlobal = useMemo(() => {
-    return talanganSummary.reduce((sum, s) => sum + s.received, 0);
-  }, [talanganSummary]);
-
-  const totalRiilTerpakaiGlobal = useMemo(() => {
-    return talanganSummary.reduce((sum, s) => sum + s.spent, 0);
-  }, [talanganSummary]);
-
-  // Consolidated Net Balance is the sum of Sisa Kas di Rekening PT (bankBalance) and Sisa Dana PT di Tangan (personalHoldBalance)
-  const balance = bankBalance + personalHoldBalance;
-
-  // Dynamic Holder Registry & Kasbon Balance Summary per employee/owner
-  const personalHoldersSummary = useMemo(() => {
-    const summaryMap: Record<string, { received: number; spent: number; reimbursed: number }> = {};
-
-    // Seed defaults with June 2026 starting balances
-    summaryMap["Faisal Mustopa (Admin)"] = { 
-      received: BASE_TRANSFERS_TO_PERSONAL, 
-      spent: BASE_SPENT_BY_PERSONAL, 
-      reimbursed: 0 
-    };
-    summaryMap["Jidan Ramadhan"] = { received: 0, spent: 0, reimbursed: 0 };
-
-    if (employees && employees.length > 0) {
-      employees.forEach((emp) => {
-        if (emp.name && !summaryMap[emp.name]) {
-          summaryMap[emp.name] = { received: 0, spent: 0, reimbursed: 0 };
-        }
-      });
-    }
-
-    financialRecords.forEach((r) => {
-      // Skip June records as they are already accounted for in baseline
-      if (isUsingJuneBaseline && r.date.startsWith("2026-06")) return;
-
-      const holder = r.personalHolder;
-      if (!holder) return;
-
-      const normalizedHolder = holder.toLowerCase().includes("jidan")
-        ? "Jidan Ramadhan"
-        : holder.toLowerCase().includes("faisal") || holder.toLowerCase().includes("mustopa")
-        ? "Faisal Mustopa (Admin)"
-        : holder;
-
-      const isCust = isCustodyTransfer(r);
-      const isSp = r.flowType === "OUT_PERSONAL_SPEND" && r.sumberDana !== "REKENING PRIBADI";
-      const isReimb = r.flowType === "PERSONAL_TALANGAN_REIMBURSE";
-
-      if (!isCust && !isSp && !isReimb) return;
-
-      if (!summaryMap[normalizedHolder]) {
-        summaryMap[normalizedHolder] = { received: 0, spent: 0, reimbursed: 0 };
-      }
-
-      if (isCust) {
-        summaryMap[normalizedHolder].received += r.amount;
-      } else if (isSp) {
-        summaryMap[normalizedHolder].spent += r.amount;
-        if (r.refIdBank) {
-          const allocations = parseBankAllocations(r.refIdBank, r.amount);
-          allocations.forEach((alloc) => {
-            const b = financialRecords.find((rec) => rec.customId === alloc.bankId);
-            if (b && !isCustodyTransfer(b)) {
-              summaryMap[normalizedHolder].received += alloc.amount;
-            }
-          });
-        }
-      } else if (isReimb) {
-        summaryMap[normalizedHolder].reimbursed += r.amount;
-      }
-    });
-
-    return Object.entries(summaryMap)
-      .map(([name, data]) => ({
-        name,
-        received: data.received,
-        spent: data.spent,
-        reimbursed: data.reimbursed,
-        balance: data.received - data.spent,
-      }))
-      .filter((h) => {
-        return h.received > 0 || h.spent > 0 || h.reimbursed > 0 || h.name === "Faisal Mustopa (Admin)" || h.name === "Jidan Ramadhan";
-      });
-  }, [financialRecords, employees, isCustodyTransfer]);
-
-
-
-  // All transfers from PT to personal (Patty Cash only)
-  const incomingTransfers = useMemo(() => {
-    return financialRecords.filter((r) => {
-      const isPattyCash = isPattyCashCategory(r.category);
-
-      return isPattyCash && (
-        r.flowType === "OUT_PERSONAL_TRANSFER" ||
-        (r.type === "OUT" && r.flowType !== "OUT_PERSONAL_SPEND")
-      );
-    });
-  }, [financialRecords, isPattyCashCategory]);
-
-  const incomingTransfersFiltered = useMemo(() => {
-    return incomingTransfers
-      .filter((r) => {
-        const matchesSearch =
-          r.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (r.personalHolder || "").toLowerCase().includes(searchQuery.toLowerCase());
-
-        const matchesProject = filterProject === "ALL" || r.referenceId === filterProject;
-        const matchesCategory = filterCategory === "ALL" || r.category === filterCategory;
-
-        let matchesTimeRange = true;
-        if (filterTimeRange === "7_DAYS") {
-          const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-          matchesTimeRange = r.timestamp >= sevenDaysAgo;
-        } else if (filterTimeRange === "30_DAYS") {
-          const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-          matchesTimeRange = r.timestamp >= thirtyDaysAgo;
-        } else if (filterTimeRange === "THIS_MONTH") {
-          const now = new Date();
-          const firstDayOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-          matchesTimeRange = r.timestamp >= firstDayOfThisMonth;
-        }
-
-        return matchesSearch && matchesProject && matchesCategory && matchesTimeRange;
-      })
-      .sort((a, b) => {
-        const dateA = a.date || "";
-        const dateB = b.date || "";
-        if (dateA !== dateB) return dateB.localeCompare(dateA);
-        return (b.timestamp || 0) - (a.timestamp || 0);
-      });
-  }, [incomingTransfers, searchQuery, filterProject, filterCategory, filterTimeRange]);
-
-  const totalIncomingTransfersFiltered = useMemo(() => {
-    return incomingTransfersFiltered.reduce((sum, r) => sum + r.amount, 0);
-  }, [incomingTransfersFiltered]);
-
-  // All spends from personal accounts (Dana Talangan)
-  const outgoingSpends = useMemo(() => {
-    return financialRecords.filter((r) => r.flowType === "OUT_PERSONAL_SPEND");
-  }, [financialRecords]);
-
-  const outgoingSpendsFiltered = useMemo(() => {
-    return outgoingSpends
-      .filter((r) => {
-        const matchesSearch =
-          r.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (r.personalHolder || "").toLowerCase().includes(searchQuery.toLowerCase());
-
-        const matchesProject = filterProject === "ALL" || r.referenceId === filterProject;
-        const matchesCategory = filterCategory === "ALL" || r.category === filterCategory;
-
-        let matchesTimeRange = true;
-        if (filterTimeRange === "7_DAYS") {
-          const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-          matchesTimeRange = r.timestamp >= sevenDaysAgo;
-        } else if (filterTimeRange === "30_DAYS") {
-          const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-          matchesTimeRange = r.timestamp >= thirtyDaysAgo;
-        } else if (filterTimeRange === "THIS_MONTH") {
-          const now = new Date();
-          const firstDayOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-          matchesTimeRange = r.timestamp >= firstDayOfThisMonth;
-        }
-
-        let matchesPattyCashTopup = true;
-        if (filterPattyCashBankId !== "ALL") {
-          const allocs = parseBankAllocations(r.refIdBank || "", r.amount);
-          if (filterPattyCashBankId === "SISA JUNI") {
-            const hasBnkAlloc = allocs.some((a) => a.bankId && a.bankId.startsWith("BNK-"));
-            matchesPattyCashTopup = !hasBnkAlloc || r.date.startsWith("2026-06");
-          } else {
-            matchesPattyCashTopup = allocs.some((a) => a.bankId === filterPattyCashBankId);
-          }
-        }
-
-        return matchesSearch && matchesProject && matchesCategory && matchesTimeRange && matchesPattyCashTopup;
-      })
-      .sort((a, b) => {
-        const dateA = a.date || "";
-        const dateB = b.date || "";
-        if (dateA !== dateB) return dateB.localeCompare(dateA);
-        return (b.timestamp || 0) - (a.timestamp || 0);
-      });
-  }, [outgoingSpends, searchQuery, filterProject, filterCategory, filterTimeRange, filterPattyCashBankId]);
-
-  const totalOutgoingSpendsFiltered = useMemo(() => {
-    return outgoingSpendsFiltered.reduce((sum, r) => sum + r.amount, 0);
-  }, [outgoingSpendsFiltered]);
-
-  const personnelOptions = useMemo(() => {
-    const namesSet = new Set<string>();
-    namesSet.add("Faisal Mustopa (Admin)");
-    namesSet.add("Jidan Ramadhan");
-    if (employees && employees.length > 0) {
-      employees.forEach((emp) => {
-        if (emp.name) namesSet.add(emp.name);
-      });
-    }
-    financialRecords.forEach((r) => {
-      if (r.personalHolder) namesSet.add(r.personalHolder);
-    });
-    return Array.from(namesSet);
-  }, [employees, financialRecords]);
-
-  // Combined Search, Category, Time and Flow Type Filtering
-  const filteredRecords = useMemo(() => {
-    return financialRecords.filter((r) => {
-      // Search Box
-      const matchesSearch =
-        r.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        r.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (r.personalHolder || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (r.senderName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (r.customId || "").toLowerCase().includes(searchQuery.toLowerCase());
-
-      // Project Category
-      const matchesProject = filterProject === "ALL" || r.referenceId === filterProject;
-
-      // Category filter
-      const matchesCategory = filterCategory === "ALL" || r.category === filterCategory;
-
-      // Class type filter (4 structural logs)
-      let matchesFlowType = true;
-      if (filterFlowType === "IN") {
-        matchesFlowType = r.type === "IN";
-      } else if (filterFlowType === "OUT_BANK_DIRECT") {
-        matchesFlowType =
-          r.type === "OUT" &&
-          (r.flowType === "OUT_BANK_DIRECT" ||
-            r.flowType === "OUT_PERSONAL_TRANSFER" ||
-            !r.flowType);
-      } else if (filterFlowType === "PERSONAL") {
-        matchesFlowType =
-          r.flowType === "OUT_PERSONAL_SPEND" ||
-          r.flowType === "PERSONAL_TALANGAN_REIMBURSE";
-      } else if (filterFlowType === "TALANGAN") {
-        matchesFlowType =
-          r.flowType === "OUT_PERSONAL_TRANSFER" ||
-          r.flowType === "OUT_PERSONAL_SPEND" ||
-          r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
-          (r.type === "OUT" && isPattyCashCategory(r.category));
-      }
-
-      // Time Range filter (last week, month, monthly rolling)
-      let matchesTimeRange = true;
-      if (filterTimeRange === "7_DAYS") {
-        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        matchesTimeRange = r.timestamp >= sevenDaysAgo;
-      } else if (filterTimeRange === "30_DAYS") {
-        const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        matchesTimeRange = r.timestamp >= thirtyDaysAgo;
-      } else if (filterTimeRange === "THIS_MONTH") {
-        const now = new Date();
-        const firstDayOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-        matchesTimeRange = r.timestamp >= firstDayOfThisMonth;
-      }
-
-      return matchesSearch && matchesProject && matchesCategory && matchesFlowType && matchesTimeRange;
-    }).sort((a, b) => {
-      const dateA = a.date || "";
-      const dateB = b.date || "";
-      if (dateA !== dateB) return dateB.localeCompare(dateA);
-      return (b.timestamp || 0) - (a.timestamp || 0);
-    });
-  }, [financialRecords, searchQuery, filterProject, filterCategory, filterFlowType, filterTimeRange, isPattyCashCategory]);
-
-  const financeTrend = useMemo(() => {
-    // Current filtering logic based on timeframe, month, and year
-    if (timeframe === "weekly") {
-      const days = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
-      return days.map((name, i) => {
-        // Javascript getDay(): 0 is Sunday, 1 is Monday, etc.
-        // Our map: 0:Sen(1), 1:Sel(2), 2:Rab(3), 3:Kam(4), 4:Jum(5), 5:Sab(6), 6:Min(0)
-        const targetJsDay = i === 6 ? 0 : i + 1;
-
-        const dayRecords = financialRecords.filter((r) => {
-          const date = new Date(r.date);
-          return (
-            date.getMonth() === selectedMonth &&
-            date.getFullYear() === selectedYear &&
-            date.getDay() === targetJsDay &&
-            (filterProject === "ALL" || r.referenceId === filterProject)
-          );
-        });
-        return {
-          name,
-          in: dayRecords
-            .filter((r) => r.type === "IN")
-            .reduce((a, b) => a + b.amount, 0),
-          out: dayRecords
-            .filter((r) => r.type === "OUT")
-            .reduce((a, b) => a + (b.amount + (b.adminFee || 0)), 0),
-        };
-      });
-    } else if (timeframe === "monthly") {
-      const weeks = ["Minggu 1", "Minggu 2", "Minggu 3", "Minggu 4"];
-      return weeks.map((name, i) => {
-      xúÏΩÎr€H÷ ¯øû"ãÌÆ%ªDä§$[ñ-;®ãmñÆ#R_M$!%ê‡†eµÜ˚
-˚±±O∂O0è0Á‰»Ld†.v}]≈ÓíI ÔyÚ‹œIBÜ¡4ä…≠Îﬁúπ√ Edõ\ySg:Ùü?j\y~ÏÜ’jX#€Ô»˝$˘∞Í#'v°ﬁ‘Ω%{µ6IÌç°‡î√óçk7¶eïR°œ√)©JèHR¸(ò∆„*a{õDÆÔcwDüëü~2V¯0˜˝_]'‘Í‡£lï;Úéx‰‰ïÈ’€mRı»œ§U3ï®≤ı9Éﬂ°⁄W•sxX!ˇÛí∞∫WnËNánwD_)ÖkRC“J,§Ô|Mà≤ÓSg‚ÆHøΩÈñºâ ¥ÌÒ›Ãe£ÏWjjŸ–ÕánµÍ¨ê-Ó¿¥gÃßÒ
-i÷‰^Éy¸†nOŒ˚•˙≠äé˘˜—ƒõ~p]\◊f≠¶éf!VL¨›Ç∏~‰&´∂∫Jp„˝ª-rÛ‹ë	Bœ 2ù˜?ı~ÎÓ5&Œ¨Z•ÎL<Ó0”⁄œ{jJüÔ	Œ¿ÛÄqÚ√wc2p"∑;ÖI7ﬂdûüÃcıÖwÖá˚⁄Ä°™C«ßÌf˚%æ∞ªFÓq”ôO]V4äù0ˆ¶◊$∏∫ä‹XÜ÷d\;ùﬁ˛o›„›ì£˝7⁄{6>Z`Ø{∂ø€ˇmˇ?O˜è{˚ úÙigÔ®{¸€á˝‰A^˜€˘ı∑”˝≥ﬁ…qÁPZôÙÛ≠üÓ-˙∑ÕQ¬®´Õ≤V”œ<¯œ
-0~À”/VÊa#¯6à ˛.V»Ö~@WHÏM‹´êqÖ†¨(¿∂¢Bÿ%jvÜ«Œt‰ªù—®:”»∆^Ä`‰Dw”!©¬&ûπ∞Ò!'˚_‹i,°∑1]|∂Á^9s?î¡˛«+® H¡”Üâ¶œFn4ΩˆU„‡√œîıﬂ	ë‘&uÜÄÆxÜFÿàÉ√‡÷wa3´µÜ7˙sË§Zπv~˜*|\?à√Í¯~ 5°˜®tßë‚¡8”õN˙&ŸtámbﬂÍÄÓìIΩÉ}KÁlh∂·ª”k†Ô+ÕZrDÃ∏∏'¨è≠tÇÄ¥∫£xäX©¨÷Û9ûO0:môkdq)`Ü˛√Çâ^qÍ√y80Ê tËE¥„F£°√÷• B˛tD™ÿÇGq¸Û÷4>axˇÛœµ¡°∫≤/ºK	’⁄€saı·î∏†Ï ˚JGπˇÁÜ√ÑôDq0Èé4Ãã¬¡‹9>®®ò8Y*Hu mJu(ÒU*^˘¡m_>˙	^§òrèKÈ§døsÿ9˛ÿ9˛Ìlø{¥s~÷€W∆pz÷´H¡÷mx?í%é—Ã˜‚j•^ë'Ã@·X•ãˆ•˛r2I^∂2/ÔÓíóÕK	w∑≥}¿+81`®Ù˘≈˝h¥xq?ô¿üªª≈gu;?∫S7D~a>ı`wrÍ~ç∆°·,»f±h·}Éí»Ëü0 ∂¨ã:MÌ¢˛πVGx‚7¶û{1i“c”Áœjçô3Ía’µRi +;ˆ|óT£çÇâõ+ãº1æ∏OG≤Ä´ñΩ˙˘Á7ŸáÀé|°Ì, ¸Òn2 %∆®‡…
-™ƒwÆèGj‘¬”z•EzÛ+vrpÈ;“"Ô…gRÌùv˚‰≈=ïk´/ÓÌïµœdßƒ8Uyú€“ióàCæµ,È»KúœfÇÿ@Á“–3G{`¿∞EN&^¸ˆÉäha3ºQÂÙ,o/"d>ôaëÜ¥•è].'PèDH§ÎGˇŸ b+πòcLˇS‡è‹P*¨æ‡§I™(à›¡|…Ô9˚≥E{‹Tà˙Ãπõ¿:r„q¿éI•÷9Ó}ÿ?√ëg(ü¬K¡úörW◊/OÄqB ﬂ2∆ˆΩÈç;⁄s¸Ö:©êÓó;⁄l∞’–EXd∆ ˇLf[TjLÉ[
-ﬁ
-á»˜Æ«1-ƒ˘wà¯°©/
->ƒ^BYÿ‚gqK9ôrœ]í=gÍHsLöÊrsäŸõ8
-≥ë<5U·úàÿV∆´hENΩyÏLØUÜ?4∂˘…P˛ì•x‰Naeé©laÏ0“‚¸¸R†Ÿ
-‚Ïà:∂˝€f∞ê™PÈé3™*rVπç v¸è¿Ü÷ÄùNê0ÿƒôﬁ’“◊–£Ÿi’7∂÷gALØùÈÅêô6u°ñ1Ù£5bÚ ÇªW$ª¿R¶ÇÇ˚Pﬂ–ã˝;$†;¬÷
-’ &›Ω˙õ Íyp|†ò≤zÚÇ´+òŒB=î€ & –.∞≥¥∏sÎ`ÔÉ2oË6Ü°Gs/Œ≈T+:€v⁄∑ÃÛd…˙lç´˜ƒCºÇΩ≠ ÷ññÅ†a{Yù¿ÜÊ◊XÀ/^|'+I*∫«ù„›}˛+ªg˚ùæ˙ÏÛ 7ÿƒ°¥jtÍNúh~„LÎ√ØÈµÎœÿ  ÇTï™Ç,j∞É‰ÇΩXgqπ•v$ë§Pœw<r6S1
-@Ö¥°„ªú5¬WÔÓUjãœÈÑj*ÒâJßäúk&Ó¸*4Îz_úÅÔñÑ'˝≠Ã'V>ûùúü˛v–ÈÌúoU4FK ´‘’≈(*$÷ö˘H˝Zc+€Fi’xP9ÚM™÷È√∏nhŸ=‘9p&ˇt3*)≠r⁄0u√1;j(l‡÷5Å£å&0≠ÓE…∏´ ÄÄ‹Ñoí&I:gÀà UGFé´TÕd≈ﬁh#§*âdÄPáB@<è∏p÷A8ä¨+$?Ω6«!ﬂ{,<à
-Ú¢œXpäíZBoíwG€Lß¶Ìπ⁄Ñ÷∆¬ºëPˇ‘ÒF=*>U?Ì%[I˜Fœy¨«{qYKïV√·
-EvLÈ1ˇÇ?%ö	
-£ åS»A}ÇL H¬{I#f†–ùteÌJ]öH’…,_Riï7∆J€ö”ÆÍ¥r¡ä"c0ür…Áì4ÌË©Q}	óîëWÚ"È8ÜA®±ü∑Ts4 ∫ucÅIFöpŒ0(iˆÿØ}’oä™dvŒ”’ìZ3¢¥"ûo:wµUKw -ˆ«Ç≈ëè¿´Áπíé…2Ê©{{ †ñ4ˇ°IN|® Ù¥; p£ÄùDNu÷^÷∏^£⁄^!ØÖ0˚È%|∂ ¡[™>&[h`°œß Êôh*@X<ø!=Ω∏◊pÄL ≈Gc\∫	í)Y(∑‡gaŸ¿˘ß6:ËÇn
-Z:YëvË“ºÖî°ÂÄ*ÉÌœ“Z[7ø«∂‘ ;zﬂsLN9úŒYø€9¨dÊ•sÑlÜ)G(ë= ﬂ¥yxª,åâÈoÈãî›Fk∂“Ydñ?ÛF\Pﬂ∂.‘B˙µHuóV¶á–ﬂ˙gˇigy¬Øñ;et‰Ïlé¬YÏa‹&òÛ–]£Ää2ºÔ≥ó›ÿù ª1U´åVTçî±ì,á¶v˚^˝3z36åñVµC¯Ió/i3ã∂œ∆-Sy¶.√”·"3é`dXdŒî)lM •–m®eWLÓÔßü23y'õA‘ë™tLnËÈ∏˝cd…˘äˆIπSI¥4g&s⁄‹Û(Æú‘àqïBI	À—¬í‘¡Ù^Sp[\Ë‡2î∞$-î,∞˙⁄[»a¨ÊR≈«–≈B hÄÂRrY)˜c¶îK— ‘“D/è¢ÜLj?ÓÌ( v%©/_¿+¢å^ƒîùª¬∫ΩMåZÙ3@àí^&q&¬∫ìÅsá
-¬ZÃ/~Êzì¡<å\‹Öäid∏…Ã|ô$¿—ßÛ~Á¯#É§.˚˛¥J‹/æ?noß√y·˝!;#î:P‰’ˇN“∫“ÂÍ*ÈÅäæc)8>`Pótzª˚«{›„è§MÄ%sQ≤˜"i≈?÷Éˇ”˛÷ãr<YœZΩG
-˛ºüo©ø√¡ÛﬂU‰7Î«ÒÙ~Œ‡ÈUaªq…_B(…˛Ÿﬂ.¸s|∞ú‰o‚_FLtØÆ\¥7π{VQ–I¥ç[S≤Ç≈3VS@‚øg‚@@.4<.Â√ó~®ªósóáó’
-v{≠<t!Xóñπ-ÕÑÓ/òGBö5A∆,p!e7‘ifZááT=QO»∞J‰Y⁄íó?AÛbïV§N‹∫n∏ãjäË≠6M ¢Ï ïaè°ã;˜Ÿ„e™3ïV˜ˆ∫|˝]oË˘X˘q√ËSèHcù™©RbD3¨BÌ©⁄cõO◊ﬁê≠öÊ`≠âŸáÎO:â[.ı7.>ÌﬂKó“±û‚•T)ôÛ"ªQ±›8ÜÇPG„cßÚÌ‘,ÀÈYñf=LÃá÷ˆwƒ¬cch…∆ÍäíÑ˝1æ‹í€"Mcﬁcú,%Äµ:?¶›6.ı÷`Céœè¯zg S˘äm¢5uèc˙Ñm∞aS©Ã$’U‹ÏÒÙ˜œ0î•∑˚iÔ¸pøwA[Mt‹Ô\ö–—«ÙKÔ‰@.‘Dø2hÔÍÆZ™6]Qéü	JÒë6Z"ìÄéM)D&tõ`Zs<’jÌÈ^Ê&Ja?Çe4n•SÆ¯Ãá∞JŒuv6ß…+É”®^$„7*Ì ÙK ¬¬ûäòY›Ùù{›2˘—‹\o^\ó„;c˝”Ùù‚…:*jTH%˙äp|ƒMY¥â√Û„Nœ“í°(Gî∏‰¿¬2¥ƒD$ˆpøzÜ√uß#}∆Î≠Ï)”‹%ET=#Û!"ôÜTÉ≤}Q≠¢áÛÙn¯ÇØ ﬂQ£Ñ¬Ç>´(M,∆B¬≤@Ò3"ó˙ã{hyÒ9Ø,›"{xÃÉ∞oö„∫“lä‘R:Ô≈>|¶´‡”’WóÛ≠ÊÌ]Ñ”ñ›∫O2sÛKMÚ›∂ŸÇáÜ§É–ª÷Êr°¥a {¯…©`Eˆ4û ;4üF˙Z"∂R:j∆ÍCÑF˙8ç˙+@‡•	É¡&g—wàè'‘[Wöd˘›∆¶„G°ë‘eü≈ÈrºÃ Ó˙,^”ΩâÌ	A{¿ç«PÛZB3≥„ëô¿åñJîóŸcqË;qdH
-√9Rk£m(óÈ∆(
-“nf…	eı2†Õäkî	”¬öc$µY^¶’Mç◊å8.+c‚á ô“ŒÂüq°Êƒ
-úùî+7¢ÃÆ˘Ã≥»F÷»8!4:¡dÁí;bé‘π>ñ!`&·M˛†ÛNë™w‚„Ÿ#ê≠µkíôzŒ-3«è!]ˇ ∫õY—~
-∏#™ãalJM{’ÈP’ÛŒ˛·˘aÔj¸Ä‰ıÙ,Ã~åËíæ∞<ÁÎ6ÀËMy5ÛÅ‡Æ’Í-GﬁITyhÖun®á˘‹ßRhe2îàœí“~æÅ`ÅüíƒèŒ˙	‰¸<F°+Û\ ˚mN]÷uÑ?7É∑›X$HveE≈Í‘b§p[Ydº®°t8¶ñ‚ ñÜAhZ°ü~Gfè"2©Îï¬^ÕÌGnÃï—˚Ñ–˝B©~·4"‰3°Õ6DÄthc°K,Ω2eÆôıgd·qa!ê¯õˆ¸©]èhge’4∞.˜TñvœwË~ëe<L“ÆnµÑÌ*4YfWŒÑø#fﬂ„ıïΩ∑´ócKy ‹Æô˘0å€üK_ˆî(ÅæƒFm>:@∂H∆/ï/≠QQMª∫»∂≥¬ó˚≈¿ì-Â}ˆÉ˛-ÅvX˝ﬁ8∏ÌåFG¡»Ò´î•KöÜ∑Áë{‰LÁé⁄›Õy{ñDÿÊ˙T¢ÒÕñ˘¿a[¢ ÃRë$BcH∑w¬Ì!5ëù¢_©]4/”c”∞tÍœñ>L„’iVçùŒÒOQ$“£—+/r|rÑ≤∆Ã!’Ç◊§Ç∏ j(%∏|Kä,ó™%—ÈrEa¥¬1¬Pú»√¡H©“•ê—‘«r`´÷U-?ïÉº+g˚˚«Ë©u*/ë÷]Q^$¡€⁄„$`[{˛…Xéøñü'q ⁄º{πˆNÒë◊ﬂM<ﬂª9á˛OC†Ú#≠›ΩöûÔŸ∂AÁÃLoª2èeh{n}u*sEŸ◊=NX2⁄TIc*◊[»áoGÕLTï…)ÅödqY{É˙ä3”∞§_<˜ñ6µ î„ Ïãˆ,qé˛Éæb”úSô<Qå‡K©¢$øUû2
-ôsf$°ñπ›‰ÿ∞áq°Vú»ﬂ7B„ÔÇ[ÄÍ∫™ø¡Ú¿÷9çíäÈ‹DnDˆº8 pÿag
-?Yq@SSrÇ≠íÿ97d‰¡È@≥„x{v=8cƒfπqÁBlÉt¶#Á|Á@
-éÒ˛ÂaÖâ‡3'ëÛª”H›RD+±vjÍ•"«#C∫ÍxîbiM≥¿íSnà(ØúüÓ©Ò‰MŒ÷„Üı·ÒpˇõHxÍ{Ëü£˛Œ%¡¸/…püy;I˛¬«\œ˘‚Óèº¯â≥ìπ–$ £‘jMŸ¡§ê†{r3Âπ1ï6ÒÔ‚?àÕd∫l `_Jî]‡D'¯F™ye®ñ,mZA™¡95ëRÁ3":æûUGŒß√¯u”$Ø
-∆ê(Øc)N ödä“È(eÙî::£ŒK©£Â|3¿e‚oíÚ.jÎ•RÍ®[”Í()u‘ndm¥Ú∆ûZ'ev`ØeÆGi—ñﬁF·Åî÷Ù6w§UPìÔ•≈ÆI/oLu#±SzyS™ôÕ :u√Ú”›§D=c)Qòÿ™”ÂÂ√J†]e¥Ì‡òDâ≠Sßùä” :¯=C=´{Bñ4‘ñt}ÖR±ùì⁄OÔJa.µu%û>—πΩ™¨ª”'(3¶¶1´*;Ω∫`\5_É´Ä¬⁄övTw C2&+2±Â5B9ı<6Ω(Â{lv ¶˙erR¬'ÖZÂÂ|≤¥∆÷I&Ôìπ'[Íßº∂‰>Â]Pí+Ê%Õ·.∆Ó¸®49∂9È·’¥'QÕÌßﬁ¸ŒÌvﬁc¬ﬁ9(2Ô´RëÓCú˚PQüQ–C´uÈE¡“jà{≤B2˜H!≈¿ÊI⁄G=Áü„>É©˜/∆–\,ÚÖ%éù∑cwö˙)	«ºàˆÈäd°úıG
-¶–Ü§‚π"H/ñÃb“!H[\ï‘ê¡&÷jÄ,2	æ∏‰*&8"6)h`‰]QÜ	e2ü≤—([õˆ *˝Å«ÿü6Ô‹∞éë¢ôMœ§î„oÃ¡ØY\Q>‘¿£:g‘^†ßÊì2Çç9©C±„ÓCsY√äƒÃ≤ëEä≠Ï0´∏∆ZóOÿ·ìµì›\ìpX≈çiπıS∫^¬l ∆c
-vB◊!ˆZ∑Öî∂¨ZU•Ñ™póUÍÚlÉL;—C∆‹j@ñEı4ŒU9nπgäø\‚L•ÕÈgäø—œî∏0@:Nº§vöTXÇ)2¡ƒıIl˘í#EçWòhÒ)Ç∫ŒËé¿√É0ï¿è÷π¸Û…ŒØ·</{&ØÆôî#5g£⁄Ï!#∂∞V "fS∂¿ë∞|<B∆Û¿2k<òÄÀr!a”¿÷`0ÖØ(éSã/ñ_øDDX^ÀÑÑÂµcç	´Zj=8(ÏÅ⁄£¬ÿ†9,Ãøo#íœ⁄e,Gˆ˝¬‘mﬁB⁄ŒÙcè ≥äÍÔÌØ∂ÙÕÃjãJ≈±õäLÕ≤qÌÍùÅ>¡¸A§Ù=¯Q/ÕèÍLÑ¶Ÿéåí%êïµ|Dñh¥0(Î·Yñ.Ã1YãÃ:qy.√hWå≠í‰“ˇ#¢À˘CŒ∏µ®ÖßÂımëc=j"ÀçõÊ)g∏Ë°™ŸÙS„-16+≠Ï-ØÂ58wzK*zMNë£í⁄^S›Ÿr*ﬂ±∞6úxhiÉÛ#«¶ÂU¬ÚÁ°‰"ÎSW.z,£t-é{Ü»±L‘XŒêåëcπS0áÅîâ≥`Å¢Ë±◊πúà±“∏Ïπ"∆ Õ∏0’E˘h±áGä-%ñ!Vˆëa%Üø≥FÉ-	ñŸ±ßå {DÙ◊LS8eäÁ∆~Ÿ‚æ2ïsBøÙ≤ÊD i‰W¬Wñ˛R ‚ørﬁ/fI1R˙ıta_KÑ|=q∏óÍe≥ƒÁÜ{ï√î˜ÔÚ·^°^πa^%Xô'
-8y6n?Ê®X√≥ú.chó9¨k	º\X◊R!]Kä!¯˘Fú?~JÜt=ÖêÄü«
-teû<øÕ)3Ötbäæw(◊sÜq}ª.=‘≈†…‚Ì'ñ4ÉMë”ÍÔhS|∏πTí´ü´éIó∞*\ïˆnL#oè≠*å´J[NÅAl¢1¨J'4Z8Øk•≤[u’H'óÒ4˛q{[ıÕzÛå‹zFN„˛õw—}»nhM›>©«Ñﬁ%ê¡∞¯*`inJF‡™µ!©õı 7hœ`ªó‹Zï%í›xlÚÂW‘eB
-‰†=ñ@_€≈%©ø√WÍ”Í‚>q'Ë◊ÓÑs<–÷P\Ù r&èÇ€)÷qHåπ≠—ﬂ˝s2¢dŒyÒ©Áz∏Q”Û6çNä‹œËπ™”πÔ/hQ˘Ë\;>`bg2(tdK„0íòÉú
-§Ç◊ÿC‡b Oá. ı>ˆÉ6¢0lL‹(BfjK\CåÌ¸aéÙÿsAÊqçqiH—0zhÏ [KËå‰I#àpä¸Âè∞TW^8ë‚y:3Á`åˆsÁ‹@Àhë5¬Äèˆº©∞4tBŸaÑ;}ü .ÄkÜ±».ÇÚUº©ó¢
-„äÓ‘ï†,≠bM§.yñ[íyÚD√€Ô§fNßÀ®%Sûò<Wÿ@®ÊIó™£®¶s˚È'õV’8iÜd(´z˛kD±†ﬁßºjû°ÇàΩHt)”!QötÅë‡HÀù%êÁæ¥ºÕøO^3˚íˇ»ñï8ˆ3ãÍûÕ∫öógS±±J6dŸ4f◊Ãœ™iœ¶i4Õ⁄LØ“∏,÷◊ƒ€:ˆÜ=ºy™f,°R3ö14≥‘p¸∂ååÓº:èqÂÁ&É%?SÔô˙àˆ†w h6»ú∑ìÅøó±˘≤„TCo–6©C÷ïLh_Ò}i©ÛÏ≤î-∂(»®Kπ}ŒÛ%s´ÿvñ!∑jØ∏*^‘¥EãLè˘Ü≈b”aÆêKÁ;ù_;gv4°À∫Ÿ]˛≈◊ÑÌòπ/"È±	R⁄	Ä2;”Ï-ÀeS˛KÁDÁßKI¶πR©A"]ë&!⁄.6 RÂ8eëNôPEQ’√h%gnÜôÛôdêú‹[™]/ˆﬁ˛Nø´ÕòùYÍGº¡¶S÷ÁÄ≥eI Û»	ΩÑi{q/£ŸD™W·mG‹√/ó‡ﬁ~lÀÄWï[ ≤Ãºè# ˆDÇ+ô8¥Yuèp.a2L	oMnß«-¡›QdkÄEú¿SÃ¢∂Ò¡›;sˇÜ±˝)ØˇÁ„£t#Ø©lD∫U¯\,º∏œˆ≥(#!|Œó2"ÇƒÉ‡·ÌGiøYﬁÛQ¢ƒÚ¬ÑYúxNÅ"O§xÑPÒ`±b¡BE◊À
-O%^<B¿–‹MûÕÖ3?ùˇÇÜ5ëQ
-ˇº‰˝_–áãO(t|±„#x<\ÙXV¯(#~‰öœEê\!§åR$àîEJ#9‚à…ç»,®ÈBâEvQÏπ¢…
-'•gf≥\%„)PJL…TJä*œ+¨Ë‚ä,∞ËÆ@πBãIl1.|—E°ùô‹ÖlN√`‚E.µßÀ Ûôt◊=}€óï~$y*aF!˝(è0ÒC9©fïêÄ .aka¶ê—<§∑´ÇîCÿDUKã.≈¡ıµÔ≤^;æèåí&YD6=z#^•£≥œE±i≈ÙVÈ^¶2•Õö#œß`4ﬁÿ‰O>∫i…Œ ¸º◊$S&ñ
-ôÄ˚Ç€ò`x∫I:@yh◊≥h ò”Ω⁄*s3m0d1π‰˜ T+3Ãı0ô‡_g]tÙœÍ*MI‡º^ª‚Œ#©)öv‚åæ‹Nìe∫_gÃS&π¿tî[ﬁ+Âiø∫N»ÿQ9{†Y¯¢ö-L|¥
-ÙiUo[åÀﬁ2îÌ ÖìVÂ5ˆÆÆ˙Âıh<ú3à™r|;S◊»+ùbK{Œ]rŸÏ–ı¸j“¸*©∂öÕ&˘yô¸iØˆ3i…≠x—?]˜∆«‡‰§¡∑€§’îçùËó˘‘m7€/pí•0§œ–E.Yx∏°ŒôNÂ‰äæÔ≈∏§ü_‹ÛFı˜¬X*öÄ!÷@Bı∞Vöï⁄¢ﬁl}ñÂ;pIwº]hX”+DnÖ\IZBﬂΩ«.)®ÀPÙ3_8BX\;êÅπÔ`»=èãHï¶”†«Ø\2°›«éW}Ü"Í &e‹ö4µ¥eéŒr‹@8Jp5~ø€ŒÏu°/ﬂnkkáæÃ¨5Óï≈»rÁêÍÆBY‹ñP8/\ËK[±&ﬁ4!≤®ßÒÇÄb„∫±"\~…-Ä2&BøÈÚ»Î¡õÍ¢K#÷œÆ_çvÍ˙o*0U∫N‰¶≠îä…te˜≈;¢TV[ò•VQ≥Æ°«éhTu)f^S8®äWO˜∏¢äMr°~.±Ji"S£z~ck™l!ıÜ©ì3∆iìGí‹MVîÎ√î&Ã‘˚1≠X+=k—pÈÈ˙WÈ”´§SÈ+‹9˛Ìlø{¥s~÷€ó7+Ö.æ	ÄFçíâòﬂ]å6QÍ1¡~Õ=ßP ˙ÏÜ˚ƒc6c≈7ÏB{Sz„2mYZVËáŸØ¶ˆ››`2sBóïïˆá≠1E8ïìOÏX'UGòN0≈A;‡oÍˇÎ).¶‰ã„œ]Ü*h“6™£r'N4øq¶;·êÙv˜öQãv¢íµ:πh>Y!¨(|Ú£j„ÙA¿&˙sî©ò'ﬂCF¡OZ©”U˛<)'Ëq≥§œ7ø‚¿Ï’\†¶ëPø-@∆.OŸ-Çÿ3/>˙¡¿Òı˙gûáö&4c$UÂgJ-§à rú·úWJêÚ#g∆ÿ0û@ÃL9‡BqJgI•D»≤’@êÿøëôÅ~mm£˝r}≥Ÿ~£”¡r≠›lΩ‹lØøV …€Z€ ˛UymZÌWÌv´≠‘ñu˝’⁄Îˆ⁄⁄k!π…¨©„èÇ3˜∆ù¬™ú*pí4Í‘ÍÊô‘µÅ+ÚÜ9=lø6D+Ú∞”=Á¨
-√9Ùñ Á ÀÄ:¡ºB±39€áê≈ﬁ&„G™≠≤=œãàD˜…B=d ÂŒ®A¡qei∏úÉ≤JÜS£}"|◊õˇÕä^
-Yn•Lkùñ±öÙîd˜¢’ﬁh≠!lø—ä»Î’j≠øz˘∫eYVûî‘;®g€KA©èÄB˙cƒû#&êÖv ùÈ≈wæI1VŸ"ïÎ–U0$ÖVZ©±ã2VŸíx X7Épã\¥_≠êuÄ^≠_bÌ˚ΩB‘Â˚2‹Ø1Ø‹ﬁÿHü_GﬂÛ˛cŸ‘bˇ0¬A‡Fct|ÔØF›´ÿT`Ë˙˛©3yòØx-…1/æÇ—ùaé¶·ò[RÊt±÷Ñôt„u©IÜá ”ª˛7ˆÜéz’ÜõÏ@˚Â
-iØ¡¥◊õ%7Îˇ”≈„-“l¥¥±,R∞˙‰˙3t$»(tn…5˛(0g€îÃúkW3,t
-œ>±€§J#W˚∞<È
-—|êy™0ô£`ÿ†7¥∞®∂÷˛çøÍãıÆ¶‡ßó¡ÍUyÒ8)Âp„“1Æê÷¨bÇ]≤CymI´	ﬂj¡^¿·.1»Ç74G^>¢çÃàˆ`•˘
-»€Ø˜{(ˆπ⁄ll(/™¥ÒMË‰5˝"†È˛oÎr⁄˘∏OZŸPŸà‘zàJ¨ì„˛ßﬁo›Ω°kπTmã2m•s?ma∆WÅÿ˘∞—$‹';g{“=>˘èNØK>ûÏt˚˚ªüÑlã|Œ)XÙ∞sz‹+Èu˜N»yøs‘!;Á Së˜Í–äVJÏ€ÁChÜÓ»ƒ‘Ò…Œ¸fN‡Ù1^„'r õ‡ÜŒÅ:¢«ä–k&™"ıƒTy+Rg2Ê⁄è_ëÕzôÓRœ≤î4ß'Ω.LóÕ¨øv–=Ó‡Ÿœ{ùOò`ıløsXÔwèˆŒú4@ÂŒPÒiLÄ∫≤ƒ–*Í≈dtàπˇlü{B÷™–Qj@l4¡Kë,n¿V“òLÁ ï^TŒC„[ÿ¶«v„M=ú6˜ÉX%{ntz≥à>˝e>Òù19ˆ|‡F) TœÊ3œ◊*óó2}Å∂‹{QÈüÄì?ÍÙŒ`Óg›Ó!Ω˜àfÒ„‰ﬁπ·Úu8öáÛ1·ôÏVË≈lNºK'1º´z”a0qk~}ÏÏ\ˇ“a=T;ª˝sx∏{“Î◊Xg)gáJÇÙ(Úìµ;ÃÉ1ç¥˛ÿ∆vv‡0Åêÿ˝"’Éì„ﬁ…aw!Ì±å3`⁄©1ﬁò4rf‘Ë@‰‚B‹J∂◊∆=ı^ªΩ9ËÙHÁ†ﬂ˝@ˆ∫D∫Gä†DãΩ“;|ÔfÓç»:¡ëç‹ëÁ‡–Ò‚!∂¯ôß7;÷N˜:«Ï∫ÏSuÈı;>êÍÈ~øˇ+ŸÌÙ>’íæEÃñ≤¿t$Xˇ	éáäŸA»∑hdì|– 4Àƒ4·áÅáZ§≥icâÑÉ
-ΩÎqLë©¢≥+#otä9ÀvÅ%⁄¢™G”q¶Ë··O»D„i–îfI¡0∏mx,√⁄tZY∞„ï	äû>Ì÷k§ÉÎH.◊/È≠QΩ‡*&ÆÚõI∏7⁄L œ*~©:–0‘µ%á⁄ƒ°n ø–nøñÜz∫Ótâ±·G¬˝™πƒP◊óÍ.Ë˙ÚÚPÔ†BpªƒX[Î0⁄ó–XK[ÿÙo<ù{bhJib˘$QZc:ÀSG"ˇW4·4u°hçTO¶¿E†xÕä3™-©m^<˛ËN/"ë#¯ıÒ~ ]ÍûÏÌ”ì˝±sò5kv^5√Çï‚CÀ¥åéñ±ôÑ&Å∞˙®7»ØñdÄÈ»?”´µl÷böæıΩ¯û€€*ﬁ®ﬁ›´‘§∑∫G,’—tú[˘≥∫ "È≤ <≈f¬b[∏ä<æ¬ŒYHºE5A$•’≥%‚yJå≈∆Ü Sπ√h&}q)Q#ùπ ˙§QMçPÀêòåV¡VÑé¶vôÙ%√FÄ8	*&0+äMÅhv≠¯Q&WÑ¥“^{ÓÀM¸OkÆ$˝”öKiƒä™A¡øΩé¬‘:<ã€ì	´M™ _Qa	"∞öEË¢âmÃò…çP∏H/Û–ƒçd|T∞Í~ÏÉx‘=¯‘Á¿£ŒŸ«. ö˝Û„˛9Âq®ú‘9ñØ‹ÇP0»;9rBÙ‘?tŒäÇRfëÔ¡ƒã'.‘∫	Á¯√y‰åg*ƒ∏T‚’Ñ˚|;º€mò˘!»0=∆ÂûùÏö÷»ÜzMÚ”3‰Û]ÚUÚÌπC¶Ûá’æ‘í\ç'5§«sJ›QYæf.M4u0ÒåÜ;⁄F±«@∆8.ıdáfW|«%#û‰*√{Q≥*^§7Ù]ÍÛÛH_…Z”LÊ (¡‡Â5–2e®zÚ≤
-rπ†Meª†öG´¿
-òÆû‰>%˘Òj¥iKtÖ/Ùì1˘‡áMˇBâˆÎçıÕµçÕM£ZDƒº…:V”ÕƒÜ.X	ñıπäUVÒAç¸8∫&Ê¶“ÎE"µ4ÊŸ¢ŸD◊P|¯ñ=ƒÉ ≤/°·|w_0xåÎâ∑= 0˘Q0è∑p*Ú3ËP˛…fïç§Ló)cí¶»`ó€¢]“ ¯µøß`  åÓTÄW®†4ë@iÄ™Ik'ÉÄÊ`åÌ”Ωf√¨Û‘BŒóÎ#±„¨ﬂs^{ï=U6^i $‚´‡zÏ„¶Hêç7eå&ZFuç√¡™ÂºÖ	ÁΩÜ›ó^´;i0 ÷ÙÉ˜’U[µÙ ≠£‡Mˇ.π'O
-Ñ\¶`!fÃ“Õ•S‚:ûŒ¡˘êÂ^¡•b$[÷º◊'ysd€£N2ŸÀÚ≥¨ÙŒœNœ{ïÏ4üãÌﬁô„≠Uj„VUlÃ˛[ÃÜ#+Äy6øˆF^qX¨zÂ≈§˙˜ö§,pi`ÿ≈ññÊ†sï8fÆ∏ò—UK¨ïU…ï÷õ›PJ`∂A7ÃU1π~±öi	ESÍK˜˙,∏%€ƒ†#IwIØ-ï6”àF≤°H:≥ä…XQ÷°¥76
-À'ÀJ∂˘∫™U,Ö—‘{Á„˛—´{F‘º«†Z£\⁄¢3¿ïVo√öï«¡‚¨.öól£8—6ß‹,P*…r¢æ6YMX∂o <§gY¢4t¸Cﬁo˘óYDÃJ>eU_|Ïﬂ\:Ò(’LùÌtN…¡…Q∑¥èB„¡9P©≥sì^*e},íZyI¯·BÔ·˛ﬁ«˝3>HêÍËòZç©ÿL/ª3ïey4“*èTF9∑b-~èºÈııúJæ”8¸$
-Íè*Ô¬Óùû´ª”9;Ô°Êqi)˜|:√P_bÎÎ]ÔUœ˙Ap3üÒÇâ˚_C%¯=eÏﬁE"Nå:hsÅﬁsÃnò)-”‰Y¡2ç°[ sJv‚Ù8≠”Óq^‹m1"‘qX©‘aq úk˘N–≈8qMDoEƒ≠XB∏æ9°K‹…,æ„#∆ñ#S IØ*‡»øPR›ho∂_IŒYDﬂÂ'≠±˛j]ˆT\<7ßz‡©|2¶ÄO®Aô+»~JP	+2r·]I6h∆Ωr4„M‹3É†›ë9'p‘∞z7j€
-t…
-›™¥Ù8P÷ièõßS∆ö™˚êπ÷+tèwÎTj—^h¬Ü¡MSªm´“aÊÒ»K¨„4;&≠Bn0‹Üy~é‰rúÙÂä}ímÛ$eπ‡Ãç& 	√±Z|ˇ?OÎÃ\bÜäÀ©>Ej:¶V‚Zä†9öS“zÈC:úY¢B-=’5À~¢ë˛¿Ωu~˜–œœ–96N™.˘w:
-¬ö^ÖaÊe∂ñ5©œóˆãÆµ‰FêTE,MwvÊç‹‚ÿªv®∫`6Û=7,=ÎıúY˜ùkh=!Âb“{∏ﬁ–À43Î›≥˝Ωí≥ÊçßMÅó9\¨≤l‚∞p\a¶íü¿»ãπá1¡|>‰áD™üh ûdÏ¥ÚO7ä'NxSS&˘˛ ÎﬁÚÀ<˘ÓA¬Êø,¯IŸÁ,·-æ∫«ù£nœ‚˘î√Uq{ví"X—î°’.‚&Çk7fewD—™Æ˚_Iı∆+RDmV…«¢ä»§ïs∏ï8á€∆L r£ êµ∆ë%õK∞fNÉâ&2m]ÈM”*2'◊+¶√†™ƒ[Mïx´©oô[~ “™IìƒÆnS¶ôWåÜ9‘‰æifê¨z-ù°Eè»‘à˝ÓY÷©€~d’Éb°suà…˙ó(•Íïù≈¶P∑ﬂõá3¯" ,SEˇû{ÂE^,=Õ.«sÒpL–ÚYß:E¿›òt˙XO~Ä…"˛Ëâ‹TéM	4£ÜÅ≈KA·yÙèÂÈD1Qxú∫±ay2m#∑nÍÍDÈ‰•
-≈%›∞l*√ÂÜK™À¯/§◊IÑêFèÆÊS∂R"ƒ√á∂àñÛ‰‚rÖ‹%⁄Jb®±'Ω[P¨ûDÍp°íﬂÛKuƒÅŸÖﬂ=N@ãf†__… †◊j+µ6”Z≠ıºjkjgiΩv+Øﬁ∫RØ›NÎ%˜;Jû'Ê‹i€ó*YÙî,w∫ixíÕÔêÿFÈ“rB∏B(T=ni.Ñ$œ¬ùöd!pnÜNIa∆ÊÏ
-Zè˚”—c˚cÎõìÀAÍ.uõçñ}ë. ]	%MÄÓ#›Ã>∑œÎœPÿºà,ñÇÜ¥?°◊√≤J"^-AŒô{*à÷Ê⁄fkMuÄ–\ ZØ^øl6eΩíbxH{ †|µßvµSj;ZWØ÷◊^ænïË*„:≠tÖAµ=m¨√˚µ4Ü◊⁄S∆ÛYõîiZ?5 í˜%QÌ2n1vŸyeáø˙X-ÖV9&… õ§€}záﬂÁ28dÈ.ì>-~)[ŸÉÛ§[⁄≤»`x[ Âóâ(íqrë‰èå≥:∂Rü≈Ü%&Lﬁ%º:F« ≥≥n¸ÁÿSMÖ‚#¡Å›N¥˛3ºhÊ!m@øÃiP÷—<F·*ëØa°¨ΩÕÜd∞ âd+à’˙ÙfOöéCDÔ¸í¸Ò«˝√Û†7Œ?-ë6$”≤0±»ÕíÍÈYwß≥◊≈$å<I@jº√'i)Ÿ}VÉ≠ê”~…~ïå3y]Ò≈¨(õ-Úç‹Œ|#UtIM·"ÀGÛû|F´Âﬁ~ø”=$øúü¡∂ê£Û>6˘‚^Î"Ò≥∑maÂ“µπ◊l^ÃÂä6jCÑ˜«‚Ç+2ôcz®uÖS˜1Ê3¯â¶ñ! ı!≤‹™SÓãp§k,(^≥ögÇ+ÔÑ°s˜Vl c{2º˙õ‰ı™±iÔ"∞WºÛ"¨\åg∞º°Èã›±Áè¥Áãw»Ã_*π∆‡TäëuGwBÌπÒ[÷”ª$õáµ‹°Ÿ™B§ @ı»åŒ""U#cÉi8B7Ç®ó«≈®«A˝î«pë»u1t\ÿ€∏?o1ìJ!c,ìéEÚcÌÇàÓ;√qµ hº;ﬁ=”Jû™`êΩÊT ´∂¢ºëaÄΩWí%ÛGÍ•ˆ)t`"+ızWp˙FæÁMƒﬁ’§ô_§;âG[Ñ˜0XtYßâ""∏n‹πxÏEd®ﬂ.«Øâ⁄E¶Ûúπ¨1øcO˛ÃÕ»¸¯òâçwó2rqµ;È„™|€Mπ¥í∞‘&/m©Eûû>aY¬Ò[√ π ¢mßÕ”Z¨P
-zÙIfQä†,Ö3ZE{ı@ìAMÉ(⁄t0Tov4 °zÉeZ'À√‡ôÅıÚ∏/u»¿îXC®h–á6é±#íæjQòe≤èQŸ-S⁄˚ÂÄœvúôFÑ∫√Kn¯¢y˘^@úêÖY{o8a–H£xj1∏Ÿ=—†+ïáå5ÛŒ|O¶∞C®µ–L ‰˝i4]mr‘ü©Ú0∆\F@lÛA5!{˚Ω]Ä8‰%´@¡]TBwÉëFm©,πËÙLtl˘…ÊÙtt÷ÇèÀIóf§„”ôﬂΩQñß¥nè‹ÿ9¶.Àâ=+´E7ÄjëÅd€V§o±%ó¡fÓ2>]â6ÿËÛ™
-ÕÌE{ΩI√Á0Bz„rÅ,∫π´o4’kXjù†Å”rëö5ÉÒ÷xˆ§iäP=—ÕS7”ãÈk≥2a)%÷ix4˝√[˘Hær	tmcs“F§+Ω¨â6Dâ´˘pyé(tô °îùÔ2ıK¡ñ˚˜	ïÑ¡W=C,oyÏN0ùÙW√9B5*æÁ ™ûùø√B’Mæ'Uqœ8øŸF\k¬‡+≈ÂÀ,ÍÃpˇ§ Ê÷u‘®¬:c˙(≈j)‡”B‚ß\Ä ˛~Wf+dø~fÈö§˝…»ã ·¸Q:/ÏR&ü˙;§ù‚`\H€˘˜Ù17)Wär?ˇúqG√∞!öòi‰F√–õ±\0¿^_–›Ó «Aπ∫àÓ&É¿è0ìÆ7˝‹Ôà\˚w≥q§¬ÇsªM°© lHç2lôÜx¨˛èÍè˛Ò˜ük?ØbPﬂ\¸˝øGó?Ø≤«Ä:&©?.¬Ò»ã†‰›û‘¯∂ËW^ae'ÂeÕk Õ¥^π@ıÇ¢1π¨»w!ºu§g ‹™ÅXœã¶ AY%*ÅÆ”CòÆÏmR»
-ùπWÃ ¡txg¢¯[Åí?e≥ÎÉYw∫=‘ZàT1ˇ—ÌTj*ˇg\ÎœÔ∂6∂ ãï}a\;#ìî◊ìπ˝0à€ì\XèÍ_u∑4ú:◊°¨iÕ|Buòâ¢äj/%Ω_Zç"Kπ‡m›Î º„®o%ÜÛ:◊‹$í=Fx≠ø∏∑º6ŸQj°«∫‘èßO®ƒ|Zπ€˝Í¡¥–ôï∆b1˙A}ÿ*Qóà$…◊€‚µ!áÄozoÀ∑Ñ˛òWSOä¿|$jX*KN÷ÉÌ‰<Gûb#6˙:(≈[õˆ;v9•âv[nÇ:FX;X◊ﬁ∂õÚ€ÌmwRqöxY6Ç‹«Ê≥¶J`¡Í®nYâr‚RÆGb#.DÌKI5¡Ü@£Ÿ€•ûf)m7áãÖ◊¡Pq≤ù©®yeP°˚z∞d`‘PõQÖ¥IòÉØ≤ñ?{SäÃJ4'Óä Å7tÄÚm4’´‹,ÒfKWaÎgÆ°ÂÃﬂÌkÛ≤‘⁄0bÙO/WëQ]vmÏëaZãú∑Ç8≤å¨û∫Í0Z¡‰nâ-í¯ÈËîqƒ“Í§…:U—aÜÎ≈Œ(k QÛb∫v2'GK…ó¸(¶cN∂?ø∏ßÂ.⁄óheﬂ[“˜Ê•ƒ}©$üwØ´⁄>¶{C3ô»g¢\Ñ∫ßLS¸ΩKiÁ65^ªÒ1≠urÖMDÇì•˜GRÃÎ˚˛yªùVÜﬂ?ˇúIEÌäû…€ÿúàIJØ¥éâ:_b&ÆÕıÀƒE¨'√Óª<≈ı…F?r|gBÔ›Ú,Æ óöœÅ&Oj“‹†ØÄ Ô=É´s~ÚÕƒtDzw∞Ã‹„⁄Wu§…µE\ÚLrÅæŒRŒî%u¿Ën¯Œj”pæ∏"»O§È¸MÑ€˝ˆ±˚Ò∑˜º·|Õ‰¢Z¸ˆ	;p¥wÓt¥hÄà∆ÉŸ˘pÒﬁßqpªO#«ØR][Ê™&ï=C—
-ƒØ‘ù-!ì¬ †ÔÓùaq©Q°l¢uﬁ“$ÂáŒ]064uq{CTålW(˚WgﬂÆ0≤”cÁãw ¥}ü~á
-o#ﬁæ«ø…1 9mﬂ”ÿ3qª’€ë˜Ö}'äpQ∑+—d¿˙]}ìÃıˆz%Ω*M/yÂn∆?u¿÷d2⁄¢ﬂÅrìﬂÁQÏ]›’n|s†rxTg9Ω°˚â…ªØùY]ÓÇu¢^ ˜v‹í{E@≠Ø}ı)èS¯4züEx†ÍØõMºÆnx`Pè);§ﬂÒw0˜ªã*»Ö˛ƒÚÖ™]Æé[⁄ fô1∞˛Ä≤±ëL‹ë7üd:;ew/; v›ç·î¬âï¢b¯«48dÜm,3e}Vµ2Ó
-ÆÎö6ñ∑ÉySm|¡t◊˜Ü7€˜Ïﬁ1~$:£;®'ØÈ—RoÉky›qYn«∞Ωdˆµ˛íÃÓÍk ys ‚£z€∞e≠ÊÏÎ%ôcæﬁ!Ü&;wÎçPπçùQp[á™„‡ãnAw≥–cŸıqΩ<$yu§t⁄∞Ç„k†]ﬂú∑ßËÚﬁæoΩ\ê’wÃÒ:ï\¥≠`Kò≥¸ßıÃ`¶vÇÃDıáÙÁÙÀÃÅ∞Æ∏X‹ãu∫ê38µ“&§´∫¸"+\ETm‘«ﬁh‰r'ÆÍ {S6ûÙóA⁄PúAlt≥:O¸{[_ﬂ$c¸ìn◊j;,Ω´>	ª¿?1˛3Á!=‘t<u∂Ÿ™ÎÎ≠ˆÜæ◊£yH-NıWÕf6-wê…‘ˇUo5âä≥t<5¶cÀú·,N2uDõŒ≈|◊ŸZ∫≈ëéÒ, › ’VS=HhsÍnÍ:˙',*¢5TF˚®É–n.Ù55Ç∫Ù°%”Ë≈&Ç§~‰©~@◊~Ëa“\Sﬂƒy*i76ô4·àAà©ÍŸ?i•v”2ˇûál¢˝A≤‚L[mû˘€Òzv÷•ôâ”zÓº>Ù«áMCFh"3B”3”[>Ω∫F<^7∏ù∞äóç˝ÎÍ)ëÕ9{s-t€Œú”‚È h ËE\_õã/	¸k®≥Mqe€0`Ûq5“p3åñŸ,ÆñØOÉ©kﬂ9¬„qÅè<ö’⁄ôﬁoVrƒ_£Ãp]&æ”À√≤å(ªõi™ÏÏéZ∆f;⁄∂≤#o‰¬æÔéPW:ÿÿï>ï-ûzS–Ï˘¿1•‹∆f˘Hçs1råØ0p*&f€Ö)‡8MÚ)ØÅ—(¬@$€H$€H/ƒÿh™Gb£π›D∏yiB)}ÿ‹«Ûô†íÎ*i^|ï0Ã√)ÑÑàäıÃ»≤Ù¿Dr+C◊:ÏÚ€tpÕ“Hfi¬∫ÖØœ¢}"Sc8N˙RúŒsåﬁgY)®vÖGÁˇ$Rdfôe˛ΩŒg±$VÓ…Oÿ^p;˝√û±&¶ø;‹t’∆òﬁe7æOÚ(øÕy◊y<ŸÅ3
-?*<P÷ Ç$¢h´©Iwöòia“4MÍhÃy¸Î,†Q)ÕPõÍ‡∑Ôu%=˚‹2„◊Á˜Ù^Óâ7≠äÂ√kπÊ¢AM5û¿ıßM5f˙YdIrIX-/7ä#õ˘‹°<;‰≥Í{ΩÓ¨6/çÃ ﬁBvP{y∏ã U<TMD‹0Ç?Ä¢M´I˘L/9¬%$ÌgyMèù—ÙlÊjz†B¢äi°ó’ëgYÍQL9ÙÒòZW©K2&ƒöŸ Äu´~ƒ¢–Ø)Õkê‰_cTˆIs˝Qjˇ9†·sÊNW«kñ·‰ôÎ¨cΩGˇ”´ê⁄V–Ã‚ˆM¯ê}ﬁìJíﬂmàjÇ±óﬂ"Z<U≥ΩÜ⁄«Ä[uräoI≈cg<«‚&«.ÑYuQ6u∏Yıf©PÇ·¥’ø•⁄™1˝´*´ehFg)µ∂¢L-	YáIH◊$„≤µ4#mˆŒ~ˆæ·¬Qí∞n–ˆ~ìï;ô«Oπt6›IF00ØSäÇoCgñ]Òu≥MLπîöˆ°∞w3†`üoSe\ÿpÒF[	™Zaé[≤9xab≤§™	•uÖı∏∞*Fh+5˚Âÿj^2ókoWµÌΩ—ûñ~n‹ªÌ{åa2#6¸dço}Åy´4 Œ^5›¨˚œ≥Ø∏Èwıñtr@Æ∞ÄP5≥º0Û—Ï£ílNaJ∆ÑéKòÒˆ#è\PÇ°—Mf#íæÙ`mcÒŸ∂îˆcõG∆V”dL?5ãŒŒ|»À¢S›®õåµjf
-ê5∂PÛMfb≈¶ÆÔmhè∞‹Ø€˜¨îÀÓÖÕÖÛ1˙a †cÏæ}…ôOÜ‹hïyÔT›FÏÑ◊n‹†=◊≤Ò)sdR#ÍF” K'	ÿö8`Kü™`c2]¶óæ
-ÜÛh±Ä•ó~3i´âﬁ∏Q÷gÅG‚Â¡VªQh"Æ≤Ì5~ﬁÃaõ"≠…BÏØ∑»€+Ëkb_nv÷™ΩÛ!aulYóÖYÃÖZfÈUæñ¢:¿ `IØ=≤@•≠Ω#–≥J%Hey¨“]º)–vó@€].¥¡k{Éêf€ô J±∏c†≥∑∞Tû˚ÿÜõ|ˆàªTLF[?ﬁP^ı·`™§CZN?»u-†$6TZ≠Ç´7*ºÆxm?^≤Â¶˘%ﬁı‹…‹Z˛ÍG?8~≠∂Óì8:
-˚≥e`£Ìß?rO¿åF·=Á10ΩÀìV <Ã¢ãµ&¬ÑI_tÊF≥ ò–/Ó. å¿2≈Ìv„ﬂ+dÏ¢5Y¸öxS”∞}ﬂ4Æ‹€NË:pDBÍ/Ì‡©¢nî‘ÿ`YÎ∑ªP‹ç<g˙1¥rµQ7ÓûÏ+F«nW÷»öçTüäÆº>Ùéﬁ•∂ÌcMnW˛v’∫⁄∏zmnÕ"˛æ˝œŒWOøÂE|pÊ m€ ®À]0Hò»M…b6=<~Æ∏œÙi5m¬+ıO∫ﬂIãΩ¨áq+ÆΩ∂4hÌŸgß±’4øµ-˙Ø9ã˛g_OÒû∑,ÚÑ–àô˝™;ä«3v>ı‚àæ]nÌ˚A‡«ﬁÃ“˚ï⁄≥‚™≠ﬂ±ã}c§Î•ï6¬≤π<û*o]<sFê*RiΩú}ÕY`Vz›˚ßnnπØ=*#C—&AbJZßæ¬ÎAµI´§ŸhÈ	Ó”èeül´ãh”∂±w34” ∆Å·œ™N]´”ﬁY∑‡;Qåc˘5€!∏6ÖÖNfŒ–ã·∞7ÕçÔµ(¿ÁÆ ’˙⁄’Üµ©•V%ø©«¨ €’Ñ¿öX5◊§$h°ÿ8&òŸíÆ”YãX°…â˘˘ûyÚ·US,å≈d6≤Õ√d¨–À¢¶◊‰å.*ßû¡´~Fa0´SÎ…®¥Sﬁ38µ¢19vÍ!fº¯DÉ"åe∂˛ò‹=
-›X≠é¨Ä<◊öuù—ç∂úÛ„˘J„∑˚nπ(}=ÈÌxŒùCé`å∞˝˛km~h—«õ#\‰†/cêQmS‘≈ºîÔ§}U‰'äu)Ù°2Ñ∂ò›∑ËKÂŒHq9üéÊcÅï»ÈﬁáÃÍöÙ⁄&Õı3˚‰c⁄4
-∆‚Rv
-gú]£ÄÎ‹å=›ûøJ6ıpüπÇ=Ps´Õ≤VcÍÄ0O˚J˚¢ä o±¥—∫Pìsˇ9$ë44Ö–ç·§ﬂ‘õò¥#õE#ﬂ€ñÜu⁄+6+åUG≥∫#/Å<·MKp R¶j®º≠€ΩAJ∫xKás5∑î5˘^IÀc◊±™etw˙î÷ll‰W‰@Yêˇˇˇ˙È¯•X”“_÷ûUVÂ°}3∂ﬁd1à≤Œ][ôG°Ï$(1Ei™’∞Æáﬁÿâ	”4vnbÔã;∫![y§=-væ_˝Ÿ•);	?ÊÈπÅâ	…?V3õW∆≈@2`#óÑ^e©/È◊:f?!t+OÍá)}Ë÷Ê«mtK‡Œ®¯M=¯Ω;ÑÈ~-º& ƒ¥b´!9‡üˆÛkÍ	ã”f⁄Â“ ~M!©Óy!ﬁëﬂlí†<mo≠@6üíü◊Â$°qïÖ¡¥)RhImÆ7¥L‘òù!éÔ»Æçç≠	
-g`'Ö9ﬁÃì¬X})≤,3Çà4—UVŸ¢bí)&ı´i1¨1˚ZﬂP√rˆåP˜ßP≠v˜ä+eÏÃøÇéﬂä£Y6bÛC¢Ñµˆc|+Ã›"}·,¨vo
-+!(Éaûü@q©¢òhYø™+…+≥TóœÌ“wK9≥ﬁ‡á•OˇÈ'R˘‡∫#I∞„xŒ|0å-!à◊*∆[¢ˇ…“[C%‘wÉóN∞[BóÈ"¡ÖI€˛ƒ„L∏L≥	:LöÕAÖçÇ—yÿƒ‘ΩNK.°Û.πº€ë;u&3œ«›·SI3ä≤L> spr7¬D2ƒ	#o÷0∫|h·)(Ú_\#Çm›Río~›d>‰i⁄ùöÚ˝ı2v¶#ﬂ›ô˚7{–ÅùœU,ö≠3|Kíè!6Ω’\.rä˙œ¶Lf⁄Üñ˙byM«CÀ	cÄ5¢q[ƒ»'g6èH’∞≥ãVû”\maÚó@FìësÚOÁ&ûxK⁄péSÖ‚RÅ.ñ4+êïó∞∏T$À9U<–Áß-ú((T}cóü\–∞àuV?
-∫[˘.	ZÂWøÌu~ÌUﬁΩ¢·Dk≥TkMﬁ»ZÛ≠Ù?u{øQG∫ ;Ígåô~G,ü◊LÆ;ë«"]ÊcAyWÊKB≤®˜ À´nd±]KAêƒ 0á¢ ªÃ£%ú∫8›ÙÜslQ∂Tì'∞¯—áL–;È«Rç˝}Â]™…ÿ:}Jf•=Z™¡èŒÔaÁ3g\y'˝X™ëC«õNÔú ;˛Â¡ßﬁöéàKöB,Ò¶@–[\≈€ûÎÑ√q1+í§dÚ›+îV03SkµMÍîg†gÙé>PYI´ôYÿåÔmäXo:≥FÃ0K9ˆnÎì&!>`ïÌ .bXà+çF√Íd%ú{qù˛€‹µ!EõooRÌì3√„g°Hy∂,ñTÃë;Ò®
-∑Ñˇ£∆ |Û˙&úﬁ÷_2¸ªÑ7Ÿ˛t’†&9˝®JNÔ∫~Lt•_—2ÆYBíﬁ∆Ùöµ¨ròÎ·êà6áÅÔ;3 DÃ8pÒö˙(
-∫µfˆWd]`æl+◊áΩ¯[Àmø^\ j>àÅ:√vNƒ*,3&x|ﬂ¿úélâÉ€)&ˆ	H3ÚBò1ˆ27 §(≤πlççïÀ%4%Ñlƒóãø≠≠≠∑66lÀîÙêáƒáaâ·ÿﬁÇØ˘°Aö°·}]¿Ö∫úÎB˛ˆZÛ©rÜ8OòP”u6‹◊óÖ›„0›—v^∏˚ò≈p.∂÷6ºÈ√z£≠ÂÖm‡'Eíqp}Ìª,¯°„[É°ÿ«ùâü∑´Ò8'ƒﬁrÆF+ö@—Ï‘n*C|moŒÅ8ÚÁû;òGˆÕ≥˜øt˜R}„w\qsjˇæ◊0»ƒ˘ä¥•’f˛Ô<H„ªgç'ïsæ◊xÈmo≤Ò‰‹$Òà!¶9È9⁄å!:Ω‹Çéˆ
-Í‚Âﬂn§¿ÄÆõEL3}zôΩÕA‚À"in,x˝x¨DS}¸i≥}«Â@≥∑L5®|øaÙh†¿wƒ-∏pŒôπÎ)˚S·„ ª_Êﬂ?Î>rgÓU™ã{ŒA∞Æ>ïÍÈ)q∫…x˚«D:ˇB1õÀ1õÓ`œ«hÍ˘~H‰Ü›˛øj}2÷õ6ƒnÖ]CYﬂgŒ∞ﬁ®
-øh:DövZ¯â¸{R≈ÁÊ/íI(√Ù„äÃß◊‰Á÷|˜Ö˘√ßÿÒ|…=ÓªHÁè„oˇhî©î;o™f	jUû≈~WÛN)2”)î¸rÚ;≈ôX‡‰ç›†ˆ6∆GÂ9åº/0ò˙·_ä-goHjÜ1Ÿ&≈GØ∆‚ªËè‚uµõŸMºÏ€ÒásüKDÙB™ó„MÊTe—ù¯wÉﬁÓMÎ®„u›-±˚U≠Ω)lZå¶‘(ÄSÚ⁄ÂOÂã)`Iáá¡m˘ΩËÉ¨ê˛‚çzÒw:ÈrÎ+Z™R„˝J¸éıÛ
-‹9ë7≠‘ﬁò≥0©Éú„frëﬁh«wË‚õ8RiõQ¶œò˜ÿ≈+â∂…à¢xw$Ç◊‡6ÆºÈH‰°åCn”QnKÙ(ûa¢øÜßºÛF%ˆ√˜¶7Ó®7sÈïôÚ†r·ΩR¥a˝Ω¥:∑⁄—C&ÕûvÓ‡®—e(q5ª=9`“&„˘–≠V£˘dÖÑÖW|ÿí9æÒ“‘ﬁòå∏ÉOÿ°.y•{Q'é°÷v%≥”¿+{Ã`P™~ˇ$Ã/g=Ωg=ÚÅ¬>5K4µX°≈
-a,Ç£ú∏»´@¶í…ﬂJpQ]Ü‘pçÉπ?¬Po©gÌú√ˆ»‡ w2àæ—÷œ-ÒË.≈N</∆€^¥;"á [ÒT%ÿ¬∆ËyÓIv_∏™éÄ'–)◊$Ô‘Y2PvÔËÆ®1v"Ω©Ïñﬁ˙Å‚Ì†ÉﬁπﬁE¬-.‰∆9 7„aóÙ¢‹#gv!^]Bg÷WÿkÓR)w¨⁄>ocsÜ˜ÙCCœí›)Úöê#…≤±°´f◊}‹ëõnó}îE|Ø˛ÑÉ<˘;iSƒ–îsÓä∞l·ñ∂∫ﬁ,ƒíºVX¿≠aÜSy…"Ω≠›‚ìœé?ìÀ>o„Q1´´À…úòxe\ôÿg9á&ˆ)Î÷‘~∑&>·‹$@°Ë∞è‰d…ò…ãH¬veÀı)b¨x‚c.ë?Ë†∏ø˜qˇå¥∂¯Õ◊§svﬁ#ùû≈U_©ˇP7%>âR W™µ01ÜdÇiêÓ˜y¸LZã2ãô;k/&ÁÅ\iJÅgÏ:]cíÑW%è<ÏrˆˇqtXÂRjπB©∂09Èıè8 îLéÊ∆˘ÑåOÁ≥)ubŸG⁄ oJC9ÃnI¶X`qΩÎ ∑B@Ê˛±◊‚ıF3çà„è^6u?k˛1#^´_Î_g‡!ü˚nÛêÍˆ◊®
-≈OÏ≈>,ƒÅÔ›‡fÁ7d‚˙4†È!ª<˚OcH…ΩÇŒùPÎ∆cMΩ©W∂ﬂrçü∑˚wÆˆoYS¨k“0Ó‚h•^Y‰]êah+7£æ˛©!œS≤eÛ uS‰ø-“,á®¯úı>•qâ˘Bï◊z¢1ÉíTæË¡TÚN£vtE·ñz9ÀÈ˛Qßw~–9^¢ñÅêGLóÊÚπäﬂ‚â&·º ,è?ÓûwŒñúÁw—î§>XAíu17ügÙ=I2kSı«I‘L”qIjÔizl~∂Q<©[B˚øŸ¬<t9r/3RÛ)I:å`óÓé]ì_Úê‹kåN9n†<(?„V®ÃûkU&oó“?Ü=%¨´îÕ+'	ô˛’A¶Çë‚D …	È¥ª;miç’u Àg—·ª	-ˆ´G"˚)ÊÊÙÎKÏ˚¸ØˇÁˇ˛ˇà›2,kyñuYn•Ù^≠UÌ‚ŒÎÑc~®Ó„Ÿ¯ãøµöÉ◊õ-tÇö%}0055ﬂÌ≈®‹®VºQΩªW©-≈e"O¿[Õ1$ÙÅ˜>Ïü=~Böû†/v@Ù¢≥¨cûÊoÓ’:|`âÎœ¥∆<p0PXT$—›¡`ä.≈’¸ ÌM≠–ê¨ÕØ‘&Y˙z≤#ÒD@£˝NÄíÁeëtV^ÿﬁ"â»Aˆ:«ÃEı@`â(>áÔ¶¸ SÕee˙[·_2Lﬁ¬H ≥˘ä	âÒ}∂,‘-"äˇ‹I7ò˙◊$'èÒfFü(ﬁ$¶ñ$0ﬁ¢Rû[•ºÍ√9‘ÔÑ‘3•‡[æû:~ôèp"Jqiz?<çg˚˚«›„è4’·AïÅÿ_YÅΩï´OP]ˇï◊Ëß¥fΩ¿”1ªÂÈ|j‘ê4≤%∑™ºdÿïtŒ¶˝Ÿ†ŒîÿÚº'„g0ÑO¡s∏k»·&Ífí‡7åÌ{≥ªlx ü€∑Ê|©ˆ›¬¯>≠8ÎsfpM˚ìòxìU7xÖÈDMxö5Ó“«≤i∑•\oÒG6ÏÆíœBLÌ∫#oÜÜ¡Lsˆm¨ªÌø¨ªJ7<—_ÔoOJ≤‡y˜:Îû±A¸∞!ã!À[}>C®ai®á≤Nöº—
-)ô·PˇåºìÈç∂eßÕm…i∂Pì8mñÌ$ˇﬁù‘Äiºc(+À$Fv!º§4CI0´Q[ÓE⁄Jƒb-∂x≈i#E	n°ã‰]¿nU¨ofÆÖ)µ•Ò™ñPµ”Ôˇ∫€È}™ºKæ]]–‰«Œ/› ;¸˚»Ü>ù˜;«+ÔÿøèlÏ√˛~Â¸yd3;›ŒØÚKß◊©ºKø?≤—ì”˝≥NØK£°ﬂI?;÷˝√ŒÒ/8PˆÂëÕ°_Î¡˛n∆ò|}dìß˚ rÑÉ_Ú}ŸFÔºê‡xÖ0Ñ9 ¡7‹}¯G⁄=¯%/;æ‰À_”©Æyêóô Åâﬂ´°t<‹mΩæ8\ˇNbÍìÚYÀ-_IîûwÌ{∂Ï˜—´–∂œ≠\yZ≈aÈ‡…”ÓßŒ9Ïtèü@	ÒHëêµJ≤:Kéø±)¯!ìgôD∏˚±—\mï6ˇ˘z}›$yû=‹L"ﬂb[Y&KPûP⁄]«˛+Údπ˚Ÿ˝•uÆU¿P≥≤º∞ç'KäJ|ˇs
-ﬂ,I˚ÈÙ‰™—‰/lPà‰µìÅlU˝ÛbÂé‹·9à˙/§`,˜8M>O˜G0Ÿ¨oë√ìèäŸÊ?∫ù‘tsz÷›ÈÏu…*∑-<‘äS:ïüÁ∑6ﬂÃÊ·ÃˇÀsÈ/=nÒ¬Ëv¿åAN˚ÊêÛ$¸à©tbT)Òó∑«1≠å(tñ$cöO”S ˆ#n}ˇµ5ÖŸ$8õ*·YñØeQÚ®üâ
-;ŒË⁄≈‘P$ifùmòi+$b«gyô∂’U+i˛Ü|Œ7OR.…áÈ˙ZE∑IÀ∑∂ñ≈·KI{ŸkŒ˜G^ /Ÿ˚ñïÚî$#Ø»˛⁄1Á)Â†?^Jóma¯|—*$NIÌåÀ«Clbâ¿á3O/Ü{bÉm|iâÂ§©Gm=3ˆ≤ä≥õ_6≥
-~Ã˚ü5≠n<tˇì⁄OªˇÏ‚·Á ı™„ÁÅí·É%s€4a…µ…´€”wYnq.RºÕÔê"‰¿Ôó«ñW≈ŒmÂÚ≠¢˚‰4¸|[oΩƒ+_*◊0
-–ΩháÓ‰≤|%ñ
-=Õ&¸¬…†æ^à⁄ﬂ~˙å9¯¨ÉO	Px;^W®êQ¥I.∏ã&Ö£‹q˝˘ÑtFétπS†ıùÈNΩÇè◊l∏–æï^©»º¶4Ãmv˜b≤Íebõ?Œßﬁu?0≈§≤ãW€ßs´$⁄¡…‹wÚ'GPS8ƒ˙–ûÔ«6
-VcñÓπG8ÔtZ6T¡4∏¶Z
-ùO≤Øå0f>≈˙ëb≤ƒ]}”∏	®ü:Î<ËÙ:«§◊9‹;!{]“g˙'°H≤]u≠u%Á®ìèÌZbV©	Ø©à!˘“vMgi>n‡∆∑Æ;e7Ù¢¸T¿“ΩÕ=º⁄¡Â°•ßQ±ıZÏ‹cpÊ·›h mœÒGy§œÏß\©A™Ù* ûˆ…™îi»û0ˇ¨ó:ÁŸg8”Õ∆FÓt:7s<´Äó®√¸cE≤P;*ƒŸCòäs{«≥%Aï19◊‰k≥
-¯÷ë˝Còö«ÛÌ;ÁPÁ‚Îb@£‡îÇWŒ"3âYô†«å&f ñ<æzOX⁄ÿ-ûînëÀ5ÿıJR“-=◊+AÉß©)®ºåÆwR&ÆØæ9sM—aı%Áé⁄—$ﬂ°€ŒÊbÎ%ú•ôuÊê⁄õÿ]Òß∆4^E≠bæ±\Fò◊èﬂ ﬁP±≈≥O•ÇOÑ≥EÓØ0ùGº;Q?|ó/§ãC›õO0[•öù9bÄMìG"?0&Œ„hÌ†ùø9'€|◊5˚Pò`ﬂqa™ˆSéi¨¶a\áﬁà‡ºì:bwƒß?◊Ë)∞s°˜˙b“4ıÏ>ı‚Ò,ı9¨;éÜ¶ΩÖ≤ç63∞íÔ.á°ÿIrrLÈQ¶Êê!¥ç»’i†≠z∂q⁄˘*õ•I¸í¢Öìê1SK∑ıMêQ6ìï§Wí[Oqë∞btâ∆°7Ω©óQ™ﬁ3ÿ†÷õF4DLã⁄\!mÌ6Å"ùB)â6ü[JJç7ä≈ù◊I4vÂù<ç∞,%:1∞.õ6Œ• Åñ%≠L¿R≠|1lfWAu∫ós√:kàù/;«ÀËÅP<Âe◊ΩÚÆsÎ¯Y¢¬˚›°Î}qG%:/\ ‚%ÙvÀ0el[Dﬂ÷LS⁄Q‹¡©:5‡…zùC€»dåì‘rÔ%±Ê<à•‘‡-á€(EYæ≠HÖ∑\Sô{;„ﬁB;<>O≈ä3ﬂã´R©]4/K¯ÿî`ÁÚ¿¨f˚Û9ê=~Ö°¢‡ä(wŒQfÑ_YTö…–¸5JÛ7J–|!ê€YïÂErﬁ›@ÌSÕ–Õß§¿^LÑñ%?Õ¨(†ŒæQ’ﬁ˘Q˜C)9ùJÍπdœÑx_?Ö®NÄÙ]≈N(…‰í†>sq√$ùÒ»õπ◊¯%äù+‘G¿6áTyó®"cqá˙i?O˜ñãpy^∆W[éÕWYÎª9øLÓr›/˚a◊P-Ω•è´ÇK˙8A¶‰…CÄŸÍL„öwr®z—@ÅË"˘ÓU‚ úæÔÃD3¬Ô¥{µ¡Ó¥Àµÿo KÀÑ
-¢2bÜd˜≤y|K*‹à™ë,Ê¶27¨µ]^[‚ˆ«¸fj8Ì?∂•Sw¬bı¥ª[‚˙º¸÷§{¡WIzùn?ò’Á≥«5Nd~ˆ8 Hr|l¯I€ï.ë.√è\•˘%/Ä-n7πäPe]J‹ÇX`ÃΩÅOå≠‹=|≈ÈDÕ∏ê*-ê(u5ªb»˝:sßëªKØã⁄&◊núp€˚“+÷l—ÂV•Ób+ru	^_Âçïâv	†êµL,√‹èTP0ßÍ29Ç—Q>“#5È€Ó÷ï*2û_G*<xü◊ó+≈aÂ¨¸•ÙB≠z![ã⁄}?ö~(•jõ	U3zöµË™†∂Dˆ:∂%\0R4E≠%5E…ºÀßP6kˆâo≤+m“·.QzTOpÑ4ﬂÕ¨1úf≠ô£9⁄M‹Ÿ!ñ|Mó9RrΩo8«RâzÀªÅÍ™ Ü}ßÄVÖø„3˚.5;·ıç‹ãMÄ
-r]IîP“âY!1ÚW›ÈU¿ûj•“OÜ¶_í∫)IŸaGQÓtƒIü˘Çî◊…ü•≤4=±/À†‰i∑§Ú$—üÎ/åê,ï¨->c4≈Ÿå4óÀ∏¥ú3⁄sû‰’pˇ9õÂÀø.sY"˚xÚ•¢Ôí[îSøEQ„Ω ¡Õ‚sIlm¡qâ¢Ω$<(ÖY*˘≥!∫ÇYYKTxôY·uh˙EfÁ-úoT≈{™ñ}=Tpf™≠S≤⁄M ï^'ﬁx∞¥Âì⁄ï˜–~XB;MÀ«_ΩóE∆EÌ˚"◊"©?bk>‡Êx&ÃæÉ‚uëoÑıÖ·,˙ùù√}ºlÛ¨{º€ÌìÛŒÒGB≥Óì*ÕˇCìÙ‘ ;™«Éª⁄lËNXﬁ^ÒºÑ&À|≠{ÅG0 ™$˛ Ö8+Áx≤èúXßóúπ7Ó›ËR«¬S™ITºûû“•0’ﬂrÈHøw"gª‹ï7±)PÕπôLÑkT’…Öﬁ¿y‰¥ªÀπ∆ V–â<úÒ38>KÔR>`9À«‹º˙|È≤6xÍõŸùQ){-äEhLπkèC…√µy∂ãÀÖı¨K>Kˆs∏ºmCÿ4ö©«ÎEk-ﬂæQl›–myÓ}èπÿÌIå¶äƒˇq-ùÜ¡ù{Û∏6‡ëÉá˘q≠∞XÊGÕá‹÷◊7+ÔR#…ÅÏƒ|\∆0P“‹À|‚;cR=õï0b<WÏe9¨F®cßê±89<T°]„±Vçˇ  ˇˇÏ}[oIñﬁ_â)hU€,ﬁD©•â)JM%íÀ¢f∂!Ríïde≥n[Y’áC¿~∞√Ø◊k¿¿bç¡ ~ª_¸{˙x~Ç„ƒ%3"3.'≤™$™õ˘ ±™2#„zÓÁ;Ú∫NlÙP8yQ%¢Ïç0Ô»8>ÛÑr A	}¿Ôüx†Ÿ júC¥$¢á∏ú&S"{]5ﬂõ—ï_XÇê5fá’ò”–bNgA…ò—ˇR%lCîF]„∏ß8j hJ∞VΩúyÒ
-◊¢y‰™®n˘´VÅ§(gBØ#¨a7§≈!Ã€LVÉ 6ªÃ†§rl‚èŒ^7ùó†Ù‹«&‰Û>Ù¬|ALÇôP	¬@ÊdÇ’√W6¡Ã[¿ÅON`€NxÇ/àM0:A–F–
-∑ÊÏG‰ê¯¨†g‚ó£–M¿oQ‡	—	÷4tG¸Çﬁû$ùËí@ûÍô—F5‚(wˆ9fÓΩÆÑ9èŸßÌx¯Êì…˘pËA"∑ôE¨Ü¯µ’}X\›2™’<¨®¸‚¶4õ%ï/ukÊ•6…Æä…%Ï÷,• /@Õ«2∂™2ùìM÷˛lP)Ùw˜>u<Œïô¸'ÎπˇDE≈HùU/ñÄ†wæ„Sü’óíÖgŸF∫/B˙Í,ü0KŸè∆W—«hp€‹*“˘ª¢ï:'IèÙ¢Ôª»˚8çÆ¢1°'¥Àú*™ßòÛ;·D\E∑ò™e„ôœ∫ûmßƒ	∏S$Vê‡4∫myî~ë€Ü(r% ùp`·,6cõÖd∏Èo©¨U&_öö©±≤8’
-æ1∫TL¸Eîùiå∞Àı¢fHX‘´Á 0«&íÄy3“0$0E`·ÙúπXÙàôå'Ã`,ñsíGc#DÂn“Ñè2nXÀ•$ıíQå‚tâ˚¨√®y±ÂT 6|ïp™ÂíÕ∆;´„V õÇ«X<∑á”…›ƒPk¢É’ÇüqKΩ∫Óº∫w^]|+ôW(09ä˚L‹ôáO7Kıäœc∏Ûˇ¸ƒC#ıq[Z∏Ûﬂyà›ùˇızà´F∏Û/Œw‡EA·˚qó@?è<® cÛŒ;Æ4vÁøÛé√uÁøÛé≥ÎŒ;n˘qÓﬁÒ«ü◊;û◊rîN	3uÀ]‰~EÔv˙«ø˚¸˛Ò≤wÃÏk|!Wπ‘¸‰%q≠öÈ?¨_ßóıu·’•{t35xŸ_|«¬™È*ﬁÛ'[ÉÑÆi|4éS–ƒÛF†G˛®p∂KkÚâ2Êd@E√Ê™º≤A?”S‘G óç¡π˛GV QƒdT*Ü§?ÆΩL;Pò·tyz}MÜ£Ë,ô\µ»ÍI°Æ˝k˘ÒrS\¥àOÄˆÃZˆÃZ˘S|Å0∆s∞ìﬁEo∞¡kÄtZ˘7ÓFD ¯¥+Mt©öø˙S˜…<›§”âKòπD∆›åÒr:ééË4G∆
-˚§∏çäk8j>ÇæéÄZQ*Yãë⁄
-:põütÔóÅz{Rˆ'õ7ï3ËLª‰UD7&ÑƒSFG«¶{ﬂz´ÃkHÀ◊˜˝<Í•f≠&¡“©Î≤˘3Óë´çí\ï è§j§&/«u≥‡hÕ.◊F…jñ‰€ıä´§lSØ1GT◊º ¡Ä≥né‰∞!œ%Ω§K¿Ÿ·# ≤Ì¡"6(wJdk@E∞)€<t5#xp3SÉ;/ÀÇã◊(ÎFΩ_w¿‹ª‘Ø¬f¥¡Ñpƒ∏	›ùW‰)ƒ…ù®∫5øûﬂü∆?≈ÉùË*›∫¢SX¶É›Õﬁ∫|!>5Hì|Áh`¬“1DE‘Ì®'È$OZ˙'√Ωˆ°(äŸêé˜Êx_≤6Deëüò*œﬂXFRb¸“p^Ë1PQÜÒ\/BY‰n€z˚»Á∑Ã¶áYœ≥EÉñ√è|»ﬂíı˙œ√U˘%´◊P∂éx3@iÔu∂i]Ä≠fiéƒŒ,Ÿ¸œïv∫ï=óE≠ﬁÇv7/€”∫·b˙fßÁPmç/r3#Ìr»¥Yı£∞¯‰9ïS(iª…=ª’÷Ä)ÃäQ/¶:’ÜX¸ö=æÎuaqŒÃªbãÒ≥Wb2∫ø™’ô˙éÏB¨‚I<é.ªâùÿ†Á2≠|1í~ûåSJàµG2˝íJ¶?ƒ—∏ﬁX"ŸóØÈdv·õµπQmŸâ;äÌ§ÿ
-	-,é˛ã≤BwÙ˚W@øŸB›6"æ=ÌEÉ€I√Y◊»v<˛LiÛ!·∂Ë>[<˛}2ö@≠æâ'•–>≥‡o¨•∏Z⁄ªò\M:IF1ŸOS≤•∆π1/*J—±ë∫~kY≈kí@-?Y`≥∂Dz—i‹ÉÚ~¢ìZ1∫∫∞¢6Ëç‡¡ß˜ÈÈÌIt~^#76F!ﬁw¯Ê‰˝ˆ÷¡˛˚ùΩ„œO¸Ø=Qﬁò•8ºô@‘xË˝o‹;0ø§9T— o=˚ä|Cˆ†N˚áàÎºı˝8•Kﬁ,è«~=ùÄMöæ⁄⁄ËªlπÕûÔsjp‚÷ª&W#∞£±¶Ï¸√‡}fÃÌ%ùù⁄Ç ŒÌ:•—‡ a}÷9ˇ}%y≈˚›5‡úÄû±÷e∆éE∑ùfj7œ’ÍZÂπKno§óÁuç8‹Ö:÷∑òY6\—Á&dÏOiF“¡ÙB‚c≥≠Ô≈ïı¶õd’b
-‘ó◊nŒëß=orª_ÕA¸nÎ?ö#m G⁄¯:8“÷$öJ∂ƒ#∫…>ãaú7_¬&…It$Ê±çVû¨GUÁ™ﬂs¶HÌ05ïOéu≥±>Y{úFS{¢ßø©j?Ã"s¶§◊ÿ©l1 Aç–Z&\ÀÀÀJ/Ï $kòk•zÜïÎGéÜüdEÏ>QÖr'—ó4W»˝ ö˝õë!-[Î|x6M
-2à•Ç.qÎè∆.ÿó¢€x8®:wªè≥µ‹~0B|Ù·û4u^\>TøÛ"ƒc⁄“ÀÑjÔgI‘;⁄yÈı\ ú÷"æÍ¢X ªÌÁYßõ´íL †ß∏≈<ÒÕ«™πAwÜΩa‘ëat¡≤BæÛCu,ÓO¶ÛcXUßãTˇ*èI0ƒa»èô‰˜d•w!~ÅXç<]ñàöO¢*fP¯ÜUﬁ∆°“Ò∞“—Ô∞êé∏êé˚|œ?‘—c#w@ÂË÷-ôÄS•võ∏vçœ∫ıZÕÎO]©3’⁄˚sëaº_3Bœ/îeâ@§JxD{nµ¸X¸)ôTyù7Ê=Ú - fµr@åç{Ã=PN%?{ªTπ°o,„èî	˚æ…YBi÷d—òl®LW)ËÿNF` 0GÊpGÑ#-	z'‹ÂíûcE(YIY≠0Q?"C¬TÍIX‘‘
-°õ“D5˘Â4ÿ*Z∫L 6ÚªÃKz∏eÁ»»™K≥£ß∫3:=ù”#t`ú Å¶#H‹˚∞∑”"˜<MÿÌCæâµ⁄ˆ¨o‰êsùq%©Æò}gÙv8g˚hÔyÀ◊˚9œñ”âT–Î]XÙlé•	œ ]©¨Ñçu¥œ»ábçÛ¶c≥e™È~êMÁ€ù÷¥¨èÊ€Ãs«o‰ÈqçRT¢V)≤èUlW◊≈Y5ì9*
-kÆK˙≠9Æí˝Rˆ˙ÈêS•“ÄW¯H<à˙£§éêîu˚tz9I»ä#çB÷ÂR°˝Ç√Q•QØ3TGIÂ*sñÖ’YhSë|—¡øY3N7J&∏àl+°ÃdkoQÎ‡“âŸ}NÃ÷’yvúÚÂwçœ
-Upóê«BK7â$´L{£ÕÇ:Û‹ä#_Ω;´Ú2È≈'¥oR-|‡»Æ*1!|¶˝ØóU€T˚È.
-‚Ú ˜Ç;Ç(\O“ûƒjLéá‹∫ì„Aßï_ñ†{6ﬂ >‹2Û˜‰ñJA>,≈kg X∑£åÏ^{‰àqD©Öyö@ıiO˚Ã®¨îí—q'%…y^qéåò˘abDeÙ3gõhÊÒÌ‹f¢lÅm˛‹≤⁄ï˚IÌ:èu˙ù Ñ±-„Rx;"†ëµJô,ô∑◊∞~‰L…/&v˘≈)\çZÎà<éáœ1ı'Òx]F	©gÏ§±ò@`"îRÎ¸+†’V˝
-ÁøMß<ì5±˝;ÛéHˇ‹*≠ñ*?Ä(]Äµ±*Wù‘E˜ïM_pÀÙFF¿Û;)ΩˆN©z≤GŸ\'.Y•ïÊÉçG#õRPljLÖ~®YFYR°‚Ó	óg‘f¢”tÿõRÓ·=åÅ–ÈnÆ≠¨£…V¯ä}QXr…Ö7Ï\ÿÂ^‰ŒEh”∂yFt'«\≠{Z{⁄LGñ⁄Z"óÍmâDF±∑≥ººlkH¯(G—Œ∂ìL¶F—â`jp4ıöè©‡ +B/¡âi“HâÄ≥c˜	fuj˝©tpWsV=–∂#ù@¥∆Ö‚uıïìÚy¯“I¯Œœ∂\3……VTZ	ÿËÜ\ΩŒ‡ÀX@‰»ÉBßAŒéT»Yˆ¡io13óëœ›U.¨∂¬ﬁìZıÕóÈxø⁄›óÉt∫µ–¬a^µµ∂©|lÊ5}˚8Å6‰_Å|˝òÄ€|ukõ á¿f∂.á}∫Rxú¡AÏ
-¿bæl˙$5f"¸J˚^R1?≠möælx8Hß}÷∑ùh4•RlÒõ–IËP©%I'c>‡-⁄?r2•⁄ù€OÅØx% D_€∏wåŸc_r/Í6 è6©¸†∆√sÊê¢¸™"x¿ùo±fI∞lë8éœË·O˝ê••àË•¢œ⁄k|ázˆÅ∏¯`ùÁÍ¨∫ø‹»ˇ≥√;œ‹yvhgg{œ•´jñf∞»ŒÆ6ÚBΩxTÁ˘c:#ù•iÃÈÏ¬ÒÒÄ œŸNO– ∆a‡≈èJ&f<$ô◊î≤–å «’éøõ‡n\a{Å∞º8«BSò“Ò∆i¥œÑp<∫±1ÿBÜZTÉ6vÄì‹Nâ)Çiå¡3ûiÒÊéc<'»⁄œå_<˚∏∞∏≈&2ÁôãÍ(∆æaπÍÏµ`<@é>∆Ÿæà.%cÊ„a° ˚„Ñ)ºdo‡,PË]ñY—≠íøº¸Ó 6>Ä\tÔ1˜P<Çì}ó8m˛fkIπªjÆ=‘∞W≥T{dT◊ «ˇ∫ñMQpKπ¸˚ÓÚ=v•ãJÅ1•Ã”¡·'p∏„ÏiFAâ™”>ŸÍDπ˛£F…ÿDæ‡-ñÀ¬πÈ˚Âî`ƒNé€ÅfYÌgÖÇ{,hkôdB®~Y¸óÚ®2ﬂ∆Ñ≈ñ. à´tv|fãóÙH Éø3#E9Ÿ…êñÎÿÖ2éõáDÉkÜOÉHo\1N8Õ©ÿ¶êO*Öx¨)2W:á ÷*,f√πg68°.fzÅBh
-çµ”%YÓœ‚ílH§ù!hN±b£QøS‘¸tµ%Fo›dª∂c¬î≈ Îj
-—≥∆Üœ™˙V!≠bÿ[µ†7/éUMfWÆ´’:´˚./9Ô]áﬂ]'”	•‰"Ñ;h{∏ÃÃ˙WÛÃƒ€ÍtàR‹ >ô>n∆N.Ù9,ôÒÖ…*ﬂc∆¡ï±Ä‡Œ≠Ô†ïô¶ßúµ∂éù≤˘$…ô^gù!òÄ5\“‰:)6Ù…*ùâÚ4U\U≠◊Yú.¥ASb"ˆe’^ú≈˘¸¢yµƒBˆgÔ¢≈?Ω}¸ßèÔ»ß^ˆ˘|Óä':≠.ª•˚.w´∏Œîƒ¢GÀ€+ìø‡|CΩ|J†ÅFÌÈi∂!TË**$ ìÂ-\dÖK–\zÔ2..œ—)ﬁ˙“$\aâÜî•uT¸æ3g)≥1∏ìñD•pE≠⁄é∆S´ˆlKí¡FíÜbeL √—˘=àD#:*}KÄ1¶])¬∏u4¬Hù©‘Øä$ã_∆L :«Ã:¿H¡€·Ú∆˜;Q ΩÒ˝ñ£Îï#e⁄≤ÜÏNøëy`ﬁŸœÈŸxÿÎQ‚2†≤∑eâ”…UèÒﬂ?ƒßó…‰P¥⁄fè“ΩA∂√ÈY∑fñ~qÊ ∂x⁄“ EU\ˆ‡€UEÆ{I©˙=yık¿l9üñX{'ê‹ ÏƒƒS©ˇÅ)‚…LSÏD§ „ﬂªñù[ûH¿:÷=@§ªP”åU57SäQ“Ö\πÕ™
-V\íh%YÓXãX\á÷øÏáoNj≥Ì|ë¡:^⁄ô¡˚sm?s&ﬁTu/d!≠¡¨ÁA2!imUÅ¬x»jπöÕ +èñe≠´≤ªû#z<ò¶ãdÿ~ô‰‰pH8—∫Ï9 noîDXv˙\¨)¯Ñ g˚Y û„.ß‘ÉUØÆq¸”dªqGE¸ov‰Y†áÛâ h3∏DﬁUD(sQG∏‹}3Ê¨m@¬CN/·x^q{Ω=∂XçÌªØ ì…3t
-'$7∏Û¿bÄXon®r¯V-πî7ñ3óc9À<∫(‡◊Fpd¨‹\(éÔ‘˘”x‡Bú85€«!yÌ«ì‰2À˛!u±á›ñ“'“å„⁄nW»Œ£"¿ƒ∆î≤ ‹–ÖºÜmò<-úy{Ó8\ΩxB∑	–ä†*”ß≥^ûîet"¸IiBåB7‘ûˆOıÜRˆ`k¸÷væ‘y†=è«œŸd–)Yû_Ò/RG~%Á§.ü^NgΩ)=/ıÀ‡†m•›Z"q∑\F)πåœí^≠—,)L9ÉRóÌÔOé∑⁄/_◊‹=%•Ÿ™øÿq∞w=9:Ò>˝ç∂p˛^ì“J◊^FIJÂí◊V8äHùÖ‹7ºow3ö˜(—R◊Çü_:«ßTô∞Ø ¸Zm˙U$˚Nº{‡*;Øè∆ÒO<Ë’7 ˜·f7`)!íÏ¥‡/ﬂÕÚÙ∑‘…Ú=§ü˜ñæ]|Ágº•œ∞˚¡õÜÛH[Å.‡≤¨ﬁjY∆Œ%¢∏‚˛nJUm“û^\P!Ä6õíÁ›dd …/£5(œ5Êπ«˝â'fı∫nf«Œ•}Fﬁ÷J<π∂ı1L|ôL°f!|€û(£éÑáæŸNË£Ñ%ı†h|'ìyÏz‡j—W´ŸbÙ¡,Îãu Î’nˆ~5´ã~‹Á‰ÓŒ¢nX7„è‹6Iz	Ìø·«Ë“Ÿ£èÉO≥•ÛÜ√˚4¸b!Ûyªæx]úUá_h¥yÕ,çôM")46ÉTWI2…Á<D@ÅÎ3	)pÕEPQ™&¨»Aá, ´gZ‡Úèœ º(C™*¿(MT]ˇDTf‡B
-4pÂBM~û0œUío‡öI∆Å´¢úóG÷a∑¯É√Ñ5OÔ‰ÇP…≤ÌÌ~If#_7ƒ‰q+π1≥RÃkvsD√≠¢˘=O)e∆óùïæ7∏∞Z·Ú&La¥œió=Î·Wd‡zOÜùX1˘Ã`ﬂrb@¿U4 ç¢´~<ò–>táé:ÅÊ`ÕÏW3S±O©S;[≤(Ûja>Õ•†˝ÚÙ3¥≠ŸÈ´–1ûoµwkõ'”¿≠Å*—Å…$∂Mf÷=ß”πe˛ñ‹ (ø,  $¢7êSQóu
-Ì;x‰!óX÷ü*ò›vb°
-7¯Í8w$b$B›'õ á
-Ñ"˙xo{kgOmè≥höÊ*pw B!:!°SÃÒµÎ˚›i:Mµ¸,Ã“p≥l.!7¨}Åxù{M»Ã‡QŸßı<ÀNÕZ)Ñ.< #÷ï#‰Sûÿ÷≠*ÙQ∂ˇ»K!≠I0ûbñ≥Ú◊?ˇÛˇíKÜ’[!˚Ω$–ˇ•ÙÂßèºVåh@`]ìpiHÉ‹e8Ä±è‰ÿ;lÁfæ∆ìe…i^Gó˝ÈòN«ˆËrôlO;	iGÙÆtÿΩ¥ƒ9b∫π∆¡än∆6‡
-`ºyŸˇ0ˆó'∂¡o≤òÅï»Éµ>fíSèU®èé„(Öòle?∂BÇl‹4.ıê›`*[æf)´ƒ<Æ<^∫„£/ÀÈ…(ÈFóK‰»à ÔLÈ&ÜÁ¬Ç¬"%‹¯tE’Ω1¯ÿ)Ã√∑≠Y∞rºVP]œdò–_˘úmÁä“Ü‰åp9O‚^«ÂÜ)« ”*}©í÷≈9±:L¸ﬁC"2w30¿ïR©B•2ëŒ›¨ØÇ:¡û´¬2ïbI3ËpIN»<WbÂ=∂/Î√hpï¢bˇU‚C5¡ˆ&tΩˇzÎ‡Õ÷´˜Ôk8{7wûÙ£¡4Í1Óˆ É˙£IΩ¿j˘‰ÚÌﬁrN–;ô∑åu*8"ÔÙ…m©›æAıÌd¿t5†£•`¡Ÿ› ÊË`¶k†û´1S|P \®òO/ÓèÆi’6õMQ¿ª@H≥â—‹‡∫ÊNâA‹;d˜‘4˙0¬M¨vä9ÉÈﬂÓ.¸Ìó
-i‡Fˇkê„qY®ıãYT Ê∑Ñìùﬁæfáên\| +ø«•¿¬e4È0
-XR∞›úôΩÆ"€˚‚åèp[⁄—89ç@∑I¢QD~ÄØvÜ-ÙÃ◊#ƒ≤B3Ï”Ûw	ùî}D1ƒJ,qéLœŸ¯»¶|ƒGà‰çUπ£áÌÁªèƒp… >‹Â
-‹≈⁄˝∑|M<…5˝|”Õ9˘gtœ6Á¿8Á¿:±Ãœ>14ÑÖÚ…‰†8ä0)TıV;4p≥#ñì·ÃG¶+„∏ÒóÛj¬É!Y¨©ÔÌªÃe´+6ój¿D7ù–åßUë}G0¢óÒ´ºG)» )˚j·ú)wk8¯C7é{
-ö∆Fúú ‡HPCøæ.W€€àÏ8ãYÎÃ∆ˆéº˝¶’j~dŸÚM˙8Ùmîö<jÊ]+à7™ﬁûP>·æ}Ye2VÕ(x˝òPQ”å“/zvkÏps"Çùè≈jÔ'√±óbq’ºP-Æ◊ã∆Ì‰¬ ∑Ë[∏0Y∂py áë∂.WßÄ)}ñŸ
-Zf€dë  ◊‡ËªÛˆ‘ßy≠Êh†≈πãÔÔ**,ò79à!B˝Ä≠IzGXmê¶¸J6è“yB}Ü¡^CB≤≈j¡\‚û·¯“-6÷Õß¨\	˝ìÆ{{l¶xªt“0ç°,•ò4;ìÜÎkL‘æmÏ./§∫œÍ5~ù,ÙHA]Ó8®~˝≤8h…\Zf-∑ô;^åái™≤Fù±WÊäº›_ÃXÂ-·ã˙Z›1Gr«Ôò„bô#£,;{øë˙v<NìnÉÛHJ('√>ÂjÈódóœªÒŸÂÛd|÷ã«/ï∂_«DÎú„8ÍzW¡<X˝ô/±”cñ≠ë…H≤G?ç£r¨ﬂw¨”ƒ3—%˚œVCù•>ãxÓ´Û¸n⁄ÔE]%∆~NÉä°⁄hÒ‚=éT˘v!>ˆG§¬Hí@U£:≥≈îÎ~w)ÜÜ¡ÿ˘›ÏÛ&ÔD…yàí≥úWÙú|]	âª””È‡¢’˜cÇCÍá#Å<Áòõôø.è_qì‚UJ&^Üf/(7á–◊¶Ò  ‹Ïuç2ÿkr÷ç;–èˆrTMU_ÊQ¬µ∆w‚SÜ#x~N€¶‹>ÀÇTÏE∫XÔ†Ë~GI√;⁄{s≤u=]xü´wÚ*çì¸ÈOõDGN—á£ìÔõG«áøkﬁªVõπ˘Äk®ÆÆ¢Ô¢ˇìd“ãméY•IVÊVøØÅÎ\ÓÜÚ˚óÛ=ûµ(4πÚ-mŸ}èQ¢q…76<©ÓÛgÍ'ÿ≠‹T®>Â{√8>XdÆˆŸDÉ¢†Óõg•ïR;ë7‹ıÅíπ~2‡ÈsπΩ3˚LìÖ(·´ë{◊≈ﬁ–√–"µöÁın;ü√¬êó¨∆¸ÒçÄ˜ªñî“9J›zt∫ÍI*ZﬂbÙœ}x»‡0®éXïr¡{ÿL¿"_ﬂ{P!zn Tˆ∂„'„o
-†d@‘≥”9K«q“?•<?Üêæw<jË}P»Õ8{áãé[ß®ÑzX°ç"úbpœì≥§œœﬁ‘	#M¡Ûm?e¡¡O^äokƒá?ß÷8ΩûWkg|µj6FπºkJmöUr'èR∏Í¢Å•ÃáÎEÛ!ˇEÀÛdïÊ≠oÒ˜<úMﬂöO\ùìÚ>£'ëq±Á¢íØp¶ÓS-'˙H?◊ﬂ&”KHêa<^}\HÄ÷\IîáÀ–Qh∫)ˇ}<Ë!Îzwí…t :¢I/ûAA∑{≤ bÔ†UÒ0i”Ì—K0∂ˇñ©A~…sH@ü êÖ– 9A£_H"πBvé\‡@RÖ÷πÎØ≤Pq∞ˆ
-@™Tí=aÚ/]Pè€nW‰Ê…uPÚ'$Ñ*¢1t"˚€Ïûw~9•=ü§H&›zÌ˚„√7GÔ∂^øha7ïQ(écfÇ’[[©yyBô∂÷UAuˆr´Ω}x0ø~ ˆÊŸSﬁÊ˚ì„øüG?’÷Ç{È{7÷‡QÔœÿ°ˇK”AﬁYoÄ√ÆUﬁÖI£”ª÷ôsè|
-Ñ≤(~e÷wòÒ†˜s4Ë>5e¨œì’¢ÀñBÑy`WXÇT†y´3∑«•õ‰dõD∑VŒáÿKÏ3b“xÇtõJZå__±i&ïîÜj A%¿πnbäÁad ﬁ†[òÓ]ÀlRö…uQVVfp]Hù»Èπ–=™ÎËëÀ!d8sNÙgPyò@ûYÔÑæs_Pu'°Ç3À Y!{;‚ßi6´hUi#Fù»zÔWtΩg∫EnŒ*Ö–$V§nQﬂ9Zí⁄ƒ·àµÓ⁄¸(ãË‚≥«XWºÿ%¨ÁU‹π Ä˙Í∏?Í—Ià€”~ü™Ω±H ¶_WA3˘pAOÒË˝Ωk˙º∞fgF◊ö¨›Ç…‹úCí?D~˛wˇù¥ìT∏¥¯GìÁ,∂‡ÏjoÁFAim?J™Ï<˚Ç±∂≠’_MQ ê!¬´ÁÖ¨bobOÉ}[ÃÉ+åIö
-5{ÊÛÍè)ñÔÁ‚Øπ$y©]w»=ôîπ‚Ív(˝	Åæä2Ω$-iÃe¡}ÆöOu7s©¶†M¶)˘Ó÷ﬁˇ#°üé“◊—àÓhÚñû**O≥0w≈ÄI¸ãﬂr»PU]˚Ó∑<=ÎXnÚ·1MTIª°Éπæ¡ÙDô P^Dg]9Ê¨î3ìRÔ,≥¬⁄g)≥'(K
-ê5Çp∫¶˛:=PvÓÄ˚[ﬂÄ[◊.¶*fì˝∫¢?s+VáugI.Œ€wK•%Y%®e¿¡Ædôâh¶ÃaœÅX¬ƒ€wJÒ:S™›◊£%r 1"ﬂíSa∂ÑL†(xôçoy4Mªuø
-llAüÚÌSÚ:öt)˙T_]¢{Ñwê4Ÿ–pà/®ª∆1 ‰¥InOKÎYﬂDıßã1ñ¬•qA˙®`R:Îcv™{˘œ8∆g~ÚA}´ﬂHÅ∏°ë¬s˙\7ºA}bXh‡và‘<Dêâ[lF6ö¨ƒπT& bØ®ëmèpjòÇyÉ‚"û¥·œi/~9ÛQ‘;KYx—9O—‡,ÅıbC"âÄKÙìƒﬁÃHòé„˜,™≥)æe˚‚{æ≤˘¿ùä¬πË®>¯Œ/Øø˛˘_˛=yKü:ÉBR}n™A0QÌÊπÂÜéÎZ„6ÙtPq>1√ƒ–„Ù'.Wf√É0…ÿ3väº°>¸ö\d√uÎöìR£>£⁄ôâ«/ˇÇÛÇäıB‘p[GÅﬂﬂ5ãÒ?ππÈù ä¿ﬂı oÄ“ò‘‡Èz5ø w[q-mè Ùm%-4Íı∂á„Ò„*∏—ùÀ*ß˘âg·á	;˘ßYÿ•órÂÎSÍ…≥“Wt»g…å<2ÃΩ°P¸Ã∑A{¿e{cìLﬂ¡5¯+”Ùñï|di¨_fd/F•ˇ‚Rg}Û7˘íÕ¶Ωû≥‹£ Ò{ñº,“É9‘nâWHΩﬁêí0J∂èc®h
-≥§?C!oh+ª°û˜|IÌÀíy¡/ƒsπXgÊ˘ªKFS}m√9c(^åDË‚„®g£96O«‰|<Ïg6WûˇS5ácpt≥o HøAX}◊uÛÔ˝&yV‡c√üai≠ô{6Ïë¥ﬂbS⁄kE6~§Ñ%9øjû∆ìèq<`HÍ˜…Ë™äÓùÍ˝\_u◊	qt®T›√è$k^®®ÑˇhU˘‰ÆR„ƒé'œá… WÎ´7˛ÙOˆî/√O≤#Ä{o(l∞ö6(≈ πqsOÈ9ΩDŒ°≤r®rS ﬁÊs§ﬁƒ
-≤‡ÓÌnîF´¯;ä˘-èQ{ê_ôÕTRL8´Awcñı˙î*˛e©B∫ØòwI;ä&do@Â¯'ÈdQZ≈7éái,2^È{˚√¡P∫ëjõf€pâé6nË¬±÷ëCG/3Úú`osó	Æ$ƒØk#kŸ$´~∏Ï¨cÿ•≈ïÀŒØêJÿ˘\;ø8_ÊXœò˚‘»|qz≥⁄™DI)
-*X
-÷*ß6Ã1STiÅø™©$®Âp‡y®»´§"`PÙ1Ñ5)s[ESt¢Ç¿¬d≥{q.ï±jﬁßúJ ÁÏ˝°Zˇ6gué/}ÊŸel√¬KÂÑÛ∫FfYeçˆ,âö_xœœˇ˙¡r	Û∆ë:öh„Ì0˛zΩ⁄˝_ëÍFΩsïH±Ûœ6Üqæ»
-YØ@[æ —“ˆï-}ø@¢ïë,{tœ}I≥¯«Ge™5¨Œóö—áM≥Ωz∞˙7°@Ó¯ ya–Á1b•#
-.(®∂¥G˛nJi›ô—ƒUJ-kª ∞jö≠Éjû‹@+»≈vÂ6Ñ
-w†À´
-±%ÓßÜ˚u“Lœ…aò‚ôo€⁄&˜”%É£~4–‹*VQEÑ86è √®67π∆¶ˆ†∫RQ?πÀ¢‘?,/L{⁄â∫Y–FAdB-ÕqÃ|ﬁøÜÖazªqUy›·…X†˝/`e‰ÎëVâk’÷º…¬«>4ÔVT5»Ú ‹„YEDó·Õ
-_Ò¢;à§jıŸ∫Ï&„Íã~˝¡∞Í˜ÆuÎ∫,R	®ã-5t»ÜaC®oÖXDC/æ˘bﬂlµ…_ˇ¸_˛ì+óMÙ<w^ÿ«—%ï≥¿0:ŒCâ¬¿u—µ≤,æà;‹˝◊ãì.ﬁÚdÀõ≈ôΩ¸Ê˙¢ü†Ti∑ƒÅÈ1÷/™{ˇÀ&«	DÉt81◊'Ò¯2J&≠ s≥ÒîÊíy¡z è/⁄dã\€õ,W
-C_∆ﬁjﬂ;`Ú†Íh≥€‹xD@Y9ÔQù‚™M'C¿√T‚ÉÀ;!,öà}∑D¢ΩŒßÄ†3ﬁ{¥∂¬bpÿõ¥ xi5Ì¸d.ΩO-–MyÀléπu©Œ_ç√˚¶Ú˚˝>ıQZ-Ã¸$öΩ^pZO ‰‹¨É6æJ∑Æòv€≤vMn„lﬂ‡˜Y yrœFQÄ‡öÔ['Nœ∆	¥BãÕjg‹*S(à8˝	¨I‡ús¬hwweå∆®O)éìãdı∂ò!IÒnâ7{Îô±Ÿ—∫@q<ÆÍ=´4Ò°∑„é*§¨û7„AH˚õˇ¥fŸ>k_‹9È&ÈI“èÖñÄ%È¢ﬂ≈Ì/˜ö\∆˚5C	´§∏wQ"(|ﬂS©0c$Õ≥Å∞ViÛ|ê›»¿∆w8ÁZ„r≠Å—8À…
-•‰µ˜¶˝l™={!ÀSV∑Úôsn6¶ﬁÁ≈¨çiª\uy1µL5£¬Í˘ÂÏ”∆‡ùò^j“ÙÀèSÖ?hó)à‹å)d:ﬂPoÇúØ\©›√·én6#∏Ä∫˘õR Û3D3"PYÑÁ≥◊«gëÃ ¢\√„YDeˆ≤B@•ØìŒTÖ¨— )LT®›¯†¿U˝LÙæTh∏0¡Ç∞ô,ÅXTJBî/’Lùv«tÆõLÄ\´…–ºuDhûU´≈¯TFÅ8`≤Àèf5zúº8ﬁ?<x±ﬂﬁ#˚/à»ﬁ!G«á?ºÿß"F∂ÒDÆÇç¬≠£r¿ÜB
-tÿi‹O8År+ˇI8Æp”,-<‹'¥œˆ¸•Q œÙ@£,nÃa…Ò@€©pÑºé“ÈÂ Œëª;•’wÙ/?Ω3ÙMÀ Ò˜Ã≠√û‡Œ`π_˘©∫°z yØ„N2≈ÖÍ*˘”Tÿ `•E°“áï#ó19N>“õ&‰8éztﬁ û5Óõ®?˙mõV@C†ç.œ„h!fjÅ¸Å˚„“Ñk†év™‡{:öÛb|¬äÛi|ﬂL¯úa-b0:√ZÙ·t¬Â¡ÍÑ´»:˙•SU}zb`æ÷†QL`»_<:•?˜OˆI≥´†wQcn	≈|“}P©å√åÈ2°ÁÙLx\§§vıyö”G∆Ù|°ÑOV∫P4Õy¯œvéèvˇp@ﬁúºŸß“Œ´Ω]êÄ^ÔëáW‡
-9⁄:nÔmΩjxùk◊H¿53O®>%√B6ãV£Ωü°Bh©~ÍœﬁP6µÆzﬁùìÎ7Ï¯gırÈSß3¸Æ:WËkIîíhp’»øßÌÓfo+ﬂlnªÅ+M†$¡eù¶ÔïÙ Ïg\≥⁄‰r˛¨C*¸j£…#Kıb˙!ÃŸ∫Ø®ì/P˚äßˇÅX€ËŸœÂØ∂wfüˆ>—íS,™b(g@ÅúË+˝“Aµì•ÜPO∑
-€á”º˜ÌÁª/vﬁºz—~k>Iµ⁄;˙b¸Õb9 Ä•·_ff.QW£˘G9CÃ,àœNÖòP∂JlÄ AiWr1†ÔGEaB¸§J,ÛOÜ? óG¶öÒø-1‚Ωè,⁄êHPpÍÜÑA¯ûµ ˇZYÒèBÑ®pR@‡j–=cRykŒ—	ûX)uí3À≥:dÓv0¥Ût≈€À°≠{$ããàÊ(Å“æå˚ëò¨πGm J±ä[ΩP›˘UÌñ¯¥0I/pˆ˙JÖµ·ö≠∏6\åB—' U’” *&AËÛ
-ÿ	¯ßCí8I≈ﬁèıƒhUπˆËy˙D◊J=  F≤ÔÎıI§¥%ít>IÄ5∑√ä=#)`¡ä∑»`[Õ{◊ÙˆõÚ{&›L∏†$ø
-ŸZO7_¬Ø±P ÙæUõ|á_—mhY{2¨>0:ƒÇÆf•éxèø%k7ÇﬂfDhè#=L$Dõ…¯”àmø≠ÏªU|˚ËWV»Û®w∆Ä ®äˇîß)_£gÜL∫IJ9p|ñú'glNáMÇ°î\( ∫e2Œ≥"¥[»ôñ8Y#∂wEÒ∫¡p"v˙óM Vñ∂(aáÙ@‚–•”æ<5KDÈ˝ûnãëL8{)’ÂÛ˝°˙ñ¥≠”,Ns ıQug±’ûjÔÂÒÍ7-ÌÌÉp#à8lsÏ2ÿÒ∆å!'2ﬂ4æÁ@5‘÷¿b∏˝‚’õ◊d{Îá≠cÜ√Y¸˝Õ√J3˝$Nß—§B|à>¶‡qXKçñØ/Ã)My\E˚VŒ\x;y,mIçLáv∂át¿pÂù7Bﬁ*3µS¡œÅH^Ti®`“‚∞ëoüñ∫ï∏Ì$º©Ω¡O√‰,¶›°Û,<ˇ¥QˇÇ·6≥˛Éä¨_jóôAÈõb%ßyø:S•OÚÉ÷˘eπ/¢ù‡~‡Â2úúÖL45" oÄæcç96h√•<R–°4lxíºhåÖÈŸ•ö¸`µ'ü√Ó ∆â‘≠eÖdµı™∏Z&îW\ù∆¸“=ënìp√ÿ{˚£óIƒLTDaÏ÷¬
-ò¥—0π2o8„‰sì)uqnNr‹óñ‚*…p!ÛbSQrÀó'ó€Bõeb;Í\ƒE)JïÄ∞ç¢†pP≈©»†PÂÁ†`cïWÉ3Î"ÈFf¸|˛2pS3*˝°q”†ì,yÎ€keﬁnﬁ(Ü$‰)"d>ú∏Tπ◊¶a∑¡Di ¯÷˚y˜•ÊL∏¨.í4·.8["Ttª§≤Zö,ëÉa¢˜âX‹%“°O”áÆ‚ÿRhKÏ„Q.≈ÒZ‡4å∆iı˛`l§*¢”Sù µWê˜ªÄ#∞~eV êgœ√ƒÀŸlÁF¿∫<+dÜ¢ôÚ * ûD›hÑH¢CXü$É—c]Âò704å¿√‡dªT
-ã«OkœÈ‘ª-9ä5(ø“Ä¡œÎîâ=L÷0çÕºzô$úâ∑d‡’HM-‘¥5›¶ã§TÑ‹r¸HuwL„+@È4à∏àíH˘5éˇaöP—¿{´?rïÄ¸’ûÿå∫C—!-0ÂÎ<ª;GÄ~C⁄ÒÑÚ§.iÌ√pNTãÊª£+un5…Ø˙¯bœ$‚ñ;Êç'GÒ8•* ¥Qˇø∂®„œu8ÃqM'ÒËimuy≈ç5rq(EﬁNBO≈SQ⁄FË¥Åﬂ?∫‡Í„8ÍzW≥jæ÷˘˛É-,GTeác@LÖ]6á£kç4xlèEÁëñ6sH˙ÚœˇˆøIi≠y=ıÅPfrU±ÂQ¶ølâAÿ∂;˝‹Ât(Ö˘D∂ã©≈0liî(jnÙˇ Yv≈ö§ÚBô:t+2_©ÕüˇÌ?e\WS‚¡¥K%‘6›iî4BÏ9Ö˜pÎö|€?˝ÀLÍ2ıaEd8Ûå3øäÚ6˛üˇHî/Õ‚ÕG^ ö”ÅYÈ*7˜ãîßM1Ö9ö√è…eDEÒ°9CZP'aIÙXùF	èËQöfM∞)4ê≤‹/∫ˇÿ6†ÑönL&P ëF‹r'Bÿ.zD8øò¸ÿ°„©.Õï\§ã·öá˜NŸs_ˆ‹xt9Z’˚≈Û»èD§‘âXèÛ°πúUHQ>÷:∏ΩËˇÜ˝Ñ≈\Ò8
-Tú˚ 2
-é≈„áµüØ\1Ë7¬ëp><‰(Oy8GzZ+Eˇ5Oÿ<%…¬∫2pì⁄f]mÅ’—kÖ7c¸	´≈áH¿/øﬂ‡Ø¿˛9Ã˘+•ˆG‹Î-©}ˆ+¥∫¬ØºÒéªoXêàrææÿÈ:`ÒpäT-Èeæ®n≠˜Áâ¢ŒÚÙÖÍçfzed¬bˇSëÌhp…∑’9∆hÒØ…PBåÏV¡ΩÕW:∫øåÉÎ9∂ﬁCÎπ¡:èéÁñ¯[ñ’|5à˙…¥‘(ƒÃïi–“!:˛Õ	€Ã|N"ˆÉΩ~Ä≤’≤öŒ¥Öö+/ﬂF~≤ƒ|™éöèº˘˘kj~˛˝á,?QNœˆnwûÖËaí‰ŒJ˚∂z	£	— £œN9˘;IËÑoçß©ã–!à∆∂X§+rÔ∏èxp*ñ(w€¶Ò‡%}E)Kò}¬®J≤Í %ÛÃøRD©‹ÓèΩï–RzÎänÉt8àzªåˆ∑¥ëäìÛ~{Î`ˇ˝ŒﬁÒãÁÙ=£$"Öô§Ø?ÕË˘À(I£yyµ£à‘∑:¿¯0¡√)Û)¡ÆBtÉæ tœ—ã„ˆ·¡÷´˜'«[Ìó/éYáè_Ïø8ÿT®Ë;Îz˛6_œn|5Í=—…FñÚX FZÆ8ˆáùµ®ÑÂæ‰-ÙxÀìÆ‘}d S^ﬁ¢±"ßQŸ≈h<<F7≥psmôÏS9ÈÑ¥)-Í%tÃØË¡L¡ÛSg°…«ÒeÃPÈ=T¢í∑!mΩÜ◊ó˜∆Ê˙21Ω+ˇ8NN£Ñ]Ì='u†æ5=°H√∫“>zq∞S€º/˙!ﬂWßØk®£fA|Ø¢d0∏¢gj;ÓEÉ£ïÜ’øç⁄'©Ø¶¬aáÌ∫YÆ(É£ßO‘8ÖYätf.`Gø:qêî)8ON(ù¯@Xùåçí Ïà5)	m+|∏÷3∞⁄9®æ…ızÖ‚zö∆Ø£¡4Í¡&˜€ø™	,‚Ÿ≈D°#…
-öŒ~<I.… "iG˘Ï˛»fóü˘”h<•,∏äıBgéÛ∂T˜¸Ã∑ï5Õ'∞ÅóR√dÓÜf¨TíëÆÂ¯’œ£^##€váM,Cfj°ÚØeìƒ:ãB~∞m∆∞⁄úŒ≈a˝Û¸Ø¬Ô…‚Gv¢sz,x¨<∂7∂‹¬ÙÖÅüâúV¬òq¬mpH.–&&≠øˇzÎ‡ÅﬁdOÀd<≈ñ∞„Ç=ÙhêòûÿêT¶Ë»-‡<ﬂ~Ê\µ≥B®À°<âî~Çh∞BﬁÙß˝¿¨…kæ É∏w»ûâì¥ÅÄ>Z^˝;À	Éø—0=p3“/á^üXÖl~K∏P∆I6ùf~⁄ÈIYH4Œ-‹"»€º¯~ÆqŒØ	ÖÉ<?Y@€J|N…6ïÁ?´‡©UÄâ"ÿ∞Eê^uÄDé„^Ù)Óx%É≤Ì2ùAeA∫hq[/ÀCÏP›ı4ûpÒä˘ÇéNòu¢ìåò]¢ó‹Pr”_zQüP—≥3§wê	3ú¿π^ˆ:~PùÂ•ßyπªqeù©^SD˙qüeπ¬ºCºõa˝Ú)|fœ…ˆÙrJ∂„î ∏ﬂê˝aoÿ'ÌÆß›ò.“sÜnhµøî¡çŒéÇS√∆Í3ßâu⁄PÛg¥£XQãW2‡bó$çö@˜ö!ãâ:¥O›9&}å±]ÌÌ(á±ÆŒÍﬁŒ¨"ø	k@**FZë√Èd¯=`∂≥¬ãû˙u!∆˘í¢êø<æÅÁ^#Œgî–ïäÇ6‰h∫ΩÉÁMàı>ÿáˇéé€M◊√˚èì.ªráÚWx\_2h"kê:õV»¡0Ûá‹ﬁS;é/e«ÁwJïFÉÌ´_ïÚp elUÿvˆé˜»⁄∆˙*ù4≠˝ÍxÔ“~±à3jìÇ‹Á3LÑ?ÕYÂYOueΩT§¡R›Áx2÷l0¬UãI°ä‚.¬·≈«Âà-A!Bvßß”¡h˚‡à=1Ç©ıW	˝W‘∞ﬁt¶óêk4Í%îf1…>Úƒ◊°úa¬ ‡Èdà- ÿ@ÈSßoQŸ„(>ã∫ıS:˙≠¨4îM+†‡ú”¿´Ã[y"m,û¯(SÍ≥;XΩ5∑Æ≈Pﬂ>˘˘_ˇB`éölíH;NßQ¬`äHî;œV+¯˛∞’™ñ˚Î¬äj’ºQÃ€∑O¬‚ô•–”p®ƒ}]A≈ûÉÇ⁄fÜ8~ÇÈIˆï"Q∫\Ê†≤áÿÏâ¥ÔL§‡u9aÖ´+|À¯≤ÈÇŸÓÌ-e¶ÖÌÄ©,⁄yKW˙ùCeËpfQ‹÷ªR/æM˙^Je©®ó¸1û≠I[,]+G«˘^˙ﬁboˆFpÂir^±.§ç«ŒSÛr§á√Ï¡¬O∫ ()x3H.πu‡úvCöC(Aˆ+îEo¢ë#T&)3ıtÆdßË˜ áåÇáa]¬•’4Ω‡«-´ºıË–‚˙À‡À-s©ùÅY=%cUKÛ∆ÿøy¥˜< Tπ®!\ökºút2÷X3¿∞üB ·*¥Q€o’nHì\Á≥qC©≈X8ŒãŸ‹¯a˝∑î o1`Jﬁ_mêoI‚ÅHKøÈ¶Aﬁråƒ„πÜehôgQ/X∆µ§”‹€©5ŸTû∏v
-.N(ïRH§sV…‡cÛ¡∫°~ìd∞Ú68ÆP∏4#å≈÷π≠ÇF$Qpÿl¬=Å5Ó§◊∏"udÍ¸gà—„ófSà•»0KTò\®õÄQñüvâà¿—!Éóqê5a‘¸¬ŸÚ+4
-Å_ïb¯U§≈aK1Í=U]π$≈‚∑Aç#ÊrÍrÓ{ÚŒ>—]µ¨Œ€8fïÁŸ)Ê+÷¯B5#ØóL0F} ,Àÿ≠ÖóJ˛˙ÁˇÒœˇÔˇ˛ˆX #0¯ÖDx∆’‡û^±´C·Ü•9ö~!¬kˇ˝Ú6P90,K‰öp++ñY%7Ôl-ÿºÕ≥ô6ø%'¥Â®Kò≈[µÅCÙ`nùE]ü≠s~‹VJ ü§4u 5Q»–c[>iãÛ(L_YËõë(ÑIÙQox•IÂöaˇGßi—\û◊†˚É{¸ËÁ∂ÛUÄÆÇk¡∞Œ◊FÉ<°,˝·£∏”£K`Mﬂ5Ñ™
-⁄ap≠™§Áu∏eÖΩ÷5»joò5èº¢√oﬁë5∞”·îI–◊ˆ˛ån}bsüö:¥˙>ïŸ!G|1£G?O£/ëÔeêŸ¶QZ~˛¿Â@9é˘‚R‰ÌŒñbzﬂóI‘2$·ıy|.√§ÏNLB'ÙC‘ U¨0’™ÇJ•wÁÁ% Âπøê·›≈⁄≠R©*i]~ñiNÈ£ır@å‰Âc˛<Æà“K9WJÖŸÆsÃ‹≤Ï¸˘d7Tÿ˙Åi[¢‡W2Èâ2bU<™ºÊè=?èYÂ4 /~+V'∏^Ôœÿ˙–ˇóŸ˚ÿîgo˛Ê˛K»t¥˜ÊdÎ‡˚ZïYD™‚äZ™+"˚é}VÖul(ã‹Å"pJÌGıl´£ÒG:Á¨…gÀŸ'O.˚◊(rüÕôﬂFÓ_4"ê´$ó@xô&Ég9ìbhà3˘⁄t$´õY?;¸‘N&;≥≤rC∂`•q1æeÓUÓ–XmÖJfsür˛úˆbz˘¿XãKÚH@<Y¡áé$&öÛZ-Ω«^æL]eÚ{∆9ö‚[V“8†_†{Ys,√8Uﬂ2˚ÃËQÄO˘-LÛ(˛ÆvÛé®-ÇÉôﬂI«Má-‹Ã÷∫y0oçlàAòGôjá3Osî1ôW«e≤4qeødÊP’h6†Ôﬁ*≠<Lùmhï∑†ÒÔŒ]·ﬂ˝eË˚ªãQ˜wÔ¥}q˘µ˝›_º≤ø;_]˜K®˙i˙úz˛Óùö_ô@}Y-wŒJ~‡ûˇ≤:~gf’~˜ñjˆª∑H±ø”¡tpFæ?Éæ[AˇÓÃKÌﬁ˝íZ˜àÍµÙÏ≥áóGºà C9˚Æëyy)1;e-G‰[r\Ú^”∫Ÿã¢¨ =}˝W¢U£5go4ıùΩp:¯GóÊÆJœêø1˛j^u9É±∞NÖSq~=ä∆qd}ïµ¸B‹K(EMcJI»Irë„a'"V	Ì°ß~z	vº´¯íl9µ'/@Íx¯1}z}ﬂæär©ö˚`}®(ë:∂!^ÄAã-{±fh√’åÉ¿ÿ«çÂx&˘BÙ∆qö¸Q¸î◊-∞—¢á[iÇù"X1à÷Vµ)b1ê,íáˆéÎ≤πju^≥îπçì@¡@7mª;¸∏’Èº¶Á≤'‘{€æ(Dt6◊¯Ü»§∆·¬ëE≤ßE;ÈÀbÑ≥˘-Ïœ∞ù‰mz({ñ≠·R—1+ìNO˚ˆÒˆ…ÂC|,”÷˘\œu-Hvb?YLd∂9l'}àmt3◊tZN·ì õ≈Ôü¨Ùá,À≠ÙåÌó' ·WÉÙÆc Ü\ú‰UZäôO
-o»_PËU2†MEΩß◊◊dHÑdr≈¢zã'+–âüƒ⁄mkÂ€‚O…ƒ◊T˘dø(ßeÁJ«[›y…ß∏C;OünÆj{oeÉ~¶€ß3éË^õéak˝ëˆ’’w˙ˆXôié¿˚F•d˙◊Ú„KÑ~µéù∑Ï—5ˆú·±Ú<‚^gù!òÄµ’wÜº=º.>B‰:„
-˙dïvsyöfYZ≠Î—i:ÏM)Ì0ÆÔ√Ú˙è}âi⁄◊V{1†;ÇoöNeäB†ËGüö‚œﬁEãz˚¯·OﬂëOΩÏÛ#¯‹OtZ]vK˜]ŒsT:Ho»éçU•~$é ≠ùf7Èt®4™Â$î	\>Á‹/¯ùùËÇÖ=ó+3(,Å⁄å<ΩÊX)ÌËßñTYO.≥=±¢üö›¶¡>b$≤ÏD#!»sˆ}.ì4§lcì`\
-Y˜~IIZÁÀ ˛6±:Ö7JÊ6I.∫áZù◊µÛjF›˚÷˛ñ±OÁ†”M<5ﬂ@bEáv^T◊Ëﬁé°∞ja~LXX„à7Î s¨)à7µM∆•bìE‹∏À¢Z1F]:˜d[<ô‰ó¶ˆ¨≠S¬Cˇ—ÑL}’ƒ4/(à¨k´Eô5L zÚ˜Ùùß◊Î7vu∆+dY(É±9çZ<»¥úºÿ˝F~xî‹´&‡PA≤ëb?SıvÿÎ5ô›,±¨k:πÍ1Fˇá¯Ù2ôäV€Ï—Ñ˘S&√ÈY∑f6Ç€…P)AM?
-Ú”:€2x¸µ8?≠yÎÍæ$ı .±vÈ–˜jN3ûí`ÙAU+ïÕÑÀN©
- ¬=ùR‰mË‚3R”µD5ÍZ0È~'OI2‚mÁ8/7l#∂”Õ£∏≈M#€R˘\∞ãXh∑9	πT‡åVû/∂9XÁKª#s‘Æ≠ë’Ä¨¥9BÃ≈ò\/ΩöU>WlJrq˛?   ˇˇÏ}€n„Hñ‡{}E¥∂¶ uYÚ=+Sï»ó tŸiª-πj9âLZ¢-¶%QCJÈtªÏÀ∞ÿ¡ŒŒÃf—`±ÿ∑}ÿó˝û˛ÅÌOÿsNDêA2ÇJ≤3≥*ŸçJã„r‚‹/˘…¨óöÉgq˚x5ƒ:X’
-É'85˜ØÙƒ•\íÔ∑Ú·®WP}\'f°ŸNàı’Â5Vß3AKrM7R’Ás˚Á§~ıaû¡&◊∑»:wmq≠s´beB›û8ˆ≈œKË€Ò≤@í=}Ù‹éKg∆ﬁ`„‡ìÕèkCs®= á¡ª…M˝y·"Q8X…
-O’[1/Ø¢ä—R°g’gïåô9∞¿HKªZ◊é<”!õ∫»•–Fi ô4J)hó1÷÷YŒ=1ôW ◊„9ó-/Lˇ·ïß«ª/[Ì”˝÷!Sä€X¸-|
-JÚÔ>ﬂ=8mù¿Ëvv∑v;òy`jFﬁ∆⁄5¡™˙Æ¸˚ˇÛﬂ˛#Æ;>Ÿ€jÌÏ±Íº–jÔ·+¨›i˝`Yl7ˇ€¢‹Ó…nÎ`ØΩ≥≠›É÷·è-ˆ”^+˘˘ù÷aãuZÙyÎp÷o«sΩ9Ÿ›{πuz“ﬁ≈Aà?_Ó¬˙™ﬂ≥¨+úÀ∞‰∫u‰;é,»≥„´^í<ÓC~PÏobCã¯Uª†	^Uı])–apﬂˇK9ÕjWÒtqÆëÊ±cÚf©ëºjj~+ÏÑTÇ∫ñõ:QGªºªÎ2Ù∞¿	êª‰A«%ΩÜnîXçW±gZ m›â»‚öÍ&ô„’∫≥6eãIw“]¨ˆ}~~O·¶Ë_°è.,˘]Ißõ¸ë†[∫|ª·ç∫É)ú°jeÏL&◊–WÿØP^IMìK¨?ÊvΩA•VÏ∏û\~°*ÚLØXE!ÌÖ/„Dìÿ@w˚ÙéõÍ˚&¡ gß∏Ω∫¸<Û¬iÛ‡”Ÿñ_ÂHÓp·Û'ûÊq’¨≈Ï.Â,h&—Pˇ≤Áâï+z)]Ù12E/«Áºô\Â"˛;˜XÁ∫Ÿ^BZ°á\Æƒè°ßøõz¿=¥ß¿`0∂›˜∆a©8‘ÿ~}8cë·o8)àK™f$”π€˚åΩ™dhueâUdVÒ8¸Ô∂ß# ‡pèú„ŒñØ≤}òÏt0é˜o4∫v*˘i±õiÖÓ„ã/a”1√'@4™—˜ü;Ô<ˆ;;}¸…K«Pk¢"€HEpòÓïÉÕ&ﬁ¿ÉAÒÔúÀ‹’xò@müE˘^ªÿDr≤è˚-r1ø”4å·PRÕœ•§:úìS¡+√≠ƒÎ_Üi¡Îûº¬º(Õ∆¿»IógbîOœÕ»‡eÁu◊ç2•Yô•ãY7§x!Ê`p≤dräù¯LŸº7œÉ◊\|^3Ú>xY$~.ëvˆÊ≠ZZ≤1…¿Ïlù-bùî ë‚abU≈◊≈õÆ¢Èƒ˚j±∏‹V≠u…N0sè÷kãéõi#8ÔÁA‰HØx–gΩﬂ≈µ·zq§§ŸXŒØ"u°5ô∑âoØÕ»ex™◊û†c∑ˆAí\*8Ùò1 }y*Û\ˆ¨≈÷>û:/û∏ò—}‚¨∫∑s≤à2Ö≥ò‚È≈0pÇ∂wQ|ZÔ⁄(èóçaØ‚ƒer≈ÿñmIƒÂYÃ∆ ¥èóN3I©±T,k¬ÃîÔÅ≥∫˝ôRà8gQo3√ƒã˚¢H'Nc≈äﬂ·›é\•àéêRS«Èπe˜∂˘SJô)˘U“X…Øh„ö∏ÆvÔ»Tı8ÁßOùÇ?D|3ö˚`Òl:[PÙsﬂuä«~ó“ïM:F0®!Î¥üΩ>oˇéW±ıùæsÓπÉﬁkˆÍõf≥~E¥uËG9ˆFuNï_7”&{µπ74ü3Èëmˆ_qïeeQ‡/¥5y˝≤h´édjŒßL7/?”D3Iˆg¶óºÔ≈åàË'F1ì˚ˆÖl≤/dÛŸº/≤I∏f«õ:∞’-7Ω~çSO@GÙ.?”“Ìæ€Ω‹ˆÇÓ¿Ω;J*ch6}¥‘ZN\ßw4\œDù9≤^0Íãwm9ì8E>≥GÇ+p‚äTJöÚy≠ø¸Z2?6=ÀwΩ«|∆B[?NáßØ∫é0˚jF¸dœÊﬂ=ìoáñä†–%ïAHÂ–ë%2ö√îåä±äãëåhπ»òb”‹bÿ…/Ã‰bô…¸–∞{)r˜iª.«Ÿ?˜]·ƒ™Gc·§õ≥6_b{ÊàÌâ*÷|.¡=Jû$‚º˜∞]
-[û|¸òè—2Ìç,£í;ô∞÷EÔ-*6ìO,∏áŸÿ¬±,ï°u¨¶g•x«çÊ]-˙éUdJæ)⁄*¯‰Å_∫øÁ*·wâµÇÁ ÜqÙ˝œI®Éæœ0¿œçòÿèxpª’~Qy⁄ôéê∞–A÷*Ù-’â·á>áE¬Í’≈=˝öpÉÌ;•='Ó•;ÚÚ™Û‹Çà}›»˙†∫~.ËBu◊ª¶‚íH@…”íaÃ∆Æx‡≠⁄øs◊XC1xvÿRárŸx∞∞åŒDuø?ß°¢vä“ ’r5Ú¬ SQSCM°∞Æ?®c¢8<˝ZãrÜ≠gU¢J"¬T˙h£≤4/ÑñÜ5O˘ÚáÖxRì˚ç"YäÙpîBÔ/˙áˇ!Î‹kvpôÌ<wˇJ.Ï„ËÌUl6uÃ4µF8˜±ú{è†7äØÌ4$ΩyÈ\ßˆè/lk⁄ÛX€ÅV°_+˙®ñ~∏X
-ó¬Œ¯>ø*Œ¬≤;ÉI:ûG9"Ç◊‹:ø9ä<d*.£òƒñW-M ÈD¢
-l6À(≥Á—±iìâæZ]E¨G≥›°ó5Û<Äi>ZATÑk~ÀqÀÿÎ;óKÏQ Ø^Áç¬	.ªFN…Û.„Øk‘ã—âKÍÅ…õπÛ5d -\≥F1G4‰‰)‚€À©ò…ïö3%èï,yØ÷6LŸ÷åô¸≈HfÁﬁøªk™ÙèˇWR%ÙHqL±ZŸf"≥±’î±‘h08´‹;NKVàÇKc|9Ó≤ÿ~ÆÃgã∞Ì,¥Ÿ⁄]üö%g÷$lÜM…ì,RA÷âà)M∏2∞OÜoÁvì	ªû±ütL˜L›l{]oÄ},¶ªé¿!Õy◊∞¬πƒk¶†%„ ˆ«k5-≤«	_§ˆÿÂªh¨ïW´’Úñÿƒl∞Òˇ√S>9HöP`]O˚'*ñ‚Èü≠ƒ„ﬂπ#6@2ˇÌü%∞ÿ0∫\Ò4Y≤dí~·Ω¯⁄πÇﬂ’S*∂„q7\^nΩD¿¶%(≠Äî¬0VcÏS÷él√û è]Ëh“‘ı!P!€F.}Çíø∞GsÑíó2*bøå-Ó12Á,Ú†6µÜu¸úZÇu6âﬁ¬ôû{ØÛ1∫ΩΩﬁıò˛!pœ;ºé.”.1C¸M¨L¬üΩIøZy~rtz¸fø’ﬁ::l⁄Ü˘+üW∫\b©”}.¡kç	kõJö√àyøo:'ˇ~Q„U{úi¥ˆA≈ıë=.ë∆„¥
-`Pf»ÀÛ2ÀM+(ü3·éTQ…:…Òÿº´îgñãa˘ö@öeﬁ+†(ëÎ -ÕlÃ ≈Ë˛›îRÊÃ√√"ïV…t°ää Ÿ«ÓPlH≈ë/≥ΩÒ®V¢æÚœ_r‡ˆ.–Phﬁé@›ˆt+‡πac‡é.&}ˆî≠‰ÛœÍ–/`∆å(Êì
-Í·ŸÒﬁ¡ﬁ÷9Í¥G(ÏÛªÓ>o˝‹¬§Æ"∂Äµ> có.√:ørRÖë∂”!◊∏mÂ<ì‹r°yãßˆMÕ◊7–˜éyπ’ºM‡˜Dõ9‡E+ø(7Y∆DQ©Ug≤M*ÇÓıﬁŒ	Nàáãm˘A lEØvÀ˛®.†Ò≠¿:Yò©‹2ﬁ:£>$Ê˚‡7zÁùë]YÂ2EïÛúÇ˝—™ıXÿYJ‡ÙÚu€Cf~ˇO' Åé&)P[˚Ì=	¸Ì„›ˆﬁ{˚3¬ujƒ‘gÛÅÙ$¯  }ÜNa
-0+ƒFe™  3,∆+ı›◊~n◊#Œãz◊ÒûZ9òU9¿iWGè†‹–*Óñh˛ôol–Œmñ√π#@€ÂxCF∞Yl¯hlœYuéq2õËëocm0õtß∆qœÀî«1b∫¬û€M•4∑.2
-{=ª©ÃŒªß∑æWÑÖ8∑Œ—P|‹â_«É–x&˘w¯m1Üx◊2£yñπïƒ(Vº}!Jã£‡Ï√µn≤-C·‹"M?í¯§2ÄVHÃ=˘§{X•éÁSû~2F‚|Z≠Ü–˛â‚›E4yAË}qî9Ô‡…ÔR–ÛÄ¢@Íß»◊ÛŒZQÉj<ã%uLKÊSa9àë¨è 0ÄóŒ§ÙıCueIÅÑò≤ ÂR>_+\E±‚\Ö¶å(H>Å”C ØO¸˙Y¿ŒÈL…4ˇﬁsÍ~Ää∫Ée…B\ZKÍU◊≥EÂmïJ˙Ò&+®Ü√&˝»ˇŒ≠täZ‘u6>C¶T¡‘Hl5$√†2*€¢®ÏºMYkl™jkm)qîC„¿P€oa¥3Hö°¨Fπb¨F©y≥»+"=©É“ñC©g—•ü¡ôæ,±*Tê˙‹•Úº©ÿ~.π≈V5Ì˚ôô+fQMı‹RÛä‰>âel/‘ŸÙ7Ï?wì°©V¬éÚ9 ƒæ5±_M§â´ÂñZ!Fps∏‹m,Œ˚*3UŒ®e˜0ì® ñ¢$Y»≤cÎ≥Y¶i~≤“û-Ò•™¢µ∂ó¥£	XÂÀVØ2…∞’´tblı‚ü˛é€õR°d7õ^ïv˙+2Éêé#K$≤K˘ìÓûgRô!˛¡zzz%{ü-µP|Õîd(æ“ÈÜD≤†Ùú v+c¿Ew∞x%ª∞IA§¥∂ß…Z”êœ∫∆∫Ë»√Ä‹‚]¯î7 É+Ó}ßgl˝zqÒ⁄å¬\∞DB˚Yéö˛óˇ-8T¡Ìç<VΩcJ`ìçWΩÏÈ@IÑ7∫õŸq,ÅÜ—È¶2Ä}ß®≠±%&S™Á˘ê⁄\(ÕÄ–ís)◊Âú»¨*+Å»ÃhåÛö	,ã!âŸ£∞?ˇÀøI¸uÏé¶}-˙“1{îUa›hU øl˛≠ÔŒU§F∏ÇÄGª¯lô≠Õƒb}4.1¡_ˇñú—ØÉ{”πDƒ™Ωîû¬å|±πÚy∞u#nÆ¸’«fÀ¨%Ó‚|ëQÀ¸J©k®;çnî“^¶˚ñ0≥¸√n÷⁄J≠ñ–fY(	#›P4Oö¿Œ*OπﬂÉÙ<(ße—!	“ ˜—eÁi>}M9XîŒ ôœ`õ?ì;⁄£àÅ+⁄#Ö˙≤?r"5˘˜Êæ£MvÇ Íî–Ïﬁ®Êƒßîµ˘m˝kÕ´6∂€∑h›=≥ãîﬁb_`A=´≠ÀæÃ¢UææIZOüD‹ïtl-qN˘Kñp)b:çæ˙Â⁄-”çdîJı‡Ù∞’FÂ– /ùò¸]Äè=WÄô(∂◊πæ
-ç\AÏÌô[T˘ñ!^¿V≥_lGMq≥∆†Å∂AπSÒÙ/˙ßˇÃNºQ◊„Afﬂ%ñ™π¥ß1d1Â ñA}ioáÜ∏·ˆT7ƒ[%≈ü«ßÖÚ$$°reΩ_ﬂx»P∫¿2}pﬂôN|Ã.Zú}\^ÖCﬁétoâ9{Ω%¸ÂJ»‰"I_ã]ö@«œ*∏Ò‰,fÅMıa 1ü'≈öîÂÓF+Á< ﬂ(ˆ…∞∑9F˝¶l|BıÏ$ûb≈u#÷P†^iD9L€Szp¨cÎtŸŸï41ã∑¥kíf∏Ï√«ß˙‡ŒÚÕRû'‚ï@®§#≈Œ'∏;•Wˇ–z#g–Ñıò®=H-¢HZ˘ÇØåxÿã4¡ÍPgO•ß}Î*Ô˘"åä˙?I1¸#wª	Â_∞;ƒ•t^wG=DUÙ7Zr#ÿDïû€ÎÙΩ∞„]!1îqZ°±ßÖ<¯´…úYŸÃˇ≈)vd√!yå—q.ˆh=XÙKbmQåcÜ3û_B¿ù‹Eè ≠&ÛFxEÀa¥“|òº:^œπå◊¸>ñ±‹^e%∞x	s¡è$ƒØ≈“h	∏W≠dQ>7íWU˙®¨ÿ∆Ø‹ëêxÜ_}K8Uß»æ^+™∑õYÀ“€UCñjnCR™SÀÜVÕ
-l∑µ¸ƒ4ﬂ(B%
-qJ'•Í«ëÍ<,8˝	XJdNë◊Ç2®Xt7K&ãn3™»kñÃ*πﬂü+# l=€dFô≠Á¢)Ú*»î"ØY´à—ªÛdÊ,N~bE`O‹Û(ÁFuﬂπî'ïﬂ(ˆP∞™$Ü◊Õ4t_:£©38â¬’—(m…Œ≠≥´€≈/˚LûÚ“%„à√Úm…^&áE%5¯?SÕ∆ˆ√ã‰ü'z?i¶∂]~MB’!¡œ´⁄•T2∞tv˝YpîÛèô≈7fføÄõS˝q´û;É–-·˙P+ïé÷Nv-≈p!'*Ñ,é≠>eÀ˛˘oˇ´Hı@Ÿóvús8ykZ≤âˆÓñú¢≠ƒ77.µ O$Ø;BçˆáÅ}ìòëÿ©7o^∂O[oﬁTÏR»+ÁtMÇiô√u∑«´TnyâpÃ!”û3UKNvEA–ÁÁ.ïÃŸ…Õƒ˛‡ÊDﬂåûDIÿè˜N;≠√Áïœ≈◊W›=9´r=$3
-Ò‘H _5ÕA¥%Ωë„™NΩgqQ*¥üËÀU›ôcÒíçœ*?ëí{±dKó±(Œ¿'• ˚‘DÚ∫—pÎ}óÂµ™=é	4ßù1  0ôÜÏ7Ù®µ∑É≤0?ço*∑·vKLo6ctEÿÌªàÚ c∂ÒœÈ¿Ö1Ò%°~ó‰Åó†@Ì·±d3ÑF`A“îÀ0°Å’@&ú¸DØ.Óí{‹±cïŸ!æ¨„·’+ëægÆ÷5£ﬂÑKk&_ÒóU;oÂ¯‰Ë«
-Ê¨Q˙≈t5º%¨,œacé6≈ï,QZ.	çº `D˚ÿ£‰…Vxõßﬂä)úaa€¥n@” çΩ®LK≤≠øZ\ÆÆ∞sæ|~ïœ„úßÅ;qΩ·‡osÔSc≥™≠úR*ê=W>Uµ9.HÁ¥®4¨ ™Yq:i-UÖ¯…ı|¨˜∞‡◊ßÙ˝VU·z:∫Á2˝m§E„øm<ÿfS£Ω¯uh—^‹áÌ≈öIáFÖRˆv8ˇz’h/ÓZãˆ‚c+—§s¯G”†Ω¯¢@À\wÉ?˝Ÿã;WüÕtÆÊ–û…¨œ<˝⁄Ï
-45É8Ù•…ØxÿzπkùB<=ÃÆ»€ß~"ï_ë˜_.)°z}‰»SeÔi≤eﬂ◊'Û∆v•:*jZÏ4j[e∞≥"'y∑Q÷æòAW˚)Õl
-€ªWŸñ®/ÿ≤XbÑÓ^˝jΩ1K`ÊàÕQj{É»\ØóI¯–§cQ¸ÖT<óˆ*´°^¯ñrj∂ÃÁ¨^"›j§V3(Ÿ§5+Õ5:ÛîÃî;|ÈåõÏÜΩ∫tØÅRﬁÖ◊xcDuW˘çÔiò#ßœ&„uÅ™›¬¯onÀ|\ô{„‹vùn_Nw~ß⁄SU¬‹Ñ¿©™í`‡£kgFÜá	Væ”πÅOQa∆!©\gî	8Z{\˜◊e9=∆íÔ„à„QføVX©=*C^	äJé;!
-ôÜ∏ˆØ^◊ÄÌMÅˇ¨ÁŒìT;Ï[&S…/ïN´íú}#9Yˆm“p“ü¡t¡eM$ÂH≤0®ù°!àa5kç[°.Ç20‰ï0ª@¢<E≤Òı_«èÀ˚áÛ4®≤É$îG≈0å∂|/π˜by)ez)Ã‰u[*“¢7ÉÖ4◊FZÄÌÀ|dv„gÊ`£·Ìéœv¬ JLﬂrùÕd‚º;#'≥7eûåŸ.Ò,]áLâTÒzuÄík∂£U ¨iQt=Íıã¥– :Û˚9ÔT'…˚f&˚˙f*bO†∑™H|Î2†ö+íﬁã¢F
-K'n˜›ÓÂ∂tÅõK+º’‡©∞g‰≤N¡™´˚ÏÌ6ë‘öbˆs{Ùlxfe\ÌÏûÏÓb££Œ—ÀVgØ]dÖoÙ3 ¯›ÚXnÄúÈ–≤”√¡Ó¿˘‡ˆ,F~è5V˘bmú∂òÊ†,ÍÀ"g@∫.¶X£¡c!Ã–eEXËvù¿Ç·ÍpŸuÏ@sù	y«cCo4≠eÕí£s/≠Â>óô”£iä–Ö˚]àuÊ@+ñÓV·RãªÉhÆy#πfç‚∫õÆªâﬁZ|‰ñÖ˚LöByeÎâÁ"•d…Ú+∂°¯ÈZ*Òá«gà@±ëQügpQ°<vQµè˚õ%âÿBÚ≈ÈÅF]Q˛öüï8D≠CæK'ÄÔÄ˚î˘“	ßóEË˛Òr”
-ÈÂ∂¡O;'G«;G?≤”√ŒÈæ,ôπ{ÚrÔêü˝~wüâÏUÀÏ∏u“ﬁk‘
-Û?›X™ìµ
-àÀq{µ+•ƒﬂ â¥¿O_»ù¬◊61“†%Jâ©è-K:Òq f}ë.≤‚„\R=’x.à∆r∞—Ì§wªÊπÍT
-üeNà≈ÒjÒ}ËW”öæñm¨Ô1îEPk™^W4p¯÷XÎÒ5±Î>±VÒ(π"î>ÇäöZÍ©	?è5e“j|°≥‚◊r{Ø˙nWÛRÈàMPënö==ŒﬁR çÆÏ≥ÙÀÖo4ÂÙG_«_Rá“I,Û®Ã ’Af:≤zªôéˇﬁ¥∑_ÏÓúÏ∂_ÈOT•Ú>lﬂXlGïG≈€L⁄ruó1X¸SÆ%±(WToérpJÕéÕL9ôd,ƒ£¥π3Ú(Bäoó;ÿ‡‘k»Ó'æ˚(O‚,ÃhÌÓîŒo•e~VK‰åä2
-˛ù`gÑuR2ƒ‘≤ﬂ#√∞„◊ﬁ¥UÚÿÁ„ÀÀı©.ÚwR4&cudˆ∆ƒ0çÕT.3n$7¬Hú∂€>Q_Ê‹≤ˆ•;tƒb-x]¨=ôÀπ¡Èú‡§ãŒC‚;u·Ãﬁpúîºü√Øã∞ºQ∆ê7èCÃŒ0…ıE˜9˚∑Àò√8zµˆw-µUCgÇqO{p∂>¿û©áYK∫_≠N®ÚÛz§¡ö[ﬁPùèel%√Ö;ﬂdoëÑ’øæÅÊ∑oÂ}‚t&úií∑  Eb§OâFŸÔ≥í3|•v˘⁄~?Dg–‚5ÓN&&S|+pÏ◊7âÀVoﬂñ˛ö ±?Ó)ph%›cøVto≈æÎÜÀÀl€t©~-àÓ{œüÜ‹åuÓl“˜B†∆n◊;˜∫¥&%ßà]bº@ú(⁄∆"~ÁY⁄B6ãApL∞K‡:n§
-+˛Fà	@÷πöë m<CÄÊLæ?q„øL<∫i˛ºÃò•0úÂ9[b ‡> “8a,πﬁ°:1D©÷˝∞’”S_©R∏ Œ'âÔÚåáÍùf‚Î%&Ö€1;oõ€uÒå/˘™P6˚ë#ûQ{C]‰÷Ó¡ÈK∂’˙}ÎÑ"⁄“œO£H€Ã´Ó 6¨©3)ÈûòSÈy˝©◊'B;ﬂóÛÊ˙”CÚ”QŒ^˘.v‚L±–ìö8Vê+8ÙKoıˆ◊7 7oﬂñ˘™,Àì8¸<$ 6ä¸¨ióXqKOìÉRS+Æç)ﬂ’ﬁËΩÔu]¨=2 Òo™ìö∏A~uÚL>h¶Ù7ôæ9ªZ™fëÿ—i<∂ﬁTó¸ëìº©èË´ÙXJD'Yµ≥Ù'÷zo†eÃ’≠ëØ3ÖìP*K8õ¸âEgî`S„4,eÍÕï¥ãq\W‹bûñ“ß&ïCBﬁ¡∞*.Ë	q∏l^áÑËHÆA&>πú¯Ñ∞∑OíƒWO©0‘∂†eÀ¶BßÂ∏”∏„à∫/å3M2Ö‚??^p&N∞Ã
-#ÛïÊˇ‚çπø≤›mŸrznöS˘(€NK;ù%‹Õƒ9ä‹Õ‰Ô2~[	Jè∆µØÔåÙ’ÿ£ı´›älÍ⁄v∏Ùµ€,≤§ Ønîuª}m?€íéhñõi”] ﬂ+Îìß‰.2ñ*ºø¸ÈˇçΩtáÑ€9Ÿ÷∏àx°«C38⁄[b¿¯]ßzK2±>õªƒz6ºtÌÄ›±/«„ò¨LG¿B-≥c'â‘VkVËJt?	ç ≥$,.≤ÁV]ô=)G¢vT⁄⁄æπòtÇT.ÑÙù±S¨∂VÚZ'å(ó,"ë´`ñ∆Ô7Â,VYuÁ∏Üì·ø◊ 	fV1Ï:Us,èŸ´ôgID° }3e¢òÅEŒ˙∂ÃŒ!«w:9.db1ì¿˝õ©lBa”¬<v5º>€”azÜ™L’iÊÛ<«;«X7ñµ›	–ß>kÔ„tŒ<´Õáw'©˙∏Î3úPº¸™è≤Ì˘¥hÚÖ®€£Öc7Aòƒ>™µ¿DÓ%QóÌlén8q«O*+ç+*ù@GíÓyp*¶£ã˘P,˙%8%®}‡:Ω£—‡z˛ÉÕ°`’¢∞NÒ·z(ÁÒËbI‰§-‡¯=!EP&HÄ{BPŸSË2%√˛¸Øˇãeˆõ'	A'c,¿ﬁ ˆóÕAçπbX8ˇ`ÌÍa>ïÌ¥›În	∏T^§h77+|Ê$<ù£$E∑Râ$ı”|«û˛˘_ˇ#„ﬁ—U5ú¬M˚¿Ω∂HB«´ï—˚§æ√µpÚkˇ§6´ 0ée∆Õñ§ﬂòˇS\·˜Ùœˇ˝Ôòr√æ[{5S!ñçq¬º8ñDëƒßb	„RäÔºKÿÙe!ac–Rœ£‡8^gŒÖáJ& (ª†IuN{i¥ i+ôJ!lã&_X z¢ã&Ãè∆Oˆ`>Ûqw#Ï›“ëÑ=˘ã òÑ€'—âÌl<˚±ÏÍà=9˜´∆OYôÑÈÜæÄ&3¯W_∂)Ç
-)Ã.Bl%V∑Ø⁄ç∏Ìû!˝];Õ¬ √¬pÒÄ◊`é›ÿyÊ’å˜r\oΩÚÙFø$≤^±ÅúEUE+O´jîÒ†VÆ\∫Ö-Ç'Ô‡A E-ãmøxA·ß#ˆgLéπù]RÄDÏ˝n	ÇÚı/!ø¡±qeŒ€G;má‰ôßHIUäteónõ‘ˆ«¿ZùGÀ”XF—ØUÛ+3ˇ˜û√∂ú—%´s≠aé≠N:6⁄wsòÍ33„_∆!.JórW©$rﬁ3ï¡ËÌ∂Ù‰˛∞GsvÏ‹s=ÿƒ£”Œõ„›ìˆ—aÎ‡MÁ§uÿ˛a˜Ñ}ìºﬂ>ﬁ=‹1tßÚ[ú¸´Nî®K€N€ÆhH≥ıßu–:|ﬁ:|s≤ª˜rÎÙ§Ω[…Õ£0S…gÑÎÒ4E.Ø≠P“h8ÆØ*â÷ fMBæxkueeyc%yŒVe¶z(bHsWD9vGÄz.Pâ˝£sÂú±eÓ»sº∑ù{n
-ëy\*∫≤*2{^˚; :‘À‚ë}A¥‰nzÚãCÌüE)ê•ÓL^»+Ëéc }á@jQ§òπ≥,¸QÆ‰«≈>‘z‚®î(1HU~pºœKw;¨⁄Í!ˇfWù¿¬Wﬁ¢“á¿^≥÷˙(f_„˙ÌâsŒˆFØê?µ)ËQ»Qg„úÕYö±ÓwŸÄÚkuËNEâ˙≥€Ú•*$,Â[j¡'˜#Sã$˘14?∫HŸ÷Ú©˛~	k[Ú3?z=gTyJˇÃ‹…Ôù–ÉNËüô;YdæR;ìb1"5Ékë“E≠ΩÜ5ÒH†«HÍ≠¿u.{˛’à2œ`ˆÌº¨XˆÇT$˝‹âúC≥5–ã(i\B¶QsòÖòÕ<!F˜MJôÇˇAÅäÖ√&˝¯W¯w^éûWnV5◊˝à@x!¨ »∏T„ ó.€qFÎ8 Üdæoè À˚¿*¿çEiΩ>fh~o‡∂¶ˇÿÌ:}:∏(≠¡¿Ô:x¸√%mÃ,≥$Œ3èBŸ)!!…N∆Oqë
-\<åòÀ∏e2zÆµÑ+ô{(O%D∆Ù_˛ç·Ú÷i}Y€ßéG—L¨ç	V…•ŒƒÜß{∫— –D'ø.≈gZ\â4/ûaò¶rB‰≥û»‚úBWñ¶K“›Q„bœ¨Ç”;ÀW…Q⁄OÀUÌãÑ ⁄í∆åzØg_*céz}“¯=£-cL_	é72%R¬0Ÿ€+ÿ˚◊b6s’∂lyjHUÒôj‘Ñ¢ÏY‡9ÔÓºù¶≈Ü*£yR í '‹Î·®˛H
-e*LÿC√¢miöé˚E)ôrú-$yŸ«∞Í·c˛!b)∂˜Îµ“!x›§©g*€¡„‰Ωêò˘ﬁuGX∏‡~˘x˙`(3◊Ë3‡ÿnQO¢À≤X]WvoÕP®◊"™hàÔ´Ö4‰-ôrñrô>∞®ÜºôRŒ¿óOîå)qéÕuÃg¢kªÁb∞˘˙Jç}À*®'eM]”€{eYø√>`Z¨Ê}‘Ô∞/‘fFmÎ?√/‰	D<ˇ¸º¿U}„°&·%Ò/ˆBôÚËÂd¯ï`+‚¨∂©Ò˙¥ôG&›8§ïIÈ3k%¡}·4ÊÁ46g‰4Óøà} Ç%2Xó¨∑.Zoù`ë˚∞œ∏ÿhç™R^DÇVãA®ó≠~#æ i:‚kùG|•ëãn	$Kı‰\ŒUQbîyg™3ºƒpG®·>êC)Ùê@céó™:Ò∫π./Ø©}∆j
-5ã´ N~ï·r˛Úß˛áˇ˜ˇﬁ˛‘X){‚Àí+≤,f_G¨h∑ãÿµY‘Usj§Ÿxb£ñ˛T‘≤\a`~ñÿ„: öeE\a∑ØÔ€ƒˇù∆ƒo¨–2∑vı[÷qÜgNüx u´J˝-'òb‘_◊ÈÎÏÌé]ëöhÔO^à6¥3.€bZ1d6,®p‹M´l·ÒkSµç •v0J⁄øtB/öqC©Ãú≥Pgà”©¨qG'ÿâÿ4∞ÇŸ∏$;ùµK]´±«¿U<c|™UÙA˘ïﬂr}∫e%£\;”XçÇp±QUƒñ,”«ã&<ÎwÏΩ“gn∞pø◊â3Í9Aèıº ïËgdï%øW≥/k“´ZµæV2U˘≤⁄≠÷·˛õùΩì›mﬁ|·û§Åñˆ#•w>%/R–‹‘6Ø±éñ“\ò+4ÖZh0l}8≠Ú7i#Nv˜w˜ü≥„N˛'¥E!h)p%ÚèÒ,Æ°qﬂ•›BÕé=õπ◊‹ì¿,_ßÀ£JÄí∞uÜ†≥(æUæ⁄Qπàü¸Ïÿâ{ÈR≈¯e¸ì…ÚíøÄ√∂˝kªC‡ tÆò^“√™¸˘‹Kπ:ã?ÄJÁ_N†Õ	,˝–ƒDî?±3ù÷ƒœ≈È¢≤∫∆e»=¢èqDN‡öOπ1ÆÕ`ÀêŒU«ªpÿâﬂsÿÊ
-É·‰*#œ1»◊·ìõ3®ÎŒ§jv2æò>è9pWÆ¶B©*
-=s⁄<`◊O(x≤Èºnr™ÀõÁüáÚÒ¬Ê«¿ *X¥úô‡…Äå«ﬂL∂≥ÖÌbÜ[≠öKJ!‰–D÷G5_≥c£œIiqP&sõW1¥ﬂHR⁄,ê5íªùBI6~◊iÑñDwf§)L£•,GL«uN‹¿ yJõÌ	ßgCsVNÛ‚Ú)>íﬁÇ|≠∫à‚,÷É¡údZ√∂7Sñ™`zÊÙIÂÚñ”p‡/cÚÙÙ˝«ÀCü|	2Ôòû<VŒyÎèó[#XÑâ{à¬u]ﬁn£À¸ÅsXo’æˇÍˆ˚Øæ‚Êãˆ4p&?¢Æ¨›E˝÷'@‰F˜ºê ≥tV*¿?˝—°Ûà‹ƒ≈_”–•25Å?pÈÒ¿øha	orΩÙ’mìe˚£¨ˇØ»`,∫∂î˛‡7„4YûÒ±ÌÒäƒÔ}è
-„w©£ÔÂ«AêÑÄ,ü{º#e(–”êå% >KÃâˇÏ…?©˜„¿z°˚øÚV*“ÛızıﬁsØñı¸ºÜÂÇa`‚8˜qe 3´∞?2¿bﬁ†WyZÂwH˝+ﬁ]'Ëˆ1zü˙hG?’û™ïƒ;^∏˚aÏ,º¥ˇNº∞âØº ˇœ^o“ßé'^$0¡Óü3˛Ø(É«Û»RØ¬ûâoÃ8u¡ölp·“W≤ /Ù∑K’§I{¯X∏èÛ	01âøï!U3_zsqﬂÈıvﬂÑ ¸†DP≠pzXYJÙ.^ínIÙ!—C‡]XwrªÑ%9hjÀÀl˜h-Y/≤®Æ±◊[RË—^/º 2ê6=ÂJ
-<á¢"BE¸;,¯¡ﬂ›?r⁄n◊c+z·D˛ yVV'§ˆ-˛wNk¥uRSLsí”ÓΩ€˜∫Uá¸≈øìo©üéuÔ‰∑~Rn‰|ìj^—îΩ!Ô∞°ã3¸+±ç≠ pÆﬂ∞øAd¬˜Ù{6yì¯◊àÚ∏ã˝æ}˙¥˙ä†QºSY8„/Téª!¸‡Ì+«>–¿≈gC7Ω≥Å[ËÉ7_´C\ÊÔù>Û˘´§∏ﬁ{∑∑u›“*Aπï\ô?ˇáˇi˙b—˙TdﬂzQ∑/∑JuÀœ€æ?f«ê&é71 §€«πâÃRÀ€∏f£k,d¡›„¿?˜n-◊xÇ‹çÁò˛LXß¡û∑NvZlÔËßV{è=?8⁄jtv∑_$Ê7ñ‡/∫“⁄Á
-rC‰ÿÛ¿ªÜ-u«îØek‡_≤≠Xò√ÿ˙Ê;È4V÷ñW˝ıh'l∞c/‰¡.®ìYb˚n∑!ﬂÖ_ŒÎ††ºÕ≈_è∂ú‡Æ%∂∫ππ∂Y˘JÉ£°˜A>•øìì^y¯a}ı¡√ÔÍﬂ=⁄À- •˜zÛ*z¶3@&Oq.ä π"ÕùºKéqeØñ’Të¬VÍ_ÒuâcV£a&&_Ï[:A GtèÇ˚ahG±ƒM"13@rgÇ!P…ÿ»Ω¢±'8ëp{´ gØËØE⁄ÿ⁄+˙ ÓÅ‚0ÕIæƒ	é≤ú·!?|áÍF¡∏N\êr\l'Bˆ¯EÁÂÓP˘0yö4
-’qáœØVƒ»q˘È‡DK.7œAÇ˜gÕ~ê6‚çjdŒÊ˛Ëéz‰ƒ⁄QUE{8:”¡◊G¨≤ÏÔ6’1˛”
-QÉpzr¿áòÿﬂ‘bq»◊á"2J⁄®ŸUÖrföão	jJΩ
-vïJ	W´‹#ª+k∫¿Ê$†:"¡‚a£+0⁄ˇ(æG•Õ¢Ââ©pUæ!(¥®Ê◊ÄÈ´5√"yp\›´ò·Omó ΩƒÑÉ•i”{€˛q˘ÎÑ$˜’Z ÎxÈ˜¿—Vk∑å¨◊Áﬂ™´+ ˘}ÀKsÎ˘0Jˆ[Ú‡JÌˆ-ı,⁄AòSk•ﬁïÀ°ﬁSÿâ$¡“¸Bµ≤Ï˙kmm+Mh> ƒ&˛^˚HÿãkçC´ïN•Á'~âÿäƒ8ÍúÖÚøNÃ[°ŒôeâØÌ[(–TÖÏb¿GîSè÷ª∏nõz¬wç®ŒZ
-|‡«ºf≥€-$kõnC4ä¯Ÿt+	–&y>í[è{"`Ÿ›Va∫Q8Z˙R>‘≈/–ÔÙÿ8$·2≈ÈÃå¿óAπCÌgË*…∆ŸvÖÿ^é∏”ZÈ'%ﬁ‡‹Y-ÊŒîõ©ÜbKk	ˆ+˘(ıq>5ÖRoãjÃ¢1QÒCcÁIpù$b¸4ˇÿ>:låù tìÔ≈åuëMeU∑¶{_æD’≠Y)âÃ£,Í∏5|RÙË{ı•L≥2∏-Å#⁄Œ{$øNx=Í&˚7—©çÓ‹ Â:ƒ .ô~àå~lô]"6hT¢µ‡¢Ω:0ÍYë¢s˙&˛õö≤wHç˝*ƒÏ\LvÀQXì©íª‰ù§Xı*≈n9$!Jàü=°E√Kçì∑∏ƒ+øN“l‹ø*“âª)âL‹ç%HqCH—ØVrlRò?#Äo2:	úùÚŒØ9k^K¥kÚ(~Õ#÷õò	‰w˛ípGøÒO	{tÉÍ∫ﬁ÷¢nª¿b	÷IìEJóËå=KiÉ∆ßﬂK-zØˆ¨uóG¢˛õ∆&|x∑ß®òÉRÛD_TÇsÂ Ìùµ›‡=à≤.†Ï¯›ÈêXúx*ï%¶(ò *˛§º'EÀ©˙\UéûÔµ;{˚’tV9=ﬁiuv˜ﬁætŒÂO◊3Œ'~}£¿˘-ªπ¥Á¿›¥áó:6~ˆ‘û‡˝æz÷Û∆òT8òzø©(ÿ3ï‰'ΩN|ÀÎ¥ò≈Ÿ>Ÿ’,Œà™ë·Ú$fÉ˛≠©≈ôé&”ÀŸ÷{S($Ñ∫<1Áh8÷.Î)b/‡6‹  &<$ƒ«ü;ŒÄ™Çrká2ò+Í%≠ês&
-í˜P#úç¨Öß°ã™˘`X}€;óNüµF H◊Œ%ïî∏®FÈEﬂO√ Ú^oüΩ≠ôàtVz4F¨x˘`¢¿´ÏÏÏ"D‰Ó≠5ÏÛN®ÄQàäËa£¢a!Ç Å3Rõ∆G“HÉGz√\2Ô¸†%…IkÇöÏKºÕu
-nO,$ yB”∞uçB≠kùhiCS 2UŒ7¢ã$ü¢|3ôvOCÉ’mÊ[ÖòXòi™U†W˛‡}‰O‘ÒÜÆ?ù»€KÏ!»òí·ì”Í:£˜*qx˝…p∞∆ÔU≈póTˆÜõl-∆	”–›>:i7)^:æ 0|ëæMe∏:éá· …'gN˜ÚÇÃ†€˛¿«|hˇÓú.ˇ¯£Ó hp˛€àŒÑ0àY—Û›hÀ¢ˆeˆå_tV’Ó“)‰Å∏4(k<p∞»{Öj–§jbÎ^yXÓÃãﬁ¢_ øwÊhìe_#à‚wxäi‡ãJºC[èÌW-ù Q¥^±h=ˆπô€@}ıXÕ¬€~A˝ß⁄ﬁf‡ÜZáÄ	ÅØt.H:´P√$†`öØ* ZÊau$ï∏u∂˙=‹~˙Ñ≠¿øızÑxÎWﬁkaó´÷Úáâ*/õQbªúAR7∂cîö;1Ã˜uÁ#ÔªÓDìZQiûùUr^Òﬂ∑Úºﬂ¶Qï7º@(Œõ ÄTàV<dÂó«£ N´çïËKBjÈù›Ìªµ2Fj6‚ùçJ∂5∑Í>¡?ôáq¥c¯D€˚ÉããÕÕ¥Ÿ_∏ﬁEüÙBbå}~„∑QØXúY<ª¬ﬂ—$Ò[hw UA¥b“1¨>Wp‚äˆO˘±¯)áﬁ®r…<;ﬁ†À—DÒï§⁄Í[¢ÁoàûøI0~∞€‰X]˛ÎÂe‡Ç*o*µ€º¯6√üÅ–ùÈŸ¥
-“jNŸ.ﬁi¢ º@í{{ÀÃÆG≤)º’V6Ü ¡…Bñ‘CÂ6f6Æm®qöï‡ñ∑á‚)È4^◊"˚L¯.cà‚
-póˆD~_ÍüQlŒïtˆÉ=Í¶=TÖE>…µ8˝π™,ﬂü≠pP∆HÍ~IN+˛4rOêstπó ìäÉœÎ
-ëïŒG±[Àìõ¯oâ–üÂ	¶éR≈íSÀì˙áﬂìn?7H≥96‚^'j¢oìÁÓC6>´Ø%´ïic<”·õ<∂”ıRû}è5NNè˚´‡uçáó‚&}∫&x 5ŒÉ˛Ã—ªdﬂ®åw˙ªÀ˝’ÃX≤5ñ¥uï4ﬂl_Œ’P ˙°o/}n\x®ò!ªG√qbÑ¶8`ÁCéS'XÊ~ƒ‹ÀpÏ¢ óÆqó)T§q”ª„EêkN⁄„Qô¯ŸETéu3ÈÇ'˝]◊sùÒD2@≥^‰eg»ß≤˚È©uaSæz¸5âÁ™?U*hªÆÎØÍk0Ñ§_f∑è U°˚Œìõ’∑l˘)€ö:ìÑ∞&ºxRãüı„À˙≈bL›Ô¶∞ˆÏ•¢m7Eó>HëK)∆ÆEj+Ÿµ8÷ vıM-ç~Y ∂˙P'—ÏπLz7Ø¬‡†ê‹ÙÃ'$?e}7i¥wﬂ«ù`
-Îƒwbm„6Ìï¨Év&1VH”„íç¸Ç3C-LàõáX2U≈˜◊3C”ú«)U“2∏I“gí9≈à’[<'ã÷÷U≈Çwêµ
-ÄX
-&–Ü=]ˇc—°ÚûsÕÄeê˙©•æ∫º∆ÍÍô∆©
-pÚÙ>Ã¬å.r +ïå”ï¢ìö`I•ëA†!Ç*b¶!ç_u¡L±;g:ÖQvñ°<ü„@ ‰FA¬⁄  Ú√¢‡ *4SÖá!î¨ƒo ‹∆ZèÎ‰:.ÁC£gñ∆óH^0 πﬁ˜z=wTÄ£÷ÍŒtí=ìè't6≤õƒSï†\çﬁU˝’√†ÊP?ûÙ]`ÀìììÃá6@‚Ò$08ÊOgÈ…º»ÅÕÕù‘#Í¥<Èﬂ◊PçÉîQÅ¨yËcÄÓs¥¸ùÑq‹Ë»áí€>"ıè>`„0˜]t™tå°˜∏¶<®ó4
-Äs‡∂e
-¸3ÓkŒ∂Ü≥´;”g~ÔZù‡c˝öâ?r¯ç*@«Æé+∆"MâˆîT’∆ƒ
-ìÄ'‘$úD¬ÊL¥—r2‡®ã
-Ëê°6zúó'a“Ko/·3ÎSyz…¯∑∞¥öu5wûû‡Sul„Ù≥Ù˝ÿWP$÷™,Ô	/”Q-•ú5˙Ú	Î~˛g .É¶‚üVò’ÛóÒu#|ûrö†%=≤tãÊq⁄ºõLù≤îQÄfØûÉn&kıûw·M¶U˝ÛòÙ·çÅè™Õ¬Ê◊¿uAk 1 ›¬rBEÒÇûÍ9â5Koù	.ì{jµu?3Jk´Û*[Ë<“Xòß∆UK#ˇ*pÚ–FÅû	}áπû ]:w´ÏRÖ•ÇFcGFƒ¶Eâã∞Ly
-èÊ'∫ã∏Õ÷ãÙX`ªL˙Ï¬ljË∑M^õ™^§Ë%J©Do}√é·¥Ol™p[ñIò}œ∏◊w.]ä«sÏ°»'$nƒ…C6sw5£ÛÌe
-]≥ﬂõU.»4ïwÙı^⁄¨ÂÊ kFiF –àzr≥yõ⁄ÅkE$îL+∑MÔ:lÂêãy®⁄®‰¶–0Èã7$â≈£[y∫Â¶CÜNPëä´‘(z∆k,÷<Aónt≠i‰pÊ›0ÌÖ‡°)≤¶Ÿ¿bdÌ¥D⁄ü…^˛mâH¨∫ÉôˆéÙ¥˝Ìr°˝·Ÿ€fŒ1πë¸ÛïËQúìÍOï£™1i∑Sê¢†ìÑï#C ËÿEßë˛ÏÉùN|ªÔæ¸—Í,™Ò},∆=∞‹í¥Øj≈€eë?›Ñˆ£≠à}á≥–˝Ÿô2“4A#Jíót.÷ÁT∏ùÒÕ””b](\¯»A,ªÓÄ◊}Ùû‹(!ËE€£Mıpˇõï3O<9©¶X…õ\£¥^∏]ÍÄÄÙ¯ƒ=)Øø}ïPzÛÏıpÏç*…√÷dèâèÇq™˜5àúˆv€ù8ó@QvÎ~ôm∑0hs0.2y3Í¥  kËÑ¯3π$ç∆Á,NHµÏR/œÙòüì+ÜÉî¢8¢4:ç¨∆h3∏»S\¨6(
-ôüΩoÿ^ Õõ8!;Óp„Kˆ∫U’d≥‘çœºt¶§…Ü|[sÍÖç<∆ÙPJî–ÈõÉ9	∂å÷•|≠SA“<n¬ËP3+ÓtªÓxÚDxL˝÷‹0∂Í§p≠“HEv/o\EÑdn7ËÛ$ YIß@ˇû3√å¸™°¥ITΩ°±ôH‘Tî‡nM©U$¶Æß±*Ì`=+óHπz'øØÿ ·lñü(4ZßÏBE)™¯u≈…U≥—$º·ÉÓì¯ù[Ê ‘r*öÌë†pˆŒÌÇòÌ π»˚,
-\ß|åbL—ó
-+¿ß≤Wß›m§æ‘~Â+œ¿∑å/dìUD <°°jcå¡çw„ãZÆñ+Ooë3£$L˚ƒ∞˜!F’ôΩ‰ÏÚ–w.N[*-ÍJ¥å°•÷¥Æƒÿ÷ÂeFçã@å÷Ú’ïDV?˝™hœ¢1wòÚ ¡›ΩB¡\Ã1 G{:Ú&Ïj'nÑæÿ+Ç<w<‘Q+:Ä!…V∞ˆ…CöNº¸¸¿©5 xö∞=écﬁº$(Â&yÂŸV◊ı˚Åíàì-M2h˝^j˝@Â‚'ø¡:Ó¿˚àõˆÅ›É˚«Kc]îx>É_:f“ﬁ¸‹TkF·;±'ö‘ÑÎí•!:0ﬁE˜zt∞ÿO¢A™¬ºe˚òˆ ÀŸÙúsÄKV˝Å2∞mLb¶3Â™ú≤€‚‘»,ñ«&õ ÍS8>	ÔÀ§F@wT\y∫Ú±7˙|?ÚÀ¬ﬁ»\V‰Z‘Õ˜,RÀı&
-ı“≥Lœï¥V]JÍÄ≈v≈_&_å¸ë◊¥€eÆ;kKö~QÍ∫}û¶·˜ì~ÉU'ŒÒŒrÃíõ\&ÔN,»wüp‹v∂ÂåùK÷∫òé.ÿ·Ù"˚~Åà;{ï0„‹RøNÒÚìágÈ8kàê”õv—·≠ æzJ–^˙“Å˘“›3TΩZ}9-~zã_Ú˝—y!◊vyRﬂπ∆Mq4A]ÎrﬂBˆ¬L?Äl¥Â`œ1u„–˘êSù!˙j¶º/xıìUÌÅ^£®~X’–}ˆhemï=ﬂ{nﬂ‰˜Z-'≤2˛:ÅÛ3‘Ÿ%`g˙nJ:ròÅ;U:y*¿4G…>ÙÅ–_N¯å◊o•j-zDÌÕ‘]ÙE·˘∏)E∂¨È}Îá
-Ω„RNã˙„TZÀ¥ﬁ`'ﬁ®ã»∂Lœvº·‘ôdCÑ≈rú∞#«0ëæ∞
-ŸX@ı‚3„Åd∏:¿Ó:¬.ˆ-wÖ€‘”.y´áK“ùŸ´VT£:Ö±ÀR◊'˛ïﬂò|≥À‚Ÿ¥+øn‚åöîRÛÿ}»Q€PÔ§±Åv∑≈{∂ŒRÒac8◊*≈2¢	KGûlZ=s/ö» C[™BY»DRvÆdû’WUˇr"4Aõx˝nrmjQÈœ¬¬üve?Ìë˘SÛ"2¥#ÆÇPpXbË SŸ1>xi©…û»5˚zyZJ¢nI1áÉóŸ+*∑m◊r}î>-DyÚìÇAÃŸõ1	>Ë∏.„Ú:/ÜZ¸‰ØlyyΩè ∏%ÄïTŒÀÏ4pbæ‰£ØE’dæGFó~ÈÙ&cáˇ¥Õ÷ÿﬁ®€_b¢¿CﬂzòŒ˙8öÄ˛∆"@ˇN¡˝&]à}ÛMédqLa*‚'.KÑ+kªÇ©®2]–‡xRﬂ,àâØ‹æ2qÅE1ÅÜ	V:ÛZI©¨É5πHegˇ„Àe•%™ç™p>áoÿ6¸9¡õ_üÁ?°r±•"È
-¶/π„al‡Sjî¥Ú©ıS>	≠ﬂØMﬂå¿ƒãœ0,P∞‰å>Ü%Z S≤TF`JU–˘”g®höÍ¥NC`@˜F·d\Üû>ŒUNt.UÒZÆ™òÍµX(äÖÓÆˇåYœ;ÛQOH´æ3ÒÍ¯Ê‹>¨’Â„Œ{¯óNËeRÿÒK∏º∆‘'Êµ ı∞ÊV‚r&«<ﬂ=p‰ÆõUõC◊Û3Ã!è±ñÅio≤úàA+)™Q 0}uwè≤VË+)∂3ï/˛}-í&8Í}7˘aU”∂…7å»“¡¡∫Íó∞éAÎìó
-VéÍ=îÈêzO¥ı4M5ôuÕ(ù˚ì}#JWéŸãVW0u∫∂Õ–Ò‰·ÿÓ—w∆vcß◊£˙ïçÕÒ∂	ˇ1¥¥)ëò©lµBóÈ˚¢‰@S©8†oâP˚–µ&njû3Xb(◊C`ˇLÉ‡ı‡ÖFYSì•®!í ∂ä´Q_áˇg’Üˇ[f+ç’ö°è®îC”@cï ÁÏ1˚Ó¡C£ÏÙåΩ•Ñ√UQ∞≥≈Ø46÷ñXUÌ§Œ6V0â˝wè6j∑µ∑∆Óö©OØÆ¨m‰ày˙Ø7„«)yÔØxÈéèÔVîxG˜ mñ.hmÄZ_Ç±Yq/√q.8~îÑ ´ä¿@˜≥{	ú¥Ìcmd<àsK;õÈ5g‡]åˆxΩ2ÆUÅ(öìîqº∂ÂÉ∏=ƒ”0˙ıÚO^tˆ£7WÕá_û§¯++∆∂ö›1)pá(à,©≠ﬂ'¶Õ≈=IZnòz‡Wÿ,LüP“§hétÁgâ)ÅŒRå∞V›uÁ°SÅâ‰¯Á≈n1M"dÂŸ8;‹ïƒ —â8¥d‡êî:%4[¬jnÑ€WÍ–◊◊7V77·ê»üôXGeD·lr√áò.„tﬁ|*¥Ù¯øäff—p7æ€‹|(lw0^˛π’d˘a)9CÃSÏ!û≥Éaæπœ˘¢ûR§ZT  gF$ÉW¢¡KR˚áÊ«ØæÑâ¬ññ¯Ø2 A…Ú ‡<ãw${≠#kn≠E.xÂ ∑mË|Q‡ºÂ—·y‚Ø¯qãè$ø≈£È†¶QH˝mÆ“¥(¶>	ÖW…!ÙSﬂÁd√QÏ9aﬂä–•û¶A@ø—ÊÌÃ9‘È ?‘x)±ÛysŒÒ7™4HO˙coíINΩiƒ—ÇE®I'‡E„˙†‘u•íÆáF“5p'§úó>u”≈™J8í∑ÎÉl¬ôlîx§  àVr∂™}z“Í∞[≠C√Z¢Xß}2÷œbïfa$ãèÈGâa É$rm25Ç?7Õ®ÅF‰o¸é; ±$∏é∏îe¨∑·†°~:‘ô®€OíøÃlÜ°]äœx`ÕöŸ»¨°◊mjÀ£µ<I~Ù«Å ØúqË"Ê"{•¢œ\dıXõ»0Ÿ¬òYR6Ëe'ÛàË4–öx !Iå¬çG	ñ œåk¸¿j˛ö%ª’aSﬂq¿ì<èE3ß˘úeçM„jH«è˛π%gø®U‘ıcbˆi%ÖWÔb÷—êïSyúÕŒ?4Û—˙„∫±˘Î9Æâ"
-ü∆Å5ıì€–º¬|Ïx)9ŸëêØ≤IŸÒ*ôòØTrvãw
-Ú≥„Uê£ØOF±_ü˛À“@U√»X"Ë’ò’Øìq8µ∑∏Kw∫I@Ø∆Óto4	|¢ò1ÍÂ;fq“|ØdıLõÊŸrÉ-Ëﬁ»cóh>øDx…»Z¨Û¢ÍÑh <sÆú>Ω!lâó.Ò©É)-C7ú:ª!„Ÿ%å;p.°aŒ—iŸâπ7	oDiû˚~œ§d‰ƒhv=)àÁjiµ¥mN>=≈~Ø/Ü˝6‘õëOÉ4’Ó¯cΩÚπX?]@Õ˚Òßbk’C4VjÖÌbùxÃ£HÌË·ëπÑP¡H›ûw(ﬂ…°¸ÆÛ˚Of,ÌVÁ¥u∏»·`±2[∏8=iÌµA‚>lΩl±≠÷IÎyﬁXÃËŸXBâO mór·=JúKÍ∞ƒ&óx“Óö˚º‡0§Hiº“d≥Ã9F1F«æe´≈REŒwÛ na‘>
-0!9h%óäﬂÁd,é!º@N7ºœ±ã≥6«»—√ª∞tO—∏Û∏&tÌ5<¨Ó0pFóXwl ßKúI»»ƒ#≈:˛9»»û?	l‡˚óFKt⁄
-Á∫q¯√Í„›MQó›˘P]YbYù©Óﬁ5 ¯È≥ƒ‹·xrΩg˛ﬂ¬®Î_ﬂ»◊nﬂ*ÿ “Ÿs¢ùÉŒWœ7œ,e≈ÿ_ü¿>ßNä‡ŒéâD¸ªÅÀ$'6 V“·OÑ‹˘Œ?ê‘•§'ÆBä…∫√üû8=oäÊúë·@ÚìQxg‡u”ÿ ê‰$Û‘7!H£ãßøï”›ïïg@&œXûß°Ÿ€_ãpÖ∑~à(‡
-fXR÷Y… :FYßÑë˙ÖçªÅw:Rûô∏o‚•$ ,ø„ûM'ëåC*ﬁ+Ár2≈gX˜W∫≥£ˇd?]•ùØöYÃ°‚7!‡xg2\aù0J<üµy">+l}±ﬁ(°◊Éœø|ìÛêï—/¯`hù(Dø€å¨Öj¥√RûCFh<ÏÚ%.≥JZ˚üc^,†TñÒ˘é'Ö&^„6sóæœÌæáN›üÃ6+qw∏ÀäWDn wã»ÂS.πm…ù¢=qÜ„|Ω´Öc^ ¥eùãB%∞‹¨En2xEöUÎ	)AÍVmë3'ã¶E[Q§É,˚kÖ≠áﬁá-`\{/}Ô p:òx„¡u¡{FœºÚúVrŒÓΩ`ª`ô91âıÉí± ∆…íw|Vèó[Ω°7:pÆ˝)•≠}ˇ’Ì˜_}u>u)*=nVv£äg«È"&hw†∏∏˝˛Ë–yÔ]8MC7¿Ωh,ü#ÉE‡ÜK_›6Y∫#@ôÙÔ^Ô˚DóMV„g$Ω˜=jÑ_z÷dŒË˙˚Ë{˚Ãáè8£Ô„/√Õj‚Mc¯8âsÔ‚’kòtç’ıG·Ñ˙é≥'¸ï∆π7ÍU´ÆÂRÏì'O¯Hÿ/Í√^∫£)O‹ÛÑΩ¢Âñ»«Î!z¡•≠#ß}Ê;A/:L^¡ïo…é|*R O¨™éøMC©¯WfÄ¬u˙Iœ\‡	9òû± Ó∑;•¨&XÁ*«Cå>œN¡:bà∑K¶…Ä–å.jaj.[ÅÁûcà”]Õbáßc>¸k˜25á}w‡˘¨h=«\◊À†•ß±=∆¥òá)9V9p‡`“Åw«L ⁄œ©V˝2DââÔ6ÙÿÒ{˛R‘ﬂ1 œÖBWoX—vvAFõ‹®ómg@&èmLkwµO∑Åâ3‚Í;;◊∞‘É®ø4(m`MîqÒ6Ïˆ‹yÁôÁåﬁ;qg€}∑{Ÿ˛õ©∏qo-—äÌªS
-AÆ‰ÏÏ˜Æ“qrs‰‹Ò3ÈÕâ>≥˜oƒ∂‡svéπ3Í∆´˙3ew¢,ß*,A€Ù|˝¸cN¢.ZA‡_áà“@‹’ã)^≥cè˛’wR€ô?äó—˜F°∫∑¯vˆ¬πr<}ﬁP_◊ç°ç‰ê±2é=ﬁÇgmw.ºæB¸®¨πå‰Qçi–Ìc „EGUèèj∆πXÖ‡:ÍÏÿÈ^ßß FËR5:j	G*‘˜DÍ:7µ_ÅK9)‚ì4¡πœ-ÅÿØ`GŒ‡z‚u„eÍ@G(ûéïqA+/ÙBõ8Ò˙ﬁD÷qe€`›…ö≤sîK˛Ä∆p‚ﬂÈG5ÚÅ√‘ﬁ^¬vè—s]]¸X¸ΩFΩÄúøòû6—®ï∫hœù©∫¸˚¿&Ô<ﬁX3‚xœ ‰æ≤\[˛á∏ìˇr
-„.D;Ó•3qÄ€7˜¥[ﬂÁMXªsº¸Ûœù„tO"˝:R *í'ª¢Jæ∞á ¬SµbOı∏cÄT"¸Qg ◊πÉ«0Qw»( §"fi]ÜÆRùiœã¬¿˜ ˇ
-\·cv‡ˇ   ˇˇÏΩ€r€H∂(¯ÓØ@±´ª©në¢n∂¨≤Ï†%ŸVY∑ñdW◊÷÷∂!Q"	6@ZV©qÊÂ<MƒºÃ√yõàyô_òà˘ás˛aˇ¿Ã'ÃZ+/»+  .ª™O±£]B"3ëπ2sÂ∫/ò!ºä}?û`rNeDº@ª7.QT#Å}¶%CÖ"Q	 m¿w2]—7˝&A”{œI-)ûÙ:é^§ŸØ"È¸˘HÑ¿¬ªÊÜJÕRÂºöØ
-Ñg7“éì˘∫∏Qã7÷Œ‚ØŒæ„d1Lu‰ò~;ı”(Œ	¨Ì$öcMÓ$ly&ài0Hˇxﬁ3˙à^ŒÈÉ@±Îw≤{˛Y•”bÜH]9ﬁÎ *ñÿÍøòƒ7:π<g◊ÂzΩ6†°aBñ‹ÇTÊŸèù‹©¥5Kt!òÿeM<#õ¿∆]pM	}2gÊè–dﬂ†O¡≤µy"¯•']ñ˜ˆ0ãs¥ä)ÿ™[∆{ò2è'√®∂)MF…$	»¿Jºc≤ <…ÆVi—¨L&Â›»Ä@|ö˙[5“VÚ1éd:O5øÒ¬√˘ÈFY:nù¶Y+?cTÉŒY0IßΩæÂ÷Æpˆíì>”Ñüx¢ÃÏÅ=®€˜lT(’ÄAM‡˚ËxçöJ9˙h)%b∆Ò-v∏∑L≥ÆD,í˛°A4eÚrﬂ˛V¨Â3T`9»;îô±•°Wy„ÓΩòü¬eœï{â≥åù¬•¸\˜-_Î`§J+•ºw9=Å/À≤Ø¡£Ù#÷lÙÅD—≥∆¬;Íe'Ë„?Á2TÆk´*ß©y‡Â	Âƒd±¢ñVÓò:æDÔ¶<…%qâQ˙ã‡å8ÉK#ÄÅ”áˇÂÓ¡ÛÓÆ;5(üz„È…ˆÊ+_vÎ˛¢U6.$"„Ú©GΩqD#æ˝4é[¸4˘Åî∏j"ÖÉ˜–6Rß
-IhEÕ2ÖjUr-/
-<1” —¢víóÎ<ßÆ'Ô∫>Æ$"öµæπ3K[W4ÂPö:ä'£P≈VhENl—
-à—#Æ»dˆœ√å∞‘x“Z√â+Û√fn›PSVO&˙U>*≈µ?ƒÁW…‰ÄÁò0mu÷P//mq%—ZòK9,%‹KÕÏ•Ma.s9∆s"˛çr˚ûq£ﬁëpYè„»/∑êuÄTY)K>:˜ôT0Ær)Ú@$Ä“¯_"Ä˘í3)7Æã®»±˚ïËÄŒ¿#≈iØ+-õGœ÷ê«\≥•Ô
-‘„ûT,ˇ‡]p@D´f◊£%⁄=ò£∑¥ûÑ“Cœk7êõ”â¥ë©Î∆πı…≠∏Ûë≤Ï7 AıN¥—`Ω&Ópê áÜdÆ)»yü˛ï1’òÁv? çCÈƒêäú®¢HÉnNÿ–‡º>‰Òü!6±(2wöu≥Cıº,¨Í°¢ê&´¶âvkîì[>äØ2ûìólS.63Ωº+˙—#<¯w‹_“Û2ä#¸¢Õ˚ì…8__XH⁄„å∑{Ω‡8ûA/ãKN´ARçQ±˘<Í?∏“⁄«’©ã3ÄXt'yg˘í4Ú`“äíM⁄Ã‘°ùÙññ+„!,≥Z£¸TìpÙ6E9d:Lr{Pµ“Ûåê©£O≠§'õäËA˝˘E˙èÖCj£5T8Èı∑Qˆ›Dü8&#fœ¿ô&óóp–>b:iÃYYzwe≈52VDÙ¿åJh∆˝])£uãìo|xÇ6P7qwŸêÀi®t0ù@"∏L’˝dÅDÏÒ…Ç–r?x¿ÑI¥I∂“^.Æ√ÄÙ‹Q⁄õíÃØ‰÷ıŸ≤ÍÕÿüßg3©≥•6€ß°Êõãç˚4è√ıy<9¶?œRFcLH‡ÿ¥/x]&ﬂEØ6™ˇB>Ím∫pÂ™ÕíúÖ‘Ä3OÌväg≠·E8»cµ!´Ccjıñ?®Mû4
-≈w Guê £⁄TJ]„Ä^¬Y®£ë•ÂcöRe‘-PÎ7ÚQ¿ÄFp9<m‚ø™‡±›eö%±≠“ß≠ƒ‚Ò¡a cA.M«•∏#µ≤◊>≠≤¶π∂¢tœS:ß≤Â9≤MpÄ˘∑V[åË5˜r{çs<ØˆOé∫Øç1!éÖÕßsHJfkT≈ªÚÅÌ∆Ë›ÃT'Ê∏v∑_vwçQ©Í◊òB÷·ëxS>ûnñ'c©÷3‘=<8ÍÓCÍ¬±ö◊9@Ê…eÍè|•HU‘∞ÛGàó`´I‹"5P¢\6\ªÉóFú3dloBÕ6Õ˘S_«Ÿfà◊O!sgàD;Wh∞®÷ÀJV<[7ﬂŸ„C¥s*P£˜‡≠M„•E%Mì†œò•kè∂Ä˜„È˘0ô†ˆ+øıÇ&Âﬂ“∆Dﬁtø>yu≤∑KORÇ<U¿∑1'n≈·t0i**Öo
-Ù"4 ﬂ=P&è“fJíæA^Ó/¯c3n˜¶Y}ûPòZ`¥l*^π‡˛«“∆J&rrä◊öp‡Í-†–◊@YY´ùÚNoNÌı˚†âÍ>znV1∆gº1îáã™»Å@<¢ÇÇJb⁄È{çGQ±Ü—%P¸&†Ìkò≈9¨ò5	¸°Â ‚¸8Œ>$=Xh2â≈%`ßœ;@°ö@"ú’g~j1õZƒ>=øa4,≤‚úPnOì»Q≥;Y/¢%`§Ñù„"aN≠é≤92\TKs≤ÜˇÌm≥ÿµm,Éybá/P˚“\úª^?Ø6‹èXßJkdG⁄˘xê ¿⁄çπˆ87Áà
-◊¥¶Ïl qË[H›"¸uqKãÀXÆ⁄ Œ‡[¬» |Ó‹A%!‚Ò´pÙMCVø3∂˛ßõ„Ns¥´ AhhÒ¶Ã“å≥LWsI÷Ü¬4£W¢◊“yÅæÒ∂¢zûèPçΩ›P√w
-Êä‚AL±ÿÏ®Ëdà$«/íQ*˚oÿˆ˘ÜÛ=§!≥a≥Ò*OsÒUÊ)‹T@„yåÑƒ[¥ôï3jû90«	)‘‹N Z–Ë´ÉrÄB◊«*Ê™¢CEñµ°⁄•˜˘çÒ∑`ëà1Ñ(!‚{„ñ˛√ $#·	õΩ¶0¿N¡å)—aÇÉµLv‰&¸ˆ≠ ∂Ÿ=Jî¥KêÁK c∞Ø
-¡Æë„eÇX]›ßÀÒj(˚ºq’˝Li°˜Â“Ï|h2ü·Ÿ·qáwÈÊ/m9cµ2ë∆π<CttóhW_€®L«ˆÃiqÂ®∏Ó§Ω©œ„x8ﬁ≥ORthK†ki7¡”0éíÈ∞>ÃÍ»ãõ≠t0#¬¡·ºÏ1¯MbŸ`ÄÏÜÈ˛vm£O€~ø¬-äÍ.äP◊nª≥d
-d®bó–ñR≥”~º¶◊4F~c¯˝…pµ‡Ï
-Cƒ◊¢|!ÊBπ$“Ü’Ñô”‹∂Ûí\>ΩWë…HúSD_∑Fp©óf“®n“iƒ#Ä∫UÎtw≈Â˚<Ã¶∆ ;≤c8≥Ø`t˛*Ä≥Ã,D˚¯óÇàç
-V2[¢Xπ@»¯ú?küvŒæ≥Z ]pAÃâKk¶SZ%dU≥	{ÖW&"0¡Ç~∆ä3eIÒ‰≥QxùY™äUãf∆™¡•Ú∏‚L`u[H~òûÅ‘qzÏó©Àò>⁄æJu‹\@k’Â>U)itÈìòiﬂj7=ëÆe,Ω˜ÂmèiÕå\e…ÕÚ!?Úä0§ Ç`⁄q5ÉHıÖÔVYÍz˚%§\ñ–˙°u~y«ˇ"aŒ]1´•,ûU”2Cûbdxﬁz®Èä	œ∑;nK4	ñ˜6ƒùﬁb8FîBql∑ÏNüÁs*ÎØî>)8ÿiÖ≥sßA"–gÏ“ªÙWÓ©íZ©£ír⁄:aÙA[|FÁ'*MÚ† w$Ñ»Éˇ¸/ˇÁm#pjo›.ÆÚcŒ∑APcæñYM{q≥ˆz@⁄Ps¯3¯k0.~hy“åœB⁄ÃÕòS√Ÿü'iá∆˙˚¶æ˜‹±∂ùö´”G4j⁄ÿ¢fÃr':w‡Ïµ
-94Å⁄-4àPLüÏTÖû¥çã&fGrÛ‰˙˘’ÊÀA„ª∆Rí8ÃòîÙ˜8ø~ñlvL‘<K;&*˛ÑÏudn«ô∞‚ö%+ò3)ÿ†â|9@Å(ÖUV≠Ï≥ZjµÔß—t–n{r§y<Æü0–TCB∏√3ãÏe≤»^\X
-ªË*®2äb?ôÙµ˛`?S˛>”òÜ◊˛íÁÌ0Ea?xÕ© O;r∫ô;¢BﬂgoOâ’ü`ìX-¶{ô;ceÙwYT™™§ƒDÔNbÅ‚gãü˙ï‡oÎ0¿dÙ
-äxdËˆjEÇsùÏtÿ_?CrÇ„+©˝˘Ã1ãümêhpŒ´%òô≈Ø$ÆGŸ˙ïgevƒ˙<qjﬂıˆqØõ∆ÿî¥4T’,;%@Òï«o,7†‰ßıûLnèÒùıúæCÛ»..Zæ?‚Át%¢6ﬁ&≈y¿VQLëô0¨„_ÇNª„dLÒgìLäU'ﬂ£Ïä[}ŸÒpOGhÜÙ‹µπ=7õO˙÷µhR€,Æ†¿[œ™âœÍ	Ω1GΩI8®\£Ç=,√cZÑG©÷œR¥ni=º«˘"<Ωﬂõ™î˜~Ë:ºPcsÌ4-kXn4¸©?93uÈ4º>]s]ˆbW˝ißΩÑbÅbôVÒÊY¬õßS‹<•ca,jª¸ûÙsﬂwRE÷“Ÿ∏ic–R|áº2+√}Ú)©»–d$∫/SØ0U†XI1Àe÷9í◊sqíH¯ìó‡VZ÷îEÚgÌõ’óÎDÜ82ƒ@€·ÿõ\§j„ÅÇÅì$
-ØåoÆ‡ÊU˛í”V˜kX¬è'^{¸U?˙®ßUÂlÀÈ„{R˚eÿã‚±Üg©4a≠ó¥Ò(YX5YÜ⁄§,kFYŒ	 +˜∫ﬁ]03^w@∏D|Ñ≈&HÑ&£õJòÀ˛Ÿ@¶©≥FRÛy≥3I®W+•˛JıIÊòïM0¡e{¢ú∆¶Ó¥ÌÏ◊œ‚F^r√£2P'BVu∞êä$MŸhº;«ò eåK6£4«hÀ?JaPqñπú.ä_çC´R_ˆó¸ü≈˝Ÿ<Ωüâ7ò´«Ø∑œ≥#∂8‰≈û *+x3ä¶>Ÿô∂ﬂ3ª^¯∂¯sF’÷Ÿ!&;'Œ∏„i·˛®`’àjŒf‚uÂj¶ÇÇÊQãµãa©„ªæOë§h€∞p›O°π™$ÓïΩà∫nE)¥‚ì˙/0G(z¸7HŸ¢◊&öò¬«;öÁÒ ®ênñ»ãÀØÒ«äi¸¡5D√è¿#‡É§wx{”A»M⁄ª`\D˚ÈbÃ€Èh2„ı¯Ñ—XÕHIÅ‰ôfYˆG≥ÿ∫§Ó≈Q=Ñwñ[<ê:^8ÎèXBÛÜﬂ·;o^Í3ƒF’'DÈ@ÕäæmyMâ¸DëâÜ4Û%AQßEÑùŒ|I§¸âh+ı?‚Rìs!%€Õ •°è∆Û]Ñ.≈r„4æU≠jí≤{FÖRLSïÂ%@yÀK:ˇ™∫‡≠aÜ8±Ö«!E$®¸Zâ—£Píü´”˚–ü[&o£hÔ¢?ÙÀL)Éı›àx”ºJÚ·øQKËZ[Ì3öØî∑9ÇSò
-®J≈ÇøWœ›Gùzı2˙UD´gú’¥6ê÷\æª»}π˝oÀòÓsKΩÃ~ª@Ò\Ö„ÑgÚÂ˜ P$ ˚Á*Ü/¶”»æF‹¡˜ü†œÒΩtƒ\X6nm∑◊6q®øœjUÁ$ñÎÆø∞6-ˆ1YπÓùƒŸ8$nöπD©fOÕgQÛ.πïK:uÂq‘˜”~á!dêå^—d®D,k	•Ôˆm·˝¿ú Ô ƒs˜H)¯+ﬂ:§4Ø†eÀvMôA√àü∂<U≤¯”¯'œÎàyöΩevÊR)7ßù≥¨>∂Vytã˚lp-VÅbª∞‚2dX‘j2Àö]OM˚Îh€„-ˇ|áﬂÏ∆,1®⁄ìy<à{õ}km:EÂ˝çt‘|¶j¬π_Ûoqˇ!,f“ÈïŸŸ¯ñ»6Æ ·ï2)<i|π∆G5Ò«Ri~Ö˚ÇØä*∂g˛•N–ñ–n ÷@2Õ}" èé$ÃbüÄï&’Q÷áÁ”Î|„v˘7yF≤iè˙vh'≥{t	g+TΩg≥L+Ÿu%L3!ÃâvÃÈf©P P
-ÛÔZN1B+\ò∂[ |ë;∑ºZÕª2≤±>wΩØzΩ¡ô 8‚¢fdÌê?©okëçZH._lXEPÖØfÑ›˙™G€Z™•ŒYÖU±‚±ÿ)ëÁË6-ïNù°£¯ “ﬂº÷9T≠|úåù¯gãª‚ti◊ì˝˙Ò,ﬂÏTÀ¢f«û¯≠då≥é∫µ7ft¥SbÀr_∫ÊµõÔ"ÈQ<ﬂMZÃg§º…Ω˘i“—^ò]us= ^m Ùè§ˆè¢˚GÎü¬¯∞–?Ï3Æ¨4fRı€ò±¶Û6™â!Yim„√:44íRªà%dxWªE∆Œ¯™O¥µ˚âvÌB\PÌ	q]kÓ◊$c¸Û˛Ëòèò±ª±n§«É‘‰c‹1Ù{é)∏Í“Í|ÄXÌbÁ∞3óÏé,¿Ë"b'O\P$⁄SPGò:™S¡VéIQ‚ÌΩËúòvÅ.+Oó„ì-|¸4ÌÄ#LØy˘„'–¿(ôwé#ZMsåhƒ÷úƒ¥s≤N<<?·UPŸ*¿•ª7BÕUﬁ”¡wπå¡±/svìAuÃêπÅ£\ô£ΩŒ∑⁄m"tÍOA<spñzebB©»Áù*ÜÈ§â-•Ê¬ŸÕØ‘C≈≈"a›a¿∑Î±ËQπˇ⁄M1ßﬂ*˛¸æ?ˆ-»ªÛÙUiÕ|˚^ıå«Äú	+wWı∫ ÒBÉyTπòâª∞ıp&Äu’%aa50å≤;~ﬂÑUãèYp)¨NK„Øb®mG¥≠´ózÉ∞•úq4v∑èN ›7ÿ“íYôåpBO˝ÆRÏ∑n}Ó¯ÕÊÊˆÒqy3ÒIïO~UT~Xlä6(õ”Si€˚8õ<yc<Q?2ñøú°yI¯ûvÊüÛ™Ø2»fÑ%o»÷˜¯Ü“Iïõc{Ì{}3(¨dUcù¬ÁØjú¬tïÿ6^=IÜ¬xıÙlæ‰‚`ø~:≈∏ãK≠(πL‘dQÓlÑ)Üc≠Ÿ‡Æ‘∫¥|U¶Ï6lÀ¥á¬é=M˝Z¯„;°RX\6Ú∫∆È3§≥ëÅ)MÌ¸erÎŒô&—¶Û9om≤*ñï¢ Á‹7V©©°m›X3“Ñ€∆–'zGƒzpqQeDËá`âiaçX+2úóÀ5û˝^≈#îÛ«W· ±EHbÄÆ Ù¶Œé]6-;à£=]\£ä“N”«R·èY@¢˚ƒH2~¡yòMπıGÜíw{∆?ã…†≥ÿ yPÕâ†ïù€s¬eyZã—cr®
-^OÿWÍYl[á/üüı-ÏıÊñú›†·Ì T’Ã„s±ŸG#$
-ï6Û®∏# âøã|›∂àŒô≥õ…HI˙ŸÎ'É(c‚ŒzÈªı»Ê¢ΩàïKˇÓßÖ⁄˝¨iº´Ssü&9œFÆÑWJ*BÄèêÌ⁄Ñ7a1¿ãg≠a«é¸7ÂÜmŸ[+ìäï÷ª‡zïlÑ<üöî√8ù’¨Œ‹ÅBQfy¬Ç”˚ÍQÒo=√t∆√s@∑®¬|†<”7øÆΩ/“Å≥Ã
-4 ⁄ˆ≈E‹õ4õVDja£Ö,M#Ï
-≤¨IÙuh6c“´d<òks€: g; Ï?<¿iET≥h£{I≥1•O∂ÿz∑zÿqc^éhôÇ:Û‡√ZÆ¥Œ<£w4ß}\œ÷@=Õi¡™u	o7<†ö˚éö¶7úû±ç∫∞Äy«£Ä•·
-»›Ï"ÕÇazé6q9;ﬁ≈¢\°Í)2Sª≤~Ò·èÅv˚®	X;!Uqè⁄Áit”¶¥_Ìq p+4d¬ÂFYÌI:ÜäÔ[ﬂﬁÚÔ›ç?æ/k ó zõ∏√>\óˆ-DpXõQ;ü9_œ8ÎN∫∆|ÀÎ»)÷ûù¨à´ '¢Jﬁ¯
-≤7'i≥3œ¬GÌ¿ÓÛÊ—£Çø≠≈"ÜÚÉ‚_Á÷˛ıCûmóÛ√£´¿,J]—{∞åABò˚Q‰CBÃ⁄«TyàmUÇûh+ zm‡mrIîOTŒÜav•xoî´∂πÑ±E∏&g?Cπûv⁄ùÂ¸Éô◊âY 13Ö—o¬IÎ»‘õXÏ.=_y‹–‚?±@ãKä5™N†≤Œ«'±ü∆YKPVPòÂ°ú]¡úÖ
-v„V[yµK“XhF¯JEÀ ﬂé(.πìÆ˚◊∂KÈ∆Ú9H‡⁄c®˝é Ç∞=¡U˜Í≥∞˙Œåñ¶ÑŸ°t+≤V;g√SÔÍÜkn≠°†÷lˇ†{ƒΩ6Â
-…ò
-≤≠n:§éˇ‡Ixt+È±äÙáõ˝¯Cñéîà‘îÿ÷πV>–˚Ç”<ÈÆÃ§~CsÀ¿ºÆBıó…®kó÷àÎ\l¶X†NJ0k~5}•óó4ªS4|KbıIª[^NÂ˚eGG(ö·[ciñ§µòÆ†ÔIëÈN3i.∑tZkQ®π†≈lÑ„ÔêXAzÌk~k∫•$√tıDjßè\‚ynÂı—#RÁËä|Í⁄ß5rW÷€`ˆΩEAô9ƒ∑Z±aàì¨¬hèkb4+πª’ûÍé∞hÏãD‰+vÂU\É¸Ñ€ê]ŒäÂO8/` n±≤´Ûá~DΩcÈ≠âÂg»ÒÎ‹$5Ç%gp9Ô–∆ÛÈUHâ/π’~T≈ß¿Ìk”˝•¬‰CèıÙ‚™[‚!\ ë7û2¬¢Ñrpßcñw€”ÖŸ€°é¸©∆—¥≥òÏÂÖ|Ø1úÍ\QJAcŒÈâËo…ÅgF!f‡„_3!#!#|èë∆m[?;mÛ’Õ¢5ø¶îÈ∑÷TπQA⁄¡j¶πÆ…¨l<ˆõe:xÊ™üì9…a#N“Ï”s3;f∑π˝¨˘ëùjm”¥”∏˜Í§wGÏ˘Bƒø|ÚzYπÓô∫T;;¶–»âüK£°ŸîÃ˝Ò¨è÷…Ì¥À≠ =É~µ±&£ ΩçQ‘t®≥C|mD»áÎDÍü∑ñÿ¸±Ü|¸ˇˇù`†ïÎëàÿ-z“AË_Ô¨I‡Ä!´ˆ'Âπ^XÄ)«ÈàíRpWô0¬=∆T
-'9E,å£˝ñ¢ÆŒÿØV:◊c‘Ø3üMè¨%–∆&EÃä≠⁄p“öÕå*g££µ@ù™n∂¸^GE:Ë =wòzwû'	~;◊|@é¶˙yß&
-"qª›n*∏π–ÿ6D^Ûmz=ú„{%Y|5ôö∆dˇÙ'ækÙÚ6‹&√$œ…ñ<áa7õcƒ∏MÊé˘…§/©÷9I¬=„≥Á'I;äS˝¨€€10=≥Õ>|dY…`fúz/8¸†∞êÀ≥†±˝1ÓMm˘˛÷≈ı®éÊÆx8{ ÍùûÕ9WÒe`@/öoÃÅ˘Ê≤1µÜa>Ωí{Ë\ÌqÜÓ=ìbu±"l¢Í±Ã$e,¥p·xú•0õπ;iy1"Q—9(ﬁÁÄeÿn∏_äÏC-m&Y3¥sZ~É¯∆≈(;w√Ã‡M›Ê0¶÷e¯S¢ÁËñ+V~¿Jwï∑Ükw=∂“¡ Ã0Å∫R”Kb⁄‡bx∆Œ˛r„kÜ7®Ëmh√kº,`g√˜k3 ≠uª º÷3Y¬`ìüa_‚·˝Í´˝jic€1`˜Ïì–|˝≈~Ì‡Œœπ)ÈÁÅX`È7õúo¡(7Z /–òÂUò{P\â2œæ0åM∏'`°
-Â ó◊Ô#)“µ„†–«â⁄1c,w≈oÙRØÖ‡‚π‡ÉÛ∏dJöa+ÇË	Â (‘©{Ó›d‘LÅáìcsÖÊëì◊ß`^∞≈ˇyÓx≤π´a0¡$ÈÁ)–‰C[ò˛3r.˚†ñó9˘LÒÛŸ√G\órH≤˘…(‘≠\ıû…îW ÔØÚ˚•è¶ñH2†è•‘iÁ›‚“¯„;9˚Æµ
-ˇdóÁa≥3Oˇk/ÆŒù)ñ€ÃÌ∏Æ∫ã |1
-Kéπïk’áÎ;÷E,g	V1m	JÛ(#fA≥bLBUˆ7Œ™≥4a+6#GÒAŸH≤∞™Z –†ôª°qæŸOû1~èõæ∆q?⁄M,I&€›wN1 …”à›¢øh«òf*X]ÚoÉÛVÃ1]≤"ËﬁukqE"¥Êî4˛KyCteeYé†"yÆp∫[ÈËπ3•û,gπ&;´ñj¡XÊ∫YJVt°§+5ßKt¬u8∫kÊ∂dê.í[.ÈQÔôM{“jF”åŒ‰ñ‰NêÈr‚Œ¶¡Dr∞å¸qQJË‡91ùXQrê6V√ısds›Úπ28˘LÏ‰ä™ü´≤õ_‘9À=çwµi'Ãw∏⁄ÉÛ§∫Oèvpçwüv™TèN˝ò@ÈÔ,ΩÆ4ˇóhì–G Vò¯%6òá%(™vı@v¨Ú≥¿°ü*∂éÊ[+Q@ÓN‰n∆œV§wE
-WÀ7∏\ôo;nZõŒ:ûÜ≠êÎ :S·÷±$rù:ÕINx≈!Qú≥dDNiæ„Vrÿ‹GÌVúz⁄ük∫ˆ˚ÙØÇﬂ5º/5Dú`¢ Ììm–‘∞QˇùAË$áhPFŒ9I√|"§Åy?ΩFÜÄªË°Ì.„ÿ—’•Ê… ÿJÆòœ7)√Vöÿé7&‚ÿBŒhÊ˚PÅÎä¨‚œÅt€<Ki¿ˇcCıÎ/…ÅÊiaGõ©¯Ñ3ä "ß1)¶œ˝âË@2±,·fƒYÈtºÍqóQâeÇ…ØîIö√$0K÷˛‚d„Âî»ﬂ^ù∂SmIá2$ßÜ›ÈNˆ¨|©ç∫≥øs≤”›}w¥}xptrår±x≈∞='ßË¬ÉÇ^£Ó·—¡˜€õX˘0KQa„´∏Ωw∏{„ˆ6‘‹éÈM˚™vèè∑±«nû«V‹åR'L«º,≠‡ôí0%„t*ASj|∆‘≈âÇÜpzF”·yú}ß6VŒÔ¿} ÚLeFvÛ∑EZÆ~å¸òZÚ!âØüß7ù††“nQ∏æ)WØ¸ìµür∫à®ÄáÉQæA ∑ıÖÖÎÎÎˆır;Õ.Ä°Í,¿`∞GC„p"B4Gç=†ﬁñ:¡´Â’`sqˇ\‡Ôµ Ó™Õµ‡·j •k*Éj´´¡[¯?VÔ^≠¿AMx~D=\√±1¸gy	€-w†ö·ﬂW–‚-¥ÿ]£¬∑P„ﬂƒQ†›≤ƒÔT¥†ó˙àF˜
-x…∑Kk¡´G´º≠©l÷££Ù Ækphz7çG´ç €h‡’«‡˜á®∑ÙpÈ!G˜ONÏ<»Ìtprw˚›^˜¯]˜pÁ›ÎmtLgiN[;}h´5wª'/éˆ®ÍBﬂ=ŒX˘€pêD{·8ﬂê´ÿsÜØõéoÃ!&v}õ§◊?º9%πÛ·ZÔMÀm%xé{‰Ùı Ö_ìE±ìq”“ë˛Nñå˜ ≥°∑9ÇN.?ZåóI˛2å'%Ò`oˇ«]ƒè‚TËM˙Ì√ùπ`!X\Î|ß‘Z‚µñJj˝˜ˇ˝¸W¨∆Íµhs•ıˇ˚ˇ√Í√¯±>L”U_6πøU»ìQìæ∏,…Vz·_ã⁄Ω4o¬\eEˆl6ÑÒÿΩÒ¬b‹=ƒO¢ €—RìUˇG6iÜsÛAÒ¥”
-ÁTXçè†qèV#¬9áH•4vÅ~¬x-¿FHETª·DËwGó¯Áò·k˛B<±w–|Sî7Æv:eÚnT§…ªSãän]•z]ˆZDíáJäG@›’ˆ.Í∑Nóñàæ-IÌU
-`˘Ë02 çºº9∞õz^,ÀÈ	\∏?$H&Ñ„‰5Úmé£Æƒ"~Ú2M/1LS!6yúhk»%ç: xõ|EÇø*P«s∞d(˘ÍMæVJehT÷‚5Ò¸[ö)eñÚjéw comÔ‡§ﬁÌl©lŒeú√∫ƒØ–úÆÕç€∆%∞û—çfB‹›(ºA¢¶;Ånÿ∏;Qæq{⁄∏éﬂ{„wΩ4äaIÂΩ˚∞¯.ÑˇN£$mhÒÿ…5)J∫ã◊…eÒèË‹I7±x6&ó‰·˘ ÊÊ7;∑(t.jh∆›Ë"‹√hi˙ÿŸi(êVEú6vu3¿ ≥Ÿ8Ñ∆yBIìÍáÚ≥vúZ—‚úTÊæ0ôcﬁnkøƒ√üéßÉ\SÃÚu'n]AM9[ÅYTº¢Ì¥'≠Ë!ì ≈`ZnIò≈`ë‚»Êg[ x.˝ˇ6\°m>méŸ¥/HÒá≈Œ˘„5á›˛`“à/V‡gø∑•TóÉõqìª^\\òm,#bÀNGﬂ»˜ﬁ„*xhõ0ÚÏÙË‡äÒW%[ñS]æ∆ñœ◊ñ.Ä~≥¶nÑ	ıŒÏ…ÇDÆÖ1èÇ¢›ú;\∂≠V+ÿ
-ì¡M¿8†‡pÎE}…—Ï_Û[˜íï≈Tô’≈™p˘fÙ∞(o‰Ánıfíx≥íëº@ëè4;RÜ¢tFu8–õfT|√çâ¯bÂÃ‹ÕÌŸ_,—„õ0zı¿≥Z b‹j—"^∆È$º‹Ò(+!#Ã‚Ú∏Q^∞à[¯óZ˘	|ıiìb>Í¥F‡™U^Ñÿ≠(Ïò´^6‡DQQrùfW',Æ´hób>∫¨Ì∫1≈ÙÙ§ºÏmuÅY=x€=ﬁ	
-£w´dTÖRG08ÜB∏Ï⁄ó §I<l6zd_¯ÆhÚçä"≤¥V~8˚2Æ—ÑM…˙Ä∂˙C¶ÍEo≤@©Îh‚ÚSxé‰.A8¯i:Ñ}
-ƒ{∆*NÄ; °b£¡Ó…íê
-°u<Jrl+ê\–H¨µ¬Ö|ïN3,\õâÚ»Í÷≤õe·MsiEh¨Qu>h"	)KH”ˆNıºÂœ†ïÁE¯ﬂMÿÃ}Õ∑∑A‚qí‡.Î∞ÇQ:—á6ä?NÅ¢,= ız≈q?ù§XBœ\Ïè&·⁄ùÖ
-Pú£fsú≈äÉ€,Ó¬vªçÔ
-¬œø˜©sQÒnNë2úÍuœÏ¿.›("!b¢¸CºÕF‰∞5b_S-ËÈVL@D*a`π`Bö6!ÏK—®MÌÒ4Ô7˝sŒ”ÌTµ7*`Ω5æVr;´-e°K±Õ}˚^Ì©(≠à‹rUO,;íØ≤tV⁄IŒŒå]Eı*yú¬2ÿu–›ÊL©€⁄Ò-Ü1∞™√Ω8DÓ¡ã∑˛±ã%CU F.?T‡à<£∆W%C∆◊e„≈˜•É•˛˝#l4Øœœ4≥B±é”qüb@ô¿>|¸ó8‘(83éµ‚º8g√öU¡T^@Ë”h·í(?È⁄'ÿY/˝´RÛZ–>S Ü“O’j~NA⁄˜ÙQ˙A•^ŸeC'ﬁQÌ•*QåZŸ~≠åñ◊*GjﬁQﬂUå^‚ùÉó8∆9vÒ∂Ê–eı{èúOùaûqè_’0’≠ÌL8á∞ÕfM<πêõœP"F©»áìü”Ûj≈‡ü$-d/)·"|˛∞ï¯∫Nß4Å≥SÙŸ©®äÏçKLèôÂÎ¿jv83éèècÒëo4√»≈4U(„“≤&_]¡26âÖ≥æ!!a≥Æª»EZ<åb*]wñ“ΩhºPÏ‚˘Ω'ñé™íëËÑÇà(’∆°*√ÂﬁQ‡I)BqÒÀÔcë˛qY¢~Õœ>0‰ñ∆ﬂ£ÔˇàπL
-AéG√ØßU—≥6IÒ∏èâ˘që⁄=GπÈ˚I=I!çV¢FL%#N“rGö ¨‘±f j*¶˚∏…∫,∏îÆvÑÉÚ¯^ß@.ò’-¶Jƒk∞Ÿ“k5(Å#Q·Woäÿ¡CÏ\d˝≈≤Á‰M[≤®~\›MF1ö(	¨ƒDg¬‚ÊU¥‘àK%ıi,Ùçâ’âº"‚ìUâ«ÿ6òΩeáXg1a¶ZÊ£√Ù2É¯û∑¬˛t05úlßbÀóQºG+◊éfÈ ŸãÜ{Ø3—Ö[÷…oˇAê∂Éö√≥q6ñ:Z~õGF(;Ë{ïâ.3Û©}§0_	|EÏ? ‰ã£— åKèê∂2ñﬂ,Â)∑≤íÛ|‰*®
-Cscç÷EÿÙ5#∫∑‘	é)$!∆è\Å}vF©ÓñkÏïFB•x◊˛*ŒhÌfGóY¯"±√6DÎ≈„í;èk„ \XÇ¯‰|®√såàQ/)™zXÕÅ∏s†˙	+¶Ù◊-F€[[Ÿ÷Ò\∑6Ÿ±åÖÈxmÁ3ˆÊb$ÀòY√êæÄ{Ô~,Ë„è¬E&nO¬Ï2û¥iŒd@Hè}Yä∏©3Ìr÷»£ﬂ€ÚËwﬂﬁé—F˙˝úÍœU£/ül€”GsåV’äv!<˜W/‚™∫¶˛aˆ©◊–Ã‘è[õP≥èv°.$Êﬁ$≤fz"œ{E;Ñã_Qçiá∆öp€¸©z§1_aU—aˇ
--”∏-˛.oQh°∆zbô◊∏)≤ÈUû
-éìq2ˆ°(nÿÚV‘SlÀπ+ﬂ9O∞çHÈΩ0®wí≈f˙-áœ÷ÕêV£Ò¥’“êh–j˘ÛmﬂJúD∫õ±¢Êp\KN∏A†Jzpyã‡'h{‹Õ[m˘˜St–Üß∆ùdâæÂ≥0ƒù‹·uÚ´æ¯‚löá˝0D2‚5Ì±+ÿc5Ô@∫·¨>eâ√≥/πäÎ—ŒÁ≠Êπ¨ywG•˙ÚtÏÅõxK”±È◊e‡ÿHñ/æ,˜&∏ñ¡å'“∆›Ãe≤jFr%≠Ò8ò<Æh…ÁOÚOÏØ√x(¬&∞ÍáçÛeÄz‰å$ˆÉº¥¨GµÇ‚~QàÌ¶î9Á0æä≥ü¬–¥í˙≈A¶]ÄøÄΩf˜ÔWô†>d6†≠”p@q°ÇΩpÑFı_ﬁ∆£(ÕÇÊÎ$KÊÄŒ`á¨˘™åÊ4.~Ï€2bìÂ⁄ôëp†4∆E94ıBa„ÑÇ±9∂:S‘á£≥Ø
-ÀU]ı™ÑW7Ä^ÅV4äÃôÅ÷õçGgsu‰Œ˚FÿË;∏nÉDg¿9äm4¡ ]ä|≈∂q´√Ûå<÷NOKáﬂ∞;S\YP<uPó-`TìÀ‘^X^.ÛlÚÁáí6(Ë"<¬˛€û$f/Oút°;Gû√π$G\çÍÌUœ∞,LÖ~˝∞J„±XË<œßk…Å^`◊∆S<§nL…G·í£.˙	”5 F¸É@ŸÊeD©XôYr∆πgÿë∫ëÈ9Ä`!Ç”√dxA„$Œ∆at&†Ωtä&i•òî3ﬁ¢;¶3F¢≥–b!(¥lïEı\KYlqﬁ'iÂpZ?‚è|h¯Ñ{∑æ!9U;r∂o∆É4åÑ◊ùΩëéœSV”∑¡=Ïå`h–HŒÖ √^/v&·À¬_*¬drfG•Zr=!q¬¡ä‰üÛgÌ”Œô[D√K±?—8Î7cídñÔ•„GT–tä«¥”BŒ¨ëŒˇ%T&=\¡ÿÇ¨á,ŒÒdÑπ‚¿È˛iB¨ºBû6œ?‰ù@Eä\Ì˛]©ÚµΩ‘0µñY®˝3eHl ˛“b‘Ò™b?‡∫˘V8	ﬂÌ≤ùÁn·B¡î#∏©C$·J˜)	”•u…à`¥,îT›ƒWúd˛◊"Mâˆ'ê•≤ì*íî¿˙/MëÓN∆ÀR«F¢ÙıÓoî(ı¬g6≤OËØÉ.’P»◊£H1»ﬁï2KÛ2“cÑ™ä,"ïH•6ùb3ñ⁄πÖáÜ3∫◊¶[ïS©ÆÍ	¸ùr˝ùr˝QÆ8CøÔü˛úÙ§[kn⁄ºØAh∫/vÔá]*ˆØIŒ*∫”UR÷[`í∫HÊÊ‹ hq%≈¡azmf˚öŸh∆\&5<<∑ÕÄ˙Àe6Ü@#˘s⁄õ∆zuç—w6hˆaπç·N;8ŸﬁÔæÏØ∑èæÔÕΩÓ~px√ˆ—ú±@˝ecfŒ»~;;À“N˜∫k
-G∏íÏ?ÁìQÎ≤ü
-–ÿäIœ{s˘mÂ—Ì0πn+wœ√~¿b! ™ÃWgo)a~f27Ω1 ≤»ô+@êD∫SI‹‘Ë„ùµ}ô™£*"j˘˝ÍVuÂ¨Í√ZƒŸF„{Ê∑àÕ8Ï–tµâ˘4“>ù÷(ÕÊÉìÈ“cªa>Wq;mÀ–§¿ }Ü?Æœ€‹y“Ö©jh∆€¡ClRZá˘†¡? œÜQô7: <(N¶ÆbUÿû®^r!Ω/∏ùë!
-pSﬂÃäË3¬‹s_â•º∆Úµdı6›'P6ç%u◊˛%VZ;˝Ö_ì;⁄§≥_:f?'RV¸(µ-ÔdÉ|©ÑfÕTÈ  ~¶¯$Û˛írÔ9@Î∆”ÏÁ0y≤CÍjïf Rñ÷ÉtΩ¸ù@ÅO˛ê≈£^ø.Ö$Jw∑{¸ÿ›lÌº|≥ﬂ}››ˇ“‘	w¨ˇ-P']Xë_ú6aéƒDõLÎﬂyﬂ	N@ûd?ÖmÚ2∆hS¡Í’€Ó|∞˝±áI„êVŸãÛd<O≥{ì*ewß#œ‚˝I∂S9âB•_Ä:—v≈◊ø≥¸~g›˜ŒZFRù˚crõË˜À—.tÉ—∞Îﬁ^p}=ÔæÆ˙Îﬁ_Jàóﬂ¬ˆ<ÏFçøƒ%VÑ®†ãl¯c≤È[æ«∏<b¡r‘[…Ât^©<˜1⁄Q/3∏∆ÆÊÉ√dáo7É•`(±˘‡9îãù·πﬁÜm
-Ù9/πb;K^?ÒE8qkÛ|˝˚Œ «Ôwﬁ}Ôºïı†+√»¸~ﬂ¡'98nÍ^xo€¡·6	ì·Œ{’=⁄Åˇ4ªõ';owN~¸‚Be5 Ÿo·ﬁÎ^—x√‹ ‘Áø˚îhIt˘¡ÛÊ„fÚF¿={ßçäJ¨Gp@ÒÆm~˙‰ZWÒõ,D˜U|ôpπ˜8K/·∫Öô%º‰ó∏XaÕ>Á•™ñØ√>:#}}≠;’Ñ∆ÔóÍ}/’’ı‡‚4¯SCö]ı≥^ØüÔfÑ{◊ïê—u=>°LÂ5oF∏7ﬂt7ª ÉÔª{¡¡·ˆQ˜xÁ`øª´AUøÔ„ÀÙ–·¨Ù∑)lvπ
-UÜüæ´√e¥4´øÆÀU◊ÔËñé"å:ø9{!≈¿Ü%±∂™€_∑tÀÇ‡u ËWÒj˙È˜{Ò(öé.g\Ê	¶"Eí≥†%q‰âï¿=Èÿö<„+ÆãëÎ6∆ˆ•òãKsœ⁄¯M|Úb<ó°Ü'ø&Q	
-ÂY¸∞_ü·L5ñµlïµ—(æõtCÉ˚u}ÉöÎ2k(ô  c‹Àò∆„>-„9+≥qá)†˛}‡U”!åïº`ÖÂ∞M1˘SüJBµ‹Ëœë¬P¸ä]XLò¿µ ôï<Ü´:1]ö”P¸÷eáÖoº¸ÀAÊÎœŒ“¿~>ÿ'~\¸›ä)"nó√Â?ˇ€˘ˇÔˇ≠|ÆEèÛîT¶>ˇøˇ„˝ø*:%˛Á˚_∞öo´ïY00TPjóÏ%/åd§ÏwWáË99(d•WˇÌ‹iﬂá√‡ ZÜòy;0TÕ+≠f`7oÃ'L≠Ä¬ü`√È LÇòåÏë√ﬂcØ7πeË\qπ.y}6|À‚
-◊·_ö∫Ùû8 bˆN:Ÿ	~zÂâÑÖø
-vŒ¿¥˜ç˛Å?ŒˇyŒk·¢OÑÃç)[ﬁ@fî gfchÍ≠º¨9ﬂπ±LMªiA	Pz ‹÷8æÀîµ%˚fÔ∞m,÷è@ã~ !à˘∆Í¶îÇyúÕôó~pRø3ΩÑ˘≥”MX5åÙﬁôkaå√(Ò0‚<&ÒS3ôkè√Ëgﬂ\⁄ª”òª[Ôt¸Û∆1b?;ökÂähƒﬁ8ùW~U®Îò·ÏˇêWÌ”9”Ÿƒì˘Àa/Êaq‹≈Òﬁÿ´6rüΩÇˇy˝+ /?aÌ-(Ë=\)–W◊êô≤ÆØ°!c…√ÍJw⁄¡÷¡Î7{€˚'òìÎ≈¡…ApxtÚh˚¯ÿX K;Êé&U≈ß®∏z¸ëd‘Ëd®%TÙ∆y¶eÊ“¯ªÖµ‡<√4¬ô„ª-ÈRÃﬂÕ° ’G≈‚)‚ﬂ≥iÆ¨3#5Y÷G.À Ã«Ë–ùˇcf±ñ≠›L“ÍÛìƒîÅcø¯√•¢rz∞ìˇ:¿Ö#–e˝ˆΩÔ¸-M–) q%¢•ˇH◊ı.eÑÀI¡+P¨í÷íJ!«>îlH›∑JŸDÊ˛à¥Ã˙œy∑âƒg≈◊=ëG+ ,õb‡ˇ• √@Úﬂ±˙ïö#:≈oä=6∏YZè˘.j1·ó(^dAÍÖÄè≥|tÒzﬁ»ﬁ§Ê¯N:6'˘wMwÌ∏Ç‹r èN©‰Ñs-‡ì`Õ•¥.út–Bd‡ÃáÎ ì.ÖwÙwñ^˚CK¿m«RCΩ0ö¿3—8>◊Æwf§lb≤_'`\ñÄ“ØØå^EKˇ»`ôQò˜„(–Â¥+]T+•™¢hQJZuØm ·@Î±ú¡ÎM·¥æo◊ÿñØπIkª–f¡é[Uÿä‚ºàøàñÙS…∆Ωÿ—ÑÓÙ'FÀ˜Öô–Ë	L{·—Â÷sQe1QüÆ≈êä:ŸÔ5õ€◊¡qâPŸ=8ä£!∞ﬁ#3^D˘Äéai«¿õø<<FÖtx5ôŒ8,üÑ@">7BÅ-√V„Å 0ä%<¯Ñ^–*%h(Mîtj´e[€Ú%N¯ßhï’∞A`Ü©y‘Åq¯{êN#-
-∆ø¿ÈfäÖUÛ∞ø„Ã%í˙Ù˛p∂˛ftyˆ)0ÜÕ±Tè…}ü©XUëZ·G‘…LíÒ Æí–˘£ìÃ,©¢à$2…◊Eñõz¥tË==ÛJ≠®N∂˝vÿÎ7yíö˛ô#ò‹+Ü…=„q‘ä»°$CÊµ9Ÿ:Ôãïr÷Œâ˚ËÃkábˆ+µ9Ü(	‚Åcx>Hœ˝V≥àËú4ø[cÈ ˘K¨»Í´8iá KÏÖW9∞)¶Ç6‡¥öòO+ú¨ﬂæú˜_≠Ä¨zÆ¶£KI§ Ip<	ác :õ”F;÷Â*≠æóF·@Mí#˝æqk'ü◊Åä\ p}Â\ ÀEo5«ìiÜMiÎ9O√'¿ªÎΩ;ù˛[∫Ø≠Ωll)ûÿwÎ∆≠9$-	ä'ıl∏2øDc-£ãü“Ûìd2êÌ’–ÂûÖ‹ﬂi>=ü®ù∆¢L è›l•WSå^N±Ìô5pÓÔ1å"¨ :1ÈÁ˝†SN°qåTYÌ£ı‡ -êrÿÓ[7£pòÙÇÌè0à(<º@)1ﬁ—ß re.≠áøîafMõL3ÀY•@vßlvO‡˚Û¡ÎÌ˝≠Ó.⁄hmÔov˜ª¡ÛÌ„É◊@±¨RÄ¿^lØïÑÙ«⁄Ûaà•ÆOÔ3LôY˛Ö[\föﬁπ[◊Å˚ñP ≈'ÆJ.˘RπÓ/Ï˚·Áz˝?8$-∞πj5íÔàΩµ‰jy´Âºe¬t(™/Jˇ<n øî#H©+H)Ò_E„˚B>¡üC˜&π}_ÇL˛m1Øv€c–»5ñ∞úüEõ˚-«ÍÁFv˝û)¬z+	≤˝[∑&≥»B	†Ú tò©˛fReÀØÆk≥ˇT2Ÿ:v’~.Uf⁄˜∞¬vxªÿ≤ÃŸÂãªª–ë–⁄hº
-«Ä4œ√,Òÿ{ÕWÎ9«TÿØ:Ñt.)Å©ÆØôıf©≈£^8
-ãú>Ëïù^’•0ÅÕ ,È∞~#¥Ö,_ë∞©”Ktá‚°+‘ˆ\GOø”ø∫‚ÑÆC +|»fÍWıëbK’£.DÌƒÖ®˙EiÒ—œNZh'Ô◊BYHt˘;aÒãÂ6ôÔ∆√Ûi4øOÆBk_ï3OWÚÕDZ|¡åÆŒôPrEõæg∆ë“∞æ ¨√d¥—px§U‡Ù~kqÓ£Â•2kj-Å„Z¢X<@ìÑâ8;üò+÷πÀÀÛ^ãœSP±>–Q\Ï∂êvÍFfœ<;+	∞ä©≈û˙Ñ$ñ+Ì`3úP$à◊˝i>Õg˛´íÛ∞|Mr>ù¸∂dÑÑ_ÜñG‡Ñ<>˛N»ˇ
-˘ù<	z¸(]±£4∏èÑÙK—∏ïjXµıéıæ,Èé_¸¸tª<eø¢ùê‚Ô˚ó†ÿç«‚ŸZg∂∂˘Ù|òh∆∏©ƒeƒç˘…fê÷fp©]Â‚∆û†zaÎÜÖÜ]ÎrK9ÜÃu{æäh≈T∞ºﬁ9⁄ŸvªáG›˝‡x˚u˜Cß>9Fìn7ßûõ´ıdÕÿ”ìÖaäüosX√iΩ˚Ó¡¬FY®˘√⁄˚€??ΩnÌÓºÿﬁ¸qsw;ÿﬁ’›ﬂ‹FOû„‡≈¡Q∞Ωw∏{„ˆˆÒå›?`(t w‹O.&'∏0dEîˆ$ç¬õÓdÇ:°Q/F⁄8
-ì¡Õ‹vÛÓ÷G%≤Ú¯N≠)njòæDÁÏªß1\yÕ# €f#öúÊÒ1‹0Ò÷i≥∞ÉVPæ}q˜&M’˙
-≥=}cå‚Y)˛ÌiÊx$öÔÿ˛f_ûé#ËˇÍdñ-˜ıHØ·Õ‘d]á±∑Qrqq˜–|M2rSt
-&Ç^^“4CÊ:hô‡R«π,v:…Ç»O¿iäÔÚww|R tƒHy( ‹ÏpŸ¿8—∏á?5ï˙ÛÏ£¨ëàŸCË‚0ìMDOTÛn>8ıC¸å≠Aü"el®ê‡´Û]~»?ÕÍ«:ùƒFmY˝è¨:4{®6 c¯oÑçää;48ªÒ‰œy Hj
-¸'åõ°Ò<lˆ …É56>Ÿèùóo»E.o2jòÊeÏÕµ‡/lDs«báÔQ¯Ê6`ß!Ûÿ∫∆ÄÕò4+Ç´O5Ω á’ı √ÃÇh*∆«˚ÍCÇIœoÇ•5Ãû»õ<0®ùÌ0axßbx¥~ Èîªè.ø¶2pÍ«,k”ñc√◊¢6ïŸ‚\faÑy¡Zì¥uûhæ)rY?Ü+JQ¸Xw(‚Ï‰(…Ù¢ÄÙ•áõÈ«&nÓ”Â%5Ì"r∫[ ôåµO¿^B;Ö…5Øπ?u∏˚SáI:˙¯èö°ª≥†Xw”]v>òftAÖ#\‹∏EmóÅ˜{¿'¿1l≠≠A|1Åˇjﬂ,≤+vV›ﬂ§Øx>C∑£Èü™›ñËÕX@¯Á÷¢ ƒ◊ìHÈ¶NWDç˙Dâ]”ø‚k¶¥¿l(a	ƒ@ ñå…(nÒ^	ú†–°S¿9/Èí±*ó(öfd ÷:]\ÍtÜ9l ßh≈ññ:Ì€Ídı5t}¬Q‚56u€≈«E¶¯%ÊhÁœ§J79O/qGuÁ9>4Œ]≠c“Énª¯«ﬁÒ	€<<5>G_√1B÷WêÉ!…—ÊµªÛv;ÿ€>9⁄Ÿ<V∆≠V'ck
-2ÜO"`&ˆ-œ%ÀjYìR)[^’±$ [S”ƒ◊“~–àåÙXsDà¨î’b^@√	,çNÉì|:1Oáf
-U_Än(WåQÅ_ﬂÆ*Œ˘›Ê®ØM¥ø4ÉôvqHÑo÷0éíÈêfmÃå]‘ fvX0ÚE≈Ò"N∆Ç",ø‹N…;Â	∞1…c™éπg‘*e!m„Tm„F‘Gw4n5ö•=Iw1ÈiÃ7A‰ŒñπÊ≥ŸÊœ¥Ë[xòpXí¸Òi^-ú©Ô$OˆR¿r£¬¸z¬Y+?Åc]ï∂ÃK≥›ÿ&PÖ∞G+c3⁄∑˝S9¬HéçEÍ3ËgÄÏã‰#-ãsw4ôóé1/∏b≈µ/}ë"÷Óî:q!aeG¸–6Öˆ]ÒMïƒ’)\ÚíOµÉ£Àê=H:Y≠ Üh!]“¶|r3à7noXîI=xˇ≠	œª?æØgâØ<»?ô¸Å≥¸›—‹√‰ìÁ)“ıúÁï9ÚÈh?¸ê\™,øVg]ÎÎîƒ°Eõı 3à˜2ÿïòÖ¯ i9d9ÒI¬ ÔSì®ﬂ	˛I!¬ü≤∏;ÇÛ:	Ø`o˜„`9¶‰ÍE\ú6ﬁÖæT;q¥˙L‹ŒS∏üö·|pN?/ÿ]`ÍCÖçÁ’Ö[ 2
-)bWºŸí
-öY57&PE™dvﬁ`¸Q√è.ü	@Yh™:◊Ùäp∏ŒmÿG£‰∂ßß°ãFQª ‘
-÷Æ~Pï]Ø∆™±óÜ¿πÿòÕF¡““÷ZøÜj\9E–±J~≈$ìK„D3<˛&ñh4ælôhÎ∂…+jòè7¿HGNIÁn“'òõg¬±[ŒÁìÕ~¸!KGGtÂs…ıRÖ¸≥åw9ú‹∫NÀ115Ä©QÆ73 ^Ö[ÖvÌ¨eö›∞à∂oé^nÔü4Ç˛”™Hr}" Æ„lV≠9◊NFΩ¡V¨Ÿ√h`s≥7ùfó–∏1˜ù™°uHπ]òƒEr…/ÜºêÒë'qnÕ^mR+@S∫NåMp›“î°¿¶cLÍÓçœU#{Csæßr∫œp„ÚZñÀÿy]∆%√æ[xÿQ‘2pd¢Ÿes|~â}∫#—paëxµ∞dè*J'z{£∆ù˛∏∑Ω}≤≥ˇ≤
-j
-€≠ûD‘Lhê„o$ÏdÕ*Ë9?†Bê=≤&§CMAI6‹äó•ê+™ï√ÓË‡«Ì◊U†;LÂæ†øWÒÎ:ÿ®\ç◊™ô’±
-.*®UrÉJº*î®T¶›ùÁoé™†¢éCÃÜ=8‡ƒ^H@âzUêrtÆ¬äïTK|Ã-˘Æ\≤V9ºﬁÏΩŸ´óTÑ≈>Ñ %ó* ÂàUb|ØÇí¨ÂÄ∑Z%Í§Jwß⁄á66¥C–oö√0"$˛Ä0™{êG7J•A<	à¨ö ©ΩçQﬂ∑K£°Z ÌäﬂåEç9câx‰—[<®÷1ZËñ
-§≤KÄ*ÿoB´ˆe<A]TsnŒÏ9pè	¶ãt∆}ﬁa1Ö7 „—8∂§ÁH¿>"XÆFﬁ:ﬂzoZZ®T¢FÃôÙ‚I°6˙%%T·B:ru‰
-πÄ{= Æ˛]\µ=¯´’^§⁄ªrA~b˝( à–~Á/AßΩh◊∑CÜ	.◊∫$…ŸÌ{Æ8Z·'ïä¡eEJi™µ|{+©ü6ˆvW®Üñ(^ß}ö$√…27[¯K∞≠ú∏{òô¥v@Ω”Ÿ˘&r]∑'›:∂È3üYöŒ-ïáZT∏#îË"Gê˜aª_µ:ªgàçTeùÊ˛?rôc*‚?€3à√QÁÁ±á€~‰´k,~S8Á(NãQ‰W≈8&ñê∂t)p„§Ÿsßù3OH‹ôF©¿“…\ÎÊ≠5¿W1Í≈ôFÌ∂(
-÷=ªŸ—≥zÚiÉ˜Òu◊~•Ôp@f®1vdTº¿.cW§QÁ⁄Ï≈ÄZ˙§à.âÂÜ«ùhÕ%{¡,Y…®u›rÂ≈òAX√"s≥†f√s‰˝˝'◊πA‘Qb\UãÜQÈP°œSWÄh*w®WœŒµhôù˝Œl13ü≤«éÿ=Fæ"∑¥EãYåÔ¬ñöÒŒh˜„Ê◊·¶H? óœV#¶
-„å¥˚UQ@ÏWN±üù>ßl}|˚+~√j˙ûd”Ó::27¥SÓÙúRd„2¢ÏØ8FX' ‘™:21($B>∆ë™âÚè	ê÷E˚éQŸ…o\—‘u+CÒS(÷bΩl5’V<™&∂Ä»L/UÌTó—íáYú«£^¨HÏÑ§ﬁ4∂0™~ÄñJ0˘œ Ωáù≥j‹oÁÙ–NÚ∏&]lWã?&ì™ÆJ®`REî‰˙U\H$ÆyºJöÀsÿ≈Qñé[d¯cE^¯$†ÃdµØK∞TP≤©óï∞WÔs™˘•r˙tÖŒ⁄òÏ•q√è-ä}´€l(∆√u‘ÅöL.^‡9¨ƒ%ç$ 3Ò`	Ú¢ìÎ∫X q,<¬gßU}ÖëŸã∂j®U≈õˆΩam?ﬂ®∏ÛsKë:VÉ`ö9ÎBΩé|±∂ΩÏg°a’TâälVSÁXÍöh'õÄ]∫OL◊z¥L„sìçÂ“ujﬁx´é˝]JEñ—ëU÷:.2“a`R¸∂íÒÙ|ê\Ö9¸å√(ºéÃÁ÷Rê{rRüHÛ’•˙
-∫oêé.K™›ƒaV£?7ÖË$iX±'®µªÿÎÖ4Î›å?M≥«|Õ≤2ï¸@Âë7∂	ìvYt¨·Å4kÍ∑ÔPEÍ≥TWÙª|tÙQì±aV%PπU∂±ÉÓ∂‚Ím§Ï∏ﬁEkÜ´h˜„UåW Ûí;cN!˙∞‹&T/§ç †€~<Ï¿Hıë∞)§SeIƒGyQ◊›◊'oÇÓKåJ,xtﬁ#Ìπ‡ÔúRØµö":'û,˜ƒì@`\1\YÅˇÂj5eÜtw°KÚ˙¶N')KX?Œ‡ÜÔLá≠ºó•É¡y»1!“â.ÇÕπ3å`ˇN^Za'VÅôìå3fMÁÊ∞Ú`v6˚ì	÷Ò}eúëı§hM–~D ÍROkH;=D„˛DØ+…ºK	·æ˜\È∞›ØyöV	öå«'œ.V-ã@—Ûõ‡Y`ûvŒ‡∏øAÙ«Ïo0·ÙûGz8KZœ∆•˙5rÌP&>∂≠ªãﬂ·ˆ˛KÙO˝d,\Z„ëqK‘!ºÂ!ÂΩé¬ü–å+8>9Ùí‡øf2ŒﬁC<{Àä|∆ù˝…gJi!ç 5ãf€'Ω–zhˆè…/≠Ω¯ÃÃbr+9{fæJäQ/rç™äú—)=tõ"3Â’.;æï‰„AxÉÊ»@^âê¡?ã,£‹ÙWöí1‘ïÊ≥çV£pÖÊ√!πJBï6>1Ÿd#—Î«∞Z–CBÓ†a0ÕºÀÖˇËO&„¸Ÿ˙ø/¸˚¬B“Ü˚f“‰Ω°=†ËY±˘ªL”ÀAWÕpaéÛÜøZ˚r–ê∆`Zec Å$ËıIÿD°7p[Ú◊‹Kã˜¬	‘⁄ê˝Òπ	c•∑ˇæ–<˝èÖ≥øŒ-$Rå≥RöY]<ù.û©∂‹À9Ó•¡é˝ıÊhg3é-å&M≠m;ãÈæˇ◊ÖÀ˘ ıéäøÃ;ì´ƒüE%±u¥â¬júˇƒ≠J0£ÑÄøÓç˝è√0áh*Nı€ÇTò£qI≥ÒèÜ÷¿;·øπgÃZ’üÍﬂƒﬂ,¸GÎŸøGlˇà7Ü°ãíø)¢{:wh
-+◊T,p`√$ó£4c;Ñ’Á‡®¥pº§mÏ·ñ$Ômn-øÉ€˛œ9ÜÅù‡ù #0Sí≠ÛÖf#ôS!võ≤⁄c·_5ÚÈ9;ªhøÚh.¯k–h∑€|fuÜ‚è„4√e∏1}…|ùR	t«„ÊúÊ,@ÃUÄ˛‘Ñª¡S-NÄzÃ∏Îx¯!éﬁ‰ ”é'i^∆∏g03A≥Ån⁄HÒægÈ;Ë?k[è∫`ﬂ´◊	πæãq¿ÜQ{41Ÿr—cﬁo8ﬂ“Àd‰~ï≈óIé6ÍŒ„k†VsÈ≠aM±≠¯æ”ˆ‰mi•¬ÜJ¨_?Ω>I√|¬ñP<©´»Ûé(ç&Xe/ŒsÄ.µ;Q
-¥¶ç]ûzÂyúı·
-¿xï¿N˚¶°v≈„0õ†…˘q<ACÔú∫›≤äµ›énNœû6Oœ§€…f:Ò§'p ¯"UÑ˘Õ®WÏjƒE”f±0ÍNÖV◊!‹N∞õ∂“ﬁã,«—fîˆö—9‡Ïx€FOv• §edYö©kèOAAÙ5SåÊê^€Tß?ôu⁄CpÂBCèõﬁ ]•M/.à+".È»Åü¬5yf£f„E$úòX¥É˜˙xÂ«#4∂äE15¸ 4bÖÈ∏›òÛ‚JvÊã‡≈⁄uÅëmEI>L–I7îw˘Ë®ä≠:g‡í	è%í3[∆t™∑≈ü∫”ï›M£ùñ)s`a*íüaˆ¿f/+Q î#¶DÈ_§AÃ)gn^;jÍ:3è„.ÏmÙ≤ë'R8e—ñpŒNÑû	∆ÅÊªzô~6µ#H≠Åˆ$mEIIKÛ´∑Œç2ˆçÿΩ¨%øÙYk‹b¥##">{ìç4‹¿MÚ-ï‡H≥e¬ÏDxzYöÁ≠(˛êÙ‚‡Cí'Á… ô0ª[Ö»wa\Nﬁ—ãwùwº∫ÿÎ∏yëe0rx4ø?>ÿoè—X∂t`ì¬CJGNiò¯,…™x†¨8Ñw⁄Œ”‚¿‡Cc:I_…È7πGä‡~cæˆ¢DY*ôÜπË‚îHãÅ2eÃ ∑]≥ŸgÅ∆⁄≈óË>,yº∆≠Ëª=QòòÊ≠Rπ›| ˜€.mg%HZ
-≥ëí!ãQ1Z•{È!∏ N˝Î8Sü¡Í◊Í}Òœh˚'Á˚áCƒ∑çÑåë6qraıœj1Ñ©û:ŒI≈H©iæö¨Hª*)¶+óõÃ':cu}»íbi}Û2≠s^fzÇZ˝AÌã≠7*—˙⁄éÈM{;Àhå>` }3ïƒÅlÃ”|±÷|ÿπk.ﬁ¶Xköø†=≠ˆ¢ñk6∫ªªòM£ªy≤Ûvõ˛‹ŸÁOõÙZ˝NÃ¿∆(¿ë;Ådè2T¡aÉi≠∞ÑYªŸÌ‰nÇ:˙^ÇO/ﬁ%Jr¨D…0o›<Kgßïï”óI~àå~f/ˆãÚÆ∆¢˛€|ã—Ÿ≤ŸÂ%W\íÄ{›çQZ5´äb√€≤≠…àπƒ¶ò‡r^Í≠è·Ç#ºLÕ˘S˘'E
-πìí_ÈÚY[TÜ‘òQÑà£Ç—•ZpWy¬˘aÿâ\8cGw"gÔ©iñœ^â¡Ú	[ÂU–&≠`Ì»ƒsÕÜ”âﬁ
- õÜΩ^:qÙ“Â^ñE6„a9êÔ§ñõ≈≥Ÿ∏#}&Ze@ÉgÅBßP
-Ùô3ºJ©¨¶R¡d3Å6˛≈ˇò¿¿≥´ñT√»åÄ»∏N≠ÃÜïπMçNƒüX≈’]Ö≤∫J˙vÕ“ÍâeqÇë∆sÁÅ]kjQç˝¸}7˙Äüel*’Õ·EuDs_ãÉ[î8≠L¬¸ä·ˇ“öbâ˝q ‚bq`ËO=–Ÿç˛1M'Ã]õ˛M>jçe±›¡y˙èCïx^<W√ø≥®ıÚÛ¸π‰
-°VﬂßÁ[qﬁ+öÒÇ™vGq/#[_¥îEUmiOJ<˙7≠®™-“”E3|™jê‰ÿˇoÚ—n£H~“ﬁ¥ÿ˘[‚I[Qj/≈(En†ßÏÖ}µ§z-/íúí$a√àıÒ¬(4ËKÌ%vI(ÔÙÃ$£ìú’n+åx8ïΩ¨¸:Èá9
-Eé„X4•ñî7é‚Ûâ:©≠‚YÆ,wN-ùQ- ã/&åEëPäc'ˆ∑÷öïŸÌí—á4hmá?h-y°ü§Â^§ŸvîËÃå˛ ‹-~jÉE|Ú,;¨G≠HóÅÀWˆá!˙W“ÜP◊jœ*÷z§˝f’9≈¯8‹”·¶»SÄ3kE˙*hØ™E@ﬁ…ÂHŸ≈≥â∆yπcô˙ÈıæuåèÕ“ÚÕéù ñ B\∂U‰ﬁõ1&ìákC™U5ó◊å…ÿ/™∫ºˆ˙'`n0pÔ ~Qﬁ’0M√¡À,E'0àﬂUz°7¿≥—Õ/Ó+›ÖZ7Á)py·ËisíMµ!%î0°ÆﬁÖÓÎªzø»hrw<º¢VX¡'≤∫Ú£òãúÛ˜ˆã‰·
-pá¸\à'˝TRUá¡ö_"˜Ä~Ç(1Bcπ≥g†vz¢6Nï7«Züq;'”BmÏÓnülo5TÕÇQcõÔÓñ÷ATöáIëEÆ∫nCóh…YOGYF⁄©ﬂD
-'Ø]ÙÆÈ6GüoFmÏÑÙΩ£ví¡ÌÆ' Æâ=Ó«@ríÍ!Ä™ÉeGB÷:ËßîaíØ'3(`’ôÙÉˆ•U\≤5‹Bonz?%c
-1ıîÆµ „
-ÖSD |N'˝∂QÿTû€(b¿ß [§ëtøOØG¿˙ﬂGI_¡∂Ck	«›%ÒÊ˙˚¥áÁBJ≥Ëïep◊∂/*è¡ßës›™Œú[9AT’)ë6üu™+±îm÷Ô8œO“´xdF±–á™ıSGÒúò§Ÿ ÀìıÖÖÎÎkﬁ{8Nr2,I¯KñêìNF©”Æµ;0ŒÚı‡∑Y?ÕíüiØÔü«aF~ªﬁÒﬂΩ∑\ŸπF»Äøù^ŸÅ;Çbß*]ó Õ¸@‡ﬁÍr=Ã˙wAåa¿’qq4ÄO+ùE◊1h ~= ™7à?éaªEÌ‡ËêÍ}HªÜjÄÁÄ"ˆ†r1Ä…1û<yÛÖC…®5åá¿Ü◊Éà<©˙œ‹¡
-üR∂y›FŒòGÜÅÕeal≠≈∫ºÔ‹UÒê≤:VWR˜:˛˙∆)î^ÉÙ≤ŸÄª; «˚Èx=ÿ:(é¸=°çs]lZ}‹HÁhIëkõ∂U√∑eø˛——û•F òãõÌ,≥OéÆƒ^¬ÒÄMO-»·âCáC]ü	—uÿ•EﬂÊ`>qÓ≥Ã\ã„„Zã˙ù]I;≈Ù¢Dµ*a7'<*`Ä÷ı-ºçR±#Æ`eè Ì]X6À(Â:=c
-∆M≤u‰_∏Ócv∫PQ≤é5Ã—‹o¶‚Õ˝js~Å—*o Ìh/ö¶Õ«H"ñ⁄AY±M€<kÎu–úxq∫Û¯uˇÂZº€€‹z˘ÊÂˆªª˘˚Îóè^¸î&Ò√ÁØì˝√˛ﬂŒ˛˛MC˝a"¨‹ﬂ ¯ÎmnfÇ‰—Á<éO+É”CößËœH(ê›äœIÅ`1ºmê¬!Ÿ®‡ï!»Ω√'4úB/c8= rñ´¿¥mH\4ôãÚÅ˚-ÊÅ≠∫ÉÓ“ìT›¡Mö—ºæ˙ù!’	jô%wV^ÍRvÂÖ&!V ·≥Ú∆aë•ºïzT≠/¶òUä,ÈöˆÅB>UúXÂ$k§á*íıÏœv>•˝Ì∂h‚'öLäàö◊Ô:Èx¢y_‹êJC#≈W≈Îgä°1Ã®ÿ_Â8‹Àø€Ö%sˆ·F ¬´~í5¨kui?Ñ=¡§üJy„‹nÔLî˛I! 0î·⁄îCm£Ç¿∞…˜U“D	 ÂÃ¢#éO¡≥Äˇ·ﬂÛﬁYÄ˚Ü˝aﬁq‚äŒKorÛ:Çì'}Ù[fH*é¬¡Ó˚<¢ÑbU	‚¢b(πaãgﬂµÌeÛ…Ï<IîŒy˙oúˆ ΩÀ!ÎΩ|∑—∆—s^ÕªóN()=ôû˜3Àzá“>í_‰@~∂„X~k≈“Éh√ØsÀè‡/y T)£ ÁÉUio∫*ìEúêy†…˚ ÏLë‰§ Çjx∆E^lô,∫A≠Q˙+ïv–ﬂË‘É˛NPf¢ÙBìJ–ﬂ*tÇ˛¬!íÉÚ≥2SD.Å˝ú&e3E’Í6—’ΩV’6£≥|¥ ˙Í^ª›OÏEñåôƒ€”^*}Ì2Ò €Xj}Ì∆°xÂmL^ﬁV;ä—	M§8z}ÔpwÔ9›˜d±3ÁËôTƒv◊Öäû3 mH4ˇçôÎ  òK2¬=œµ&≠tÏˇ0çbŸR0'∫j∞Ù7ﬂ∏¿√Î†R° …∂áNÆ∏œ‘å,ïØª‚iÁÏY;≤øMz˛C2È7R∫PÀßaÇ◊ˆ07„$Gö„ì
-aóÍ®iN⁄∏X≠◊ÊÖh*íÏâ] w8õéÜ	*§¶›√$¸»öOµˆÇ≈5¢ÍOJÔ˜ÅÉä-`ÅÑ)„ËE2 S}C¶6Ç6ÎAEß˙}äÅ*÷’¶¯√ÏøÎA#è\≤0é.T?‘;s‚Í»ûáy¸p•lr¨Üuﬁ‹P∑&m›∑ÓÔ7‹ƒ¢Ò	’æˇˆV…EJ˘{˛ Ûj¬™ß√&&“|åWÈ›¬Ò·´Öó;›Öoo5ƒ§Âñ˙s<jΩ9˛3–B"Bƒü)‘‚üÑ∫/˚ùﬁPm/`û?¬-Ôﬁó`˘
-^Å§˝h¯”±≠Ÿw’J÷X«J¨£˚ŸT€ C´˚8∏ÒÊV◊‘¨¿·êö5ô‹0≠›fà13zWL•»%>pkL1~ûä{L}#û#∏—·$a+Ì UgpôΩ
-≥àπ˙¢T)ÚlœﬁU∞sH~»V<l–˝Ü
-d¯§qßa}®æ4/µÆµ€qX‰Òqúô:ó˝LÓÇÖ(©„6
-ZÓDÎöq ‚™´EI4o4⁄',©÷hë¡^-a´£ñh=‘¢d‹ç"ÃﬁµŒÅ£◊«ŸVÌ¢Ü4x≥,œ≥ÙÕc’z2òÍf‚]’7ì˙ûòÉüG¿Ã>†ö;≥ä˘√fà	–òÕÄ4ó.ä™ÏN∂Ÿ>¢KàµVJj6˛!‘õ˛ñ7“g,?x¬J¨±>ˇ∆	˝YjÆ/Mh_§ŸPuB0À+m¡Ó«Ë Ò¶™≥=ºh7«Éd¨tdîVX:	œ®}Ñbk›üFî:¨˚ô¬áˆ.€c¿è~€˛$ﬂÇﬁ'ÖÁÅx¨X_nC¯™∞ï3
-´iƒ|Àj∆j”6_⁄÷rÖ9ﬂ4í≥ÁXt¡Ò*Î„zUsë¬Aò›lÖ7˙"â“⁄á¸P;o0∫ìjBeº:„ô∏ÍªUIô•¬Å‚Ÿ‘’älòJœ¶√Ì˝-
-a
-oÏo7∆ñgÊ	ã)	±u¶πú˚•9Á±
-G·•Ø[˜ÀÍnπ „$e®æ^¢l&'8ﬁkyû´ B›så›dV·πA·yèÚÑ˛0ˇ˙V?Ã4æÇ¢(Ω¬ö˛ŒØ‚ü¶¨XC≤ Ç?Ø‚) 	^=œ—çÃâ€˘0_ë)ãéÊµWÂß"éí¬H¢˛m≥¥Øk=hÓA€Æ7Æû‹oPîE%÷≠8ÂAÛú–!0€]h¨s_Õ)ºü^I¡€MuToçj8ê5|^∂=/k„í±Ÿ//u3Ío¥°≤ãDx("ç◊‡$RAæ©%ËÚWî†∞hΩDTƒÚdúPvèyqeM¶@¥5^ÖQí50$Ü¯Ω(Ê€˘8ºJ&Ã«r0ÈèÉã˛U$€vÄ\ot÷÷e>',<òb≤ß≈GE)Ñ¬7Ø0ø6∂‡Â#‡õr1èªR`S¿78ŸªíÌm/a^ÈÑa/ê|?{Øp#îu
-Øı>Mlnuã7ë4Y∂zou∑˝˜ÕÌ›w/èv∂h’N∫œw∑ﬂmmütwv')Ø]◊+øÏ„,IèCıç€ÎpQÎíY:Cî%∑5‹=◊ùº
-È"ˇıàß,-X«‡Œ∂~g·—YÔ‰Ω√] ^9^8&‚∂ßƒ√Ü˝\qfa%ÎekrV]bã=£PG‘±3$h‡(G¡.¶ë•Àß‚(!ΩÍﬂ˚Úµˆa€.&
-îThöLD¡Õ"R√Ö7M¶ÇÈ`–â„)|ÉF§T√∂º"ˆ¥∞1k–$ó®Râ(ReÓ;éKÿÖÙrêûáı:äØ¬±∏®ö¿ò'Qå=≈•¥∞ºπÇ–VÆßKÍ≠ËLê/Ìr˝<møÓ“Q|yxå'ê®Îdˆ≠`<≥˚JÑgˆ≈Y°AÕ.µÂ ÏoI«ÚÌlù‚~(Èµx]ç†_$#;¨Ä,t«ÿŸg∑›õFàÌ<ÔnÌ∏¬
-∞´tì,ùˆÒ>c¯¿,-fîˆ$—∂≈˛.Ø}r3ñµÒo}
-«áØŸòË?œª«l«”1Í„gQ<hsA–È ñ√9V
- ’jÑ:¥ÜTR£Âˆ(“⁄¡s©»"*"ˆPQüÁóóÅµ¥¢ä∂äQ6V ™ZOwœì‚π¢w°”Z*e≠ªCTUoRÃbŸ\-,i|ãÙ•=
-´‹h°ˆﬂ&7¢2¸Y^˜Õàª
-±øı⁄S(1[f	'—è¯C˘äCxƒ P‡@Ò]√ﬂÓ–*v»}NÖ<ñQgZDáßÕ[ÌÜõR0Q!¿æZR#ÄÉ“óÌ´%µB@ºå”^'˘\Aß§†ßñë¢ñÃ‚»Œ∫:IıÄ{fiçŸ°1ÄTB0WåÂµ%√©≥Éƒ\∏…á8“iÿc◊,ëAóçÚ†EœÛˆ(séWvÂcù˘Û f,ØïNQT·∆&Éõ#%ÊœñR†;2/\Q∞ÈTy+iEÒ÷·—¡˜€õÏV⁄˛˚·ˆ˛1ãﬁ≥‹…èç2q¢ΩÊé(MÊKkΩ›dƒ∏K≤ÁzS≥WÆ_`#9ÏßìTçD¢ó"∆,;˝3è°ﬁ f˝0ÕÑ"¢sø,ﬂóÒÍD#ñqÜ—`Æ7:n}üO'S†zP<"Pﬁ¢–s˘$πjx?≥ç!π√˜K«ã2JW≠~ÇI8Ï^®∏å§*6¯V^LÃ„@Ö∂D]Jˇ/.÷É”€‡ß<úÑ#∆ú˝4¬>•„2óIö¢2Û¥—‡!Së&±V:‰ÄÀYüÒ(aí‡C:ò2÷Ovâ¬K.S9Eq8È£≠û(„ÊíÓÙ›ÏBXFS∏kø®R¡`≥≠¨B´UORH‡D>Z°N¸ívåi¢Ù—-ûÌÿ'~≠åòπ¬3ÏËe.â˝Ä…Çª"É2„"F¡õú˝©D`dyÜèB†?–Â√=û~e;í ‹4
-5xå∏éúÅèE'Iéó˘ì6~QÍèÛ >l™[îrá«{‰%æmE43À´6üh`©òÏµDƒ¢ô*eNËï(˘6—¨ÌÖ„˚éVT©'ÂuyxG/ õ™ŒvÜàœúΩπ^ïw«ÃKc÷$˛8Qbº(•%àWÔA–/ÃRùøÂçòF&>ü ;+ ºù3~‹ÓûïRGn∆aËCdZ@5æ∏Ò{!~Ñª@4D-_7&æ=≥ï—Öà§ *¢(DX5&ã∆¢®%~_«ÁΩpx_∞«ì®HnUYµGq‡b£ ∞€±ù¥∏ôÁfzú°æ¸íõÜr=ih’âêí%$oÊãÓ î«h\BÅ◊ò—å(⁄¡d7Û¡Jß√ˇÈ¥Í∂NZÃ≠f—ß^K∑Î0c◊3<Ÿ‰}£≠iÏ2=qåGBÇXÑﬁ(ˆL≥‰∂Í ÷Szæ@#ú˙C ˛E[.πF∂d[—Ù+∏Ôÿ˘ qÍ3ìÄg≤XE;LÅ”OÈÙ†ÆP^T ,ÃÕ(V<Ö%É˜=è«‡}_ƒc–Ω ˘ûD”Ês©˚,≤˜£Ù⁄!o˚H¨·˚Ù—nf˝t+µˆXÅYj«t¶|ˇÌ-u‹û§R$>#íΩ5óÊQﬂ6w∑˛Ì-Ôπ¥⁄{iß∂ó2ﬂY±<A≥≥∂æ⁄	ZAÁÒzß#¬üS∏f63 ‡ödãI<›†>z*a#ıÁÉÈƒ⁄Óﬁê,\l¥9ˇŒl“{}Û≥ΩwÑ€(MG d≤…ê™RLFFX(f¥¯–9•œ5#<3•S¢
-.2ÃyarG1R¥ùt:…ì(Æ°ez]ceﬂ’LU•[6;‚Ëä$q≥Ä≤6’Ãûö≤ˆ|∞#}rò≥vLπ8lUè‚í#˚›”7ùiÒ=µ∏§F¨Q7S/?Ëäƒ´7;∆ÒVR	|„YÀ˛ìW8ô!ÊE∫äy%9≈<73i√|zU<éßÉptŸ8+<Í
-œﬁ˘3€®bªjB’•»≈·›Lüa;8.ﬂÈæPºcw™sÃéºƒ”#ØÙ»+î¯º”9S2iπSw{“v√ø–ÈºíO[œ£ÌIŸ≠%·6rùóßÎ÷Î™âê1Ω¶»}µ¸q†fﬁÊ	‚‹iËVÇooï.É˛Zi<0xå˜ı RÚ#ã+wwÄﬂ†IàLï“Ä=’Ôî‰ Z+3	ÙgH˛,Rö3˜œ›ûΩñsÃJ	&Í-Ÿ01°Rﬁ´eu£BÀL1ˆ‰y<·˘·âMWÓ¥t·lK∂ò3°ë‹J/ÊJehe&}“_5&©.“ÃYÿæΩ-P¿≥ÄÂ≈ •ÊÎºêãtxÿI◊„`≥ÀpË}ì‚<ÿ#|Ü›≤ÁCÜ–Ù.ü,ÙWçi˚ì®ö˘SUÊOΩ-›z«”(Ï˝ˇ  ˇˇ çäxúÏΩŸvG≤(˙ÓØHay[@õ Ynôö")	ß&@˚ÙíµÃ™HîP®Çk ≈VÛŒ˚y9Á˝˛¿˝û˚˜~¬çàú≥™0Pí%{kI™rååå9#ß≥0eoΩ)€¯a{c£√~Ù‚/fQ1Ûò7ÃÇòMΩ¨ò∞"Œ·ˇ±óÜ,å√;çØòÛŸfç~·{c(3ïmn˛ù⁄Ïáë7ÅFgaéYLáE º‹+D≥"Ç^;ç´—GÎ≥'_ô?˝“z0,Ú<â≠:IºÖ£…„˜Õ{¸ÑΩwFû≥fò$i∆-{ó·ÖóÕç£M3m¥:µÇ(Je˘òÀÖ≥ Ôèì´nû±Ô≈£‡$òÜ±§Õ∏à"ß¯ç=„Q‰eŸ°7ø?õµÔ±4)†¶ﬂ~±<ı‚,Ã√$n{QƒºQ^€Ÿ»ãÇˆÏÎ“LÂ,KÎÙî5ÜÌ`§^‰∑Ôol∞<xó∑Ø∆aTÆ*îˆ¶√ ù[ˆÊÃú {!ªiö\ùÑ„úe·øav[7l›^\æò˙Ÿ£ıiÇ”Ì´n† ÚÊ·Wˇ(â≥úΩŒí4vΩF@_ﬂ∞«¨»Ç~´ˆ®ëá”†¡˛√≥4L“0ø¶º,≤∆ì&ﬂ¢°“ﬁ˘y0 õ&!Ód£4 |}¸¯1Tù¡jç-Öd|ÿN
-=√05)ÏVt¡Ãª¸”å
-G	,d?ORÔ"Ë\y/¶Õ∆UíNŒ£‰Í◊Yö¸
-ÉJMl£·»&Z¶ÁÈµÉ˘º«ôófÅ›˝ÿ?:Ï–/£	3±y^æì&Q¿ßÏ˘Ä çVi[{K¥} Ã0ÒRﬂ›7|/’◊'|¨J÷Ø4»ã46K‹∞ëóè∆¨∏#[_gÁ∞[Üﬁhbñˇ™¸Mè J.pé≤Éõ5voccC˝Ê›3æ§£(Rπ ¥¢65_s|y≥
-Zôîà˝Á?Ã|˛Ä;*Ú–ƒ:o#
-ˆÉpª4ÁçÄ£¡ÿã˝(8ù˘0ﬂ„49qyôó]«#÷,Ëq∂ÕéΩ4ΩË—ﬁt%◊AƒÛùQë¶AúsÙ3W≈D?Ô sÊ˚AzéÇÏä›dTL°b≥Å(ù5÷ò—R'Ù◊òÉÇ96*wÃ{÷Ètåäk¯[TD∫¿kBw;∫L”hB5nmΩ¨~Î≠Ò]ìÂ)’¸⁄jåÉW†á,‡2Ö0|ÄY>	R Œ¿CYòÎQJ(gÕÊ,.÷
-7ÒAgÍÕöà‡∞Õ †Da(;A%∞a$<hµ÷Dsz§ìÛ¥ ®}‰:µÈêÄ=n6$ bö¯t¿√kI∞_Jaâ_x^ƒ¶ ã zi¬l∞zß·Ó(ÿ®Y`‡n	awp≥=c‰©›ÿﬂÜπF[9ØÄÂ&W®¶∞û› cı<vÌM˙∞ä €Ò≈ÿõÎÔúvŸ.H%ÏUPp!¯7Ú≤»·	;˘ﬂ,y©«`NS/‚ßøƒËèDêçÄ¿w®<Û ı√!4¡´;çñÜ©π_8˙J`B/£â¬ƒ\q M\%1(#ﬁÙ¶3`t}baÕ˜,øû¿Æa)¶Añ:„v”*ÔJ@“› 
-`ıŒ©%ÿÁ0¢Qí˙ôµÂ‡-Ï÷¡ÏÏc‡Q;I1öÛ»ãØÅÉ™∂NxSzâœìî5yì>KŒeª&π∆UÛâmÓvÎ”®5)uπ∆®Õ$âø˘™4w1®j⁄¯bÖycÒÖSñm~¯úÕÓOó∑L≠ã#à=MU∂q†ë?òûÉ¸ﬂ8XﬂX”5è°&`»§Ê”É ƒ¸Ç˝ ∆,ÑùÀÚv¥MB¨7…B6—Ωåy/3±∑†\F;+ås
- ¡ÏHYSSØ∫]†F#vCVåF∞åaÍÕ±Ã¨A‡çÄp¿l∆^¬<B1!ú‘–À•…Õfí“mhRKM˜$`Àã˝PÀÇ®∂Æ8ejπr¬íÀeß^XÉ}ã˝tDπ“TpLQ§©G-ë"ﬁöG√è˝Ûc*Åü√Û|M¡a|'®5ù(zÏ]≤?z98ÿÔ≈≥"ﬂ•òBà$Q$Ωù‹Kasvwˆ¥Ûz„ÕCÕ°ñQ‘s|‹A†±;$yÕf†;íµ>Ûœf,Gæ«óÌy§?G¥ò ∫ÇV–Ñ®4Ô>/q7	M‰±1 4Î–vß£∆Ì©~âÏsà•ÅÁìWÏ9Ä‡Ñ4ç!„ÔN;Ñ+‚h2Æ¶!{»äô3U+Û¥#º∏e ¥LºÄ+ƒÁcPi∞$J¶ πﬁ„`√‹Äµ9,‹©ﬂG€˝±cî∏hÍZ£ızÛMi@∫∆¬AŸ¡%Äeûë∑xd0ò|	√9Äz4Îﬁ,\ø@˚A∏N X≤≠ò¨π=™iêè‡¯®?0( ~∆¥™ ÿª Wc'âsXßˆ 0©±mÔÉ∑Y;›ÿ?áâΩÌ ∆n∏HªDl4H◊ú2S–üÑÃj_∫E≤å±•≤7-Û˜çÊ¯ë»F0Ô$wq˘¢Ôrµ*™
-Aöéñ
-LZ(ÿú§Aiÿ% j˘<≈\u_≤0ŸΩ%ùäª 6gBnüv}’œ<•€Ew≥	–Qœ^«º•;åõT∂Ÿ◊Ôº¯£õ≥E˚Ä7˚#‡\Êàâ6Ãiç*0êf7MΩÎNò—ﬂ¶~Ÿbﬂ|c4ﬂâÄÊcR¢6Z7w∑'v4 Ñ1î`ÅÑ˝Ys±@ J®t@ïŒÚ≈"ÒÇ¥ê)
-9oFJCã)≈9ëôúœ¢O˚M¢çﬁ}zûkçéklÀj◊Â%∏˙Õäñ≠JsÍóbù¸Ö≈™ŒHœ§pµNí¯«;˙!ä+ q ıp™¥Ü7@R“êÀ2æD∏ÂD<n†ıSBªÅ∆M[˙l‹∆Í ',»ØXHêB@˙ÉﬁÆ@DÕpÖv˜†àºêQwŸ[Xf>íåL·√ ˆ“ŒôCä‘w)%Üq§{%QQ.ª©|∏ÑË¿zXã£(ää≤w©mÅBñí“ÓC.‡7Pÿ¬…≤0(:±S‰x,˛ G∂†Å∫≤Ñ”ì} Vñ¢M∞π	GÇ∂°‘ Ç∂f%ÊÕµZÊÂ®(6ÃQ:ﬂnqÓÓÀÏƒi≥e…¢®H'„ÑÃÄ∞HCPbâÇaà¯=.¢¢„Í5ıÚ,ÃGµZ‘»ØUÃ≤l∂	Q(˚P∑äO¥Ä8à∆∑Ÿk˛Ìçx#P˛—AM,AiJÊ	§8¶˛Æåê6]ƒ9oç¶∑Qz…ã’Ô˙ìp6ìÔ 6à0¶hÜp≠Êbì$r¢A{oä=SQÙSAi l£;ÙvY±ôs◊K/
-AzÌyËÕƒPµ•Ä+Y∞7C†ªdG
-ùáÏ.∆]¢…w±◊ª¨Ÿ;\?:¥JU}+;"Vòñ˛–ÕAiEî¯sÃh—L◊‘4_û∫á/÷è{Ù∑µ∆a`Ín=¥p!W§¶ıÖhj!Möœ≤»Úd⁄ÛuKàw¡ª0√œëô4jï pÿÂ¬¨Á!,≠ºÍ˝˙:€Ï∞ùq0ö∞·5ÎÌÆÔæv—Bésa„Êvz.2®[¯+«^F‘ï0õ9sRª\o·<õM…èÄzß“Ø `KÃ¨WˆZT9√J0»≈«Ï€ì›≠sµø`F¡≤nuXÔú≈	¨)p®ª∆F¥ÃHïBñ4ƒ	ÂıBü˘W=P°r|‡“˚I1%üD∞ÃZ˜;Û∆˝˚,ø£\h˘l¶Çä¥®?Ò–†.®è85SNZ∞º&4•»Î¢J—Ø™RA6J√*ÒFa˝–™±—Ú˜áIÅá	Ò†¢¨AuyÛa’(¬<2áÅ?Á@∞fK¿~∏
- ˇÅ´ ®Lı∑{^CKú`BAÄx>∆6`	Ê#2ü˙ÿƒ(*||ó]g0Íu¯ª¿ÅÍ<"J⁄%Ósπ1≥£·€`îw&¡uFÀ‘Í¿vLØõ†[ÉÉ~›}ê„í¸‡w>∑¿vçø–G$|:√3Ôm∫Ë≈hgj7oºÈÑ1<»∞£V´ÏßTÀ¬_p]’Åÿk®˚Ü#öxè3‡O≠•*[Ü Tƒ†úÖ≈s,GZ˚ˆ€áŒ;®;ƒ≥jØi2˜ßÛ‡üûü√w [,ªè®4ˆ.ƒ$IbK+¢w9fC¯¶íq|z¿U\£ìÂÉG9˙‡ù2åºœVKÆèä‡Rî_†8D√)øRÿ±çﬁö†'WÕVπò∆µm”5˛¥„∂F˝é∞8o‹πŒZê
-¿ö´	íí•Œî⁄]t®Fà⁄$˘]Xy…1˘ä≥aë&{ÖÜıY0
-aw√∏≤1$ÛŒ 
-b≠…Q%ü≠·≠∆k∞πv¯K–¡#DÍ´0 ÜrN”z9a®(0ÛÖÏ∞ÆÔCâé#®Jú≠ìR…"	Ö~˝˙Ω∆ñ¯;a‹9è∆Èk
-€(-ë˝çmn‡ßusˆ–È=s±∆xâæ&“h]Æ‰—µﬂ!ÛƒîÌ#MiîÆoRóaèÁ‚˝R=*]ﬂ°*Ç˝œâf=•D¿7›w-tüc∏Ä‹‹…´d•MhÙ‘2W––®5ﬂÿ*}VLß¿wÉ‹#¥úıÉ(»ºê¬V“$zR#h”∂⁄$€cîYöR÷d	±Èo‡ùå|QÔƒé¬wQpÂÅb7˙{|WNºº£∞+ïN¸3>ˆ¨à&‹ïΩîÙïiu¸¸7gã<˝6»ƒ„èÍõ?3Ãørñ∑Œù]áÒqW¨Ê3XßÚÓŒY¬]±Ñ ∆{cZ
-ÀVvÂœ]ﬁ∂)8®1h~§ê ”ü˜pÛ 9.»r°Åx´ËÅJk·bSÍ~‚˘ª¡πWDy?|· ˝!`a¶É9@µ!{µéæ—*]êö?q»∂6∂æo=˝%˛%¶◊ÊÑ0ÚÀÉ∂π}á,¨"XMõë∆¯H<øÜE|±Óá@FáﬁxBæü∫∞ﬂ◊ ä&X¥n≥Mç®ı/ÍÌå,œsGw6ä(≠ÿ∏≈ª{á;»ªÁÜùVça‘©e:∞Ñ–
-ëueQ”Ù˚HËV∞§PÓjm{i(ÓÓ=|J0⁄qhø/VÄp^ƒR‘à´cæF∏ùN€'–]‘QmmsEcªë÷ˆ5—>æT#WoÎ¯∏¥_LêûõnfÍkÄ.¨ÒUEæqpörπºoyﬁ&◊„S37g—~_ÆE°rGqt˝±Éóˆ_ºÏüˆE≤K¿ö«â•(ï"6Q·•¯„ïó14‡ÿÀÛk∂„e„˘¸•"ùùXgÓIDœqñƒ“õH|îüõ~!|‚yêf*¨∞,)üí∆B/:EO–Ü˙¬ò!è.yﬁ(®◊|%ﬁ°ÖΩd>∂è?At53ÄcZ™¢Æ9DÆa„sÕL<òÖE¡ÿj›ñ?YA3<∆ó»Ω‹çC"p◊sío∞Éb>5Érh«g»’< ~]œ•82V°≠ÒÛ*ıÉ˙%nœeé]BWº‹"ê™‚g+≥ÃöÄq¥cØü2h‹Ç»"Z:¥®˛'·Ω'‘ÓŒfªí)-Õtè˜Nzá/∫ÉÓ!{u“Ù˙€úc)Ü'èÌüûúæ‰ã|≠¿´ê1èÃ:úvQë5#Ω2¿èÈ‰_Æ±â`–#‡â”5§@s≤aÎrﬂz56Ú‚∑Eé√Kq÷åü¿¿NüÆzÙ»e•»ÏËGâ~%Qî«∆p"ùNÌ≥◊¢◊F‡jR–Ω0∫>qüŒ“ΩN∆Où§÷œ“ ƒ3‰Y HÚ˘ÑôÆâÖçß0îK¿Ñﬂä ≥Œ`Œ∆Ôﬂ
-ò!_?&ø˝Zí/ÉÒ(NÚ\DMèÀ,Tµa≤5§8Ÿ{TöV⁄¬¯2	≠9NΩ›¸¿π€jñÖ±”fÓeìÃÑ(?•nV+@»ﬂO.,¯$ö5 Ç∏)3Æ¶Ω©ê†DÑ°C¥d<ﬂDï2ÔV1V¿¬À8e2ÓÍ„˛“bÑÏ…ñh\)¬ë S-E‡gÅ$aXÆ]!Ç&dÏ1◊„R„Y1«º»—≥™≥?Hú&PfíÖ‹ wsfÛêjynKÆ*„e¡ªQ0ÀçpùÙBá¸ ±ßQr◊2)ˆÎ…U§Î~òì”Aå»≤*Ò¡^Z·}ƒéˆÒ0ÌrB"?_l^Ù“∏¥™¡2‰–ﬁ'ø˘´ ò—yk5ää3∏OÖ7 )ËûüØ(öH+∫Ã?‰˘c†=¿í¶ãÍD¡ªÃ√Ì˚÷;OΩ\‡+YØæ≠¿?.¬ã|qYπN∫∏çù∆‹ûoæawl(∫˚eë‹-OàÂÕRøU Á˚Î6…j[Ñ£ã≥7,'–Ü¡ﬂ$ˆ2¢†∏,˘_OwDÙtäkåªÌ˘éï¨‡®VÅ}ç˛ø˙ÉΩCñ√p_◊⁄¯
-±.aßÆÊ—^9ÌdØø7¯uÁË‡xo∞g
-ââ_DR‹s∫Ùπkƒ¸SLÜÍ+°(#ëªÙ«\Rõì	ÇE √+•ê¶—ê?mô˛Ÿﬁ…Ànø∑øÕûUtœ≈5?lõBIZ˝`tÑNTèÃ˜†>˜©‹∆øöÚ6Uñ'i–ÅﬁDTvú√CÃ¢yPÉ≠3≤^M∏[§e…NïÊ0Á‘æƒmyBóœV⁄jjœÔê§‡2Á%_áˆ9ÌH°^µ¥‡¯Ë“éqÀgE1§vœ9ótDîÉIˇ≤4ñc‹ŒyHΩI…>z˙ÓÜFKèõ’f C]Ò»7™s,SÅq@`@,ß]Í˝Ü`@I¿∆i)FÂdÖy-cwˇqwç%2Ç6 .÷qMªñ∂Ë%‡4.IVÓÑˆ8µ6ûtÚd?π
-“XÌfßÿ›RY™mëS$ß§7…ﬂ¶ïÎ¿õÕH≈icÏ	‡ÁÎƒ∆‘l[Oò©9ï|¨≠3ÓdlÆY˜yí‚G≤è#«≤}–†Î˚p8•€’Æ`éÀˆ&ôi}áUÏV¥…„∫¨Ÿô<MÆl›òYiayI,∏πuOïqHº7wÇïŒJ} ¬sªµ–§¢OSË®«KlxZ'aY•∂Zï È9˛ã\Rö>‡N â7Â˙¶FúQ˝ [e—;r«ÄŒÇÅñl¸£—™Zñ≥ØﬂÛí†ÄGﬁ(hÆˇí}ª~±ÜÑÓ∆ù›YI¨ë(.gJKb@~…µ¶p%xØñlWÖóÇÁäø5ghÑâ*∞FÕìdXd9Á#i˚t&—ƒ÷zê
-#.Å\Ià„+ƒôçÙ⁄aç<⁄ü–k[ú≥_c≥+_˛(•≈Q¥\4E;A/˛9Ã«‘B7ˆ%£kzE>^cFÛ‘¨©#ë¥ÆbnœB©or¯Õ@4hnÅÍÉí!6–Ö±~Âì<ŒZ&y„∫¶Äı9ä§k48Xìi´Ï`f‰#'=æWƒ´ùègQ∂ÂnçWSÇ0ÕÚ5‡çewIÿ1ñB∏Hrò„+<úÊÿÍq’)àƒÌuÈ~,∏ñ„fÒ√€FJ<ÔΩ§÷Û ‘Ω§ï®´¸¶Ùl{˛ˆ´h£nˆKÕüÈNÍ'» |ka¡˙sRä√%€|¢≤!Äã`2kfßH´x[ç™Æ∞≥◊f€≤≤]”
-ü˛R±©~H¶b˜–~Sê4∆Xª†lX£ÑÑW‹Êb”âöH‰ÍÑí@P‡qû$lä«÷ƒˆÕ0†4æKÑI”úˆ.–Æ°œ,¿§ö:wõ=@ó>™˙rï‡Ÿ:tÿ∆€≤C‡˚√4&t≥,Õº*õµˆÑØY±∏Œ5§ù‚
-æöØ-À(B ì‡ï⁄jUåM!Ë2ŸÈÇŒ∞étg0üwÁï;î¡Ù®"ÃÒÙH6∞è|§úï G®öi )Õ`…ù2ñî1°C√ÅÕ«cÒ@;È`«Za-h=î>)ñ‰º@ïY˙8M‚ﬂjØ ˆkHFÂ Û‰ìŸsÌƒÂÅ
-ì¡s¿/ËVÇD9U¥Ë¶*{,=ª)#IâJî¯‡GÏéö)U.Î˙ﬂà1I ù¢∏ƒ1fq˘€∫€ Wˆ/Î'?çoç±‹ó:”ÖÁs¶BæKTÚ.ùÃ¿T>≈5x}=Ëeï‹{óü¿[1{Zˇ~ZAJ›Up©CˆEÑ¶ñùW
-’òπêW"íπsœ˘π9Ó&‡pJ"üâqpi°úé?JC]¨”Èœí¯9Md,·_y£¨éë¸êπÀv,kx’y¢%™i·€=(^¨6⁄tß}∞˚9&±‚•…‰NßÅzt à eêÜÁ◊ÔÒT[E/2¿ªÏÎë6sÀ”≥∆ì‰+0G“;◊ÕÖõÜe
-AÚ Û±∆I,…VHxø¶Õò2ÙÜ0pÓ°∞kﬁQçsè«›ÅOÖ¯ÍZGÖìG™úzhRƒ‹Ÿ/≤äb-Zpu¢öqÅ±‰!∑ﬂ€ÈZ,(<ã<4Û‹·‹õaÕ√QÿƒååßM˘∏f2‡?ˇQÖEû'ë´XÙ”péı∫QØ>PzPÀ≠Ù~'±7…√Ûy†3	S-˜‚¨ å Ø Œ(q`îj(ÎéoÌ)ÂX“·P˚1†îÒèÁd2∫Ä]π≥)∏WıTo@ª1hëXæY£CïrSX‰•úŒ,ÍRhúÏˆ<´…SeB]†∑aIm˛‹V:Ö;n˚€&™ÎæDk‡vâòÆ†'ìê,®lùΩJÄ`
-©™r´k°‘∂¥ó≤”‹õz’≈∂ó3[’Hå–IW’a?b•∫¢€iÀÊjÁ#!#ÀãﬁãA}±mQ¨¥‘“G Ü)S2˛£—zΩÒ∆-p√◊}lnY"˘‚l©c
-"ôpË0eë{≈‡∞QÂÓæÈ˚bçqGÌ∫ROúmôçì"Ú˘Å±Úˆõˆ$«vjSTÕ;Ô{si|~™	0˚évh8%W≈Ê ñ’Ó≠0ŸTÊmì#S {dU∞ró <#≈„ÄwèúˇŒdiQ™"I+Óñ!G∑1â-Aä>Ñ-MÜ>)Zä’ Üÿµ ë¯Ò®ç%ÈÅ,xüæÿ›≠@ÌÍiùR≈ÁÈUúfQ“π-üv‘Cxu.+¬R˜7(©¡Ÿû âhÅeÕ}ÂÓn7a´˛%ë0∆¶—dâB‘
-m}≠@ÈáoqÕe¸R•&Rx…K^ ◊iKè£Zúàp”EI™tªˆz¯∆`o}	Ö—ö30ù"ÜvÃtµEU-≤ZY7µ‡∆ó˙€^÷XÂÏ*TPÁ∆ó∫ä_…ÑíÌ’:~8ÀG∆.„ªˆ?	2¥Ïí∫âíµdÍå´…‘£‡D((º¿HHPë´øO¸ #âæQŸAeà	
-q0¸È0º(í¬HΩ#˝´á¡N^dÂ5w`ù-¢jCõ
-9—{µµ¬òŒo∑GJso8úπ,Ø8√[tŸ¿≠ÀΩöàu ÚÓõD)Mø¬˛ƒ+bØï˛Há ì{≤äósH◊RL«x¥ÿ⁄Q.MH'ÃÆÇµí†˚g—qL∆¸Ÿµ Ÿ8â1Fm„¡Ê÷ΩÔÓˇ˜?lî-√\h®ﬁ%†@˙·Î7ŒÛY∂Ωæ∑‰mvF£uEûÜ”ã«ﬂ?¯àÀ9ø´˚?‘.¸äõ[% ÇI}6ßﬂY,sr@≠(ˆ®]_IA,£ŸgTy◊@cW_Fr¿œGí¨ÆóÜÃZä´;ã9G¥PYÜAXEbAm;s	˜ú+‚8Ó’≈éH1ÇJÖâà·æé^^ÑŸ™Ø≈πÃ_≈¶Ågƒﬂî„Sq©Ñ|$ÿz‰π5óESOm—S =U8t?ê≥5*@Æq˘’…ﬁÓﬁaø◊›ˇıËÁ√Ωì_Ω›Ó´_˚›ÉÓØªΩ_üuw^ÌÓñù*ÆﬂÇ7¨déá∆=C∞Ä,qÅ1¿L»LÀ\ú˙™æmﬁ≤¨˘Å˛Â°|e∞c•Áü≥‰r.ÓÒhv3H˙+cheqZãe·j¨è∑6&◊¯˛◊ˇ˘ˇÔˇ…é1z}–Î2jjõÈêlÚda<ìÁ˜Q;æRT?èO 5JÜû .ÍÅXêÖ,·ÚoÜbG≥
-Y©®EÜ¡Ë∂b/#®c%'ÛéèˆO˚ΩÌíë=q4Ëíﬂ˝zQƒÙ>Çë∞ª˚xwŒ+úB;º+“LaŒGa#πi∞◊2tàdPµª0ó2mníùaá&WÅø`)Ç·(AíË∫rÿÉ®ò8§så(µaG‡„¬·añÃΩ!CˇO&I4Á	 Ó"nc~∫ŒÂV≥¨
-4ô7√ˇÔˇØˇãu_ı˜˙l∑˜lˇËUÔìJÏ∫']÷$	;¿@yä≤ÖR”4Æ≈¿Ú^T0qtÄçxÁ…<:2¡—À«@*ÅQ#2^`‚3Ç”ÀÓ>ÎˆÿÈ·‡Ù{µªÊ–ø˚Í˛;‹ÌÚR	slpz¯‚≈)HÌÕ˚ò£7 Æ…óD¢<ÔXúüP˜√€`B∑ìMáI$
-¡‡)ÒvL)K≈0J&!∆Ù”f Ç¿∫ÿ6—¢ïQ/+óhé˛VYû¯H[kìã Whz¢¬|TËÌÚÌ©˜"£≥wÏ*/òºƒƒ∫D@§Œ‚◊^‹oÂ†Ö7ø4PôD]pc'å◊H©n¯?Kfá“\œ¯é&|ƒê6)ß£QbœéÇâ:Ç3!Äf»æ+a^À·8_’ûJW§ÍH∫∏ÇH.Ä⁄¥y„@¬úøßïê‘P7JM4ïSŒâb€bEƒuπs7Z˘◊,–ö7ûà†à	ÊMÿá<˚U#Qß¶`oWò∆T 7∞ÑÒ0y«ötÁ
-]∆íÕºiK„WÂI®˘‹ùüJ´πªÙÉ®*ôr(†º ê††ß«©ìú∏wÆÑπFVÇ üË@ÌQ?¯}4@∏|Ô<«<,°†i’€tÚÚSé«¸P¸G9ìÖ)ÖÕÑÓ§?õÅåµP‘9ﬁáR¸>@Áhw8>˘±mÂ9Cë}À‹tg?ò…Œx∞¥∞ÔSJ.+«Ñ¡&ÕÜzÓ‹_'\U·®¢=≠´"⁄‹£4™Í≤`ëLùﬂÙ´.˙U˝∑úNó™M√êB+Ø
-p+∏ÕÙRJÑ” ‹^eœ
-üôìíe#qµ[^>Ø¨„¡ Ù`ˆÅ¥?ï©·≠«ò1V›∆°jcN5£»UµÒ‘CEÌˆAæK&{¿ÍE’àÅV’è´j»—0gêS3eèÙMo≥¶É9Úízjè(≤£É¿ã©Q=πÄ=m+sÜ¿îmΩåìæß1w¢:ÇT°ñÛÄv[Q=áF¢n¯¡KsÑ¥Kw∏03^U¡ç2Tl≥◊ 6äqﬁ)êòüÄº∆úÈtnO§ƒpü{hbQœR§â1œOÑóﬁ0*WŸIH«ÜÂÛ–|†TàRQ<ò¨ßè"òz8Âl∞ﬂÒv–∂r3"ø¡TÂV'Oz˝#ë»æ%«Éí·ªwÍ·ΩQÄIóEıHWΩ]<`Œ∆Ià“ÿj˚††Áò-åÏY=rÓQDëµˆ9qÀd3ÒÒ≤o@oS†]ƒ(—êR»X~8§ú}\ûqe™ôé6FJÕ_¡°†{e_⁄Î, F„ è¨[≈=¿∑ß∆ÛõZa®∆,®”ƒP2LM¥h4'˝◊Ò…—è{;¶çº±s≤◊µé€c˙IÀåCs£ÿ™ª¢Â¿ƒ“ˆSIÅ5ñµÃi/âØ√ƒîå—H# á5^Ûlkv@œmÔ,O√ käV∫∫ëñõr!Wk1Ô‚›(nˆ‚u™ÇF$ÅsÔ—u_ˆ¡†Nß£öËTît~˝∆±H€1q÷U±2XÖÍü–Â5¬Œ€T›H*ﬁ±äAGÔoZ∂Ÿ◊,:Ùﬂ‡]µ}ûSûá%U®{%Ø|y¬NpÅ1Ä:ü|)?‘oJÜ	(¯GÄŒuÄ®˘îP§˘ﬁ õ}hr~ù3€}á‘Ãz◊'WÉ§_3w°8=’IÕ§»√GÏó‘áZΩA§¯0™Œ[Í‰=S[ˆm0Q2æ+Z„M ö∆®ïÒÆw-Óòk‚¬·Æ8ΩI⁄õx≠.Ii¥¶Ä(Ç¶Cê≈µ˛fáﬁ!=◊π˘[ıÕ]”fj¿P.
-<÷«„P¸K‰e~;ÒÜÙÍï7Ènó–ÿ©å7ÃãÜÿ;¢lÛµÏ&ﬁl—˚≤⁄ÅbŸ∫*#ÿ™¸YﬁË 9 Y«—ÖΩ*ì*±‹%i€$é®#ÎÚ‰ÃÁõı≈e S_◊k
-$◊\÷Í&åxµ|≠™∞m~+F3:€±w-Æóªe&i 6s¿⁄—Tº"£SÃe‚õ eJû‹f‡ûÌ◊W:N` ≈Û◊ÄƒõW^ztWK0¯ˆD8∞°)ÚkQ¸ÇRÔ≈Û[>TÀlﬂõÒ[îËLb`˝∫Ër◊|R‚ã´xT∑ Ñ*¬Kœı·>î"{q]5˛ñ™m<ÿﬁÿ∞™˘ºzö*n˛›¨ò\‚ÌÜ”‡%à£0Z°øU∑bï%ùH…ﬁBú¨ÆG/y≤sº"âêÿS∆ı$ï—q¬q˝Sà…+Ö¿ˆkw0ÿ;‹ÌÓÏ˝⁄›=Ë6ú“›º^íØó4I ÒCÃ≠W&zﬂ|√Íﬁ99ÈI
-fn≈ymÆïwΩ!ÃëkÒ,∆≥>˙¬,—øqzºkÀ∂\∫ïm»\ò ∆ñ:V˚ÚÜa*Ud≤U•p¢7 €˚ûóø~_ElnÙÌÃ∆î@ò ë·ÄKÕŸß‰®å$OrƒwÊYÔ•˝2W·#∫§D†côª˝èhïnﬁÑÙB—/„;:)Ú&7Ø[Eπd∫∆∂Óol∏rd◊˜K;Åd⁄≤<ªW≥qöxjÖqzAnﬂÃªD5L ò‚Õ¯:úŒ§'F@∞V‡‰B?ƒ5G¨
-}ùEÑ€Â/Œú™≈R'óÓŸº´WåT{cÎ«ûûÕÕb;OQwÛ
-Z;ŒH-Xﬁ`zW±∆ÓœG;H|¡òœ,L\
-—©›;ÀË5+#˜
-HHªV,È4‹°kÁÛ ºÉ§‰^¯mõ©◊%?ô„?B≠dÍ¨ì%(ÿWíŒ¥‡˝[Ám2‹5ÆI’)6õ3Î˛TÃ)`>–Ió~Îƒ$≠¥ZRPWõ¿ì∂ ñ∞yqØ]ø _[∑xöË≤øiÈ[t{0Q[x∫„kœU‹ñ ”Í“n∞(9ªT‘ü∑YΩê‹éÓx¥BIX‹`IäP√<	≤iHπÊ#ÿYHÖ4/hÜè@wvOœL›á_SgÕ†RQS
-»∫Ç˘G∂uO∂´ƒ≈™≤s‰7º∞/úaFÁ
-OƒjF_ÂåP’¥‘
-Ω∑≥€˙˛˚~C˛á0X™meΩÌøZ?>bªaNæÂ
-Á≈*~âπ>àmC>∑¸Uµ»a÷P~à™“ñ‚L†¶ä{¢¨ú.^2OºÃEoäÇ~v˛B≠ÁæBûá¸&†ﬂ:D5m”Î"∑∆oùƒÕz">ûá£∂’gGU˘ø¸+˙=Ív~Ñ∫Z∆DÓ˘∏Å*°À àôEu≤√CºDÁ°”dõùÃËµ^G$-C2_ ùRøƒªG;ÌŒ[aN$œ ƒúâUC‹O±8ú¬°€b€._ÂX≈bûáQpöF&ù±÷∏;É-sò)yJ@¸ù‹Nö%’{üÍmÊı∞˝È8üûÊèö°7Ã;>>≤KKnÉj∑VëvvAÂ]5∂‡-vlN∫ì©Ksv√®à1l%ÛÉÂÔç˚ZπtœŒ©’[EBó"úZ1~µÛÚ.â¯BRñôÇ£⁄¯B,ÿ˘iK%ê˜EﬁèJ≠1∏Í$*)ãÆ≈KïÂ1W&Œï}àøAgÖ˜êÓ©«‰Â–ÿPË˙´ 5≤@ÅJ¶Œ=c†=b∑ÿmˆ^”P∏©’œ˙éK‹0E…•{àó¥5—DË’Jqx_ÿõ+≥«áœÀ »v⁄ãœì˙˚{j›8.¢Y7ŸóéÍâzòfG⁄P¶)¡ì~•«¬îÛ≠6ˆ≈„9Ì»ö≤-ù–b.ïYÄÈu1ß™©¢Ö≤Ü#Nh[ç≠ôÔåFÀFØS≥âÆ7\,Ut¶ﬁ^—"Ç∂mªŒå—c
-
-{å†yµ‰ÒYÀ©l◊m⁄’ÃíΩÃ6ÿqÏ*õı*Ã51®|ãLW»0åπ÷‡›m˜V‹m‹|C≥7Õ7cö$®ÚÁ…"µ¢#X8ùÍô.≈PèÖ
-®7ÏW|ÌïÉ–ˆ“
-#g„¯¥ÜO¨æ(BuaU√L#—Ê©Éä=ÀùRÅfÔ´6JUgÂHã¶jdiíÈ¨Ä»{≥‰
-(e˛ex1n0mà_˜ì´∆'Y1∆ﬂgQJù›fQD#∑[>ñtπ51Ã"˙q…¯9UMÆDLlS<¨gó∑\Zµ<•¯“ÍSáç∫a¨÷Îèå,ÜT7èÈUNe©…,ò+!d˚ëà√„àV≥ò”¨ÇﬁônIrz;≥ÀH--v%=@Ö≥/ÀÆ|:‰µ¬úÌ@Á/#ùÒÕ·RHÜÎ˜â˘v»µ«m›ÀëNmˇTÚÑË·w·\Âæjóp ¸èY^©Ω¬:~*ëT,Ωú≈Ìñø/}$À!Ä·R·èAä˘d∏†:≥5ˆ—ÅzæLÊ9[3€Ø÷>ÍUMm!ÚÒ€‹ÖzÙa†ûÃÌppGxjlKƒ<4îæù]∫Òÿ==Lû ‚r˛¸™◊Úc”GÙTí549ØR=±ÁúÁ7ı[@∞b”âŒ˘0¸§*∑åY&ﬁô9ûY}ám≥cmËEèTü†›·∆l¬ÑZ«ö:ÂîT'πZ≤Mß–cVﬂBm?9j˙»
-T]≥∂mI˙jZk´™U¬∑—¶hU9≈\†–”∞1!Èõ©5k•€ã<
-TˇCªYôJ¶ÇL¶Ut“Ï=ÛüÜ@Ω§P|¡ÉH‡u‡≥]uª3¶ä93.{>≥ ≈ãci îQ ä0g¨È[p¡tåq;˘qÔt–=|—¿@ø£„LŒJW◊ÄQÑAcyòGÅ˚X—8Oõ¢¥}È†éï·µÏ∑-7Î≠lºÆë >Zn;s†3*≤<ôˆ|Áó*ç=˙Ë•*˚"pÂé%y√<&E[ï¶çuº)%\Ü†-M ÃˆÈ&Jn‚Æ#'qòÃÌAÅ∏záâìPú'õ◊∞‹∫°V'
-‚ã|Ãû∞ç*˜M=È≤nZ7v«ÕLˇ˙XuΩ
-⁄D∏™Ëìœ…ì/iä’ãî‰|¢ÅFè$Œ˘≠ñ—ËÇCV∂º’SZ·Ùgﬂ»†´
-£Ùgìñ(PaïÆ∆…≈E§¬U˘5ñΩAkïå¬ﬂ]´jòÁ“hàÍ[Áe÷U˙é”Ä[Pπ@u-ãß|h÷Âá‚2ÇÜtYow¢$¸öw…tF/TøﬁÛ$Ú&f≤æßx˛ûe¿≈<Îä∞m´>∆?ò%Vn√usD‹è`uvÑ¸TGÇ‹&ŒÁS∆¯ÃãÔ±sFk≠\rÁ¯Ii˘i0^X•}¶h™å¢©îE’°ò:„ 
-º:àQΩ*∆F≤û;b	arâ‡I•%óÒZÚ®ky-ﬂTƒ°,!∆kJûq(ò—∂®z0ö±dŒ>ÿ1J±»ZÙ©lqkøÔ$?LDÆÛ°ﬁBFvŒ-Ôs≠e`™≠ä]É˚F«5¯â‘0yõ‹gFΩÌ%Í[ÎÃÖ√Á·é9Ú6+‡û≥ÅEãzä°7ñTÅfvüÌœ"c®Œ3œ¿Q
-Ôè95‰è>ãµ¡‚ﬁ.ØØ∂qZ®Áoã8‹mcY?m$ÎÚ|éï§_IV'œT“qÖÂOÜîôaHù≥2ÖõœØñcVº•[0™9ÛúOﬁ?ü*W*&Wé‹—∂bg>’Û®ø∂ŒTp ‰7|c:|g°eF3ûOdî±Yé;É πYIY"4ÆB‹è?˜ë¥'±◊döÁ"-ÔœUX√éc_]¡Ù-é5pãıga@˝gxE˙¨´å_—\!.%6ÀâÛB)},Í=ÁÖ0Kg”öû¶Èlnbr1«"SIÿ0–szÃ:fË∑†j|/ÂÑKqñ‘âè5··6°msXT±É…V°YÃ]πéÁ|lì5'≈
-nZ.≥[éXZ”4¸‚V(ª9ﬂOEA{ús∆˜g¢u%Û?2¶°[YÑnC†îYÁív˛™N∂#˚î—rƒ¶t4È≥êõ€˙èù—Æ÷x^™¯'∆Êg°wÌYVìH$L˘‰mÄJz≠5+ùëòáÕúMm≥acÚ‚œ¬4]f(Xß≈ÅïŸÛ±¥∂X]†πøTˆx€=Õ·5ü˜,ªÕóiÎœªÛ’Yó„√;ûxQx⁄ËæÙû≥ÊÊÊµËJë√£√∂x∂èñêË?D<«—VŸn™©ÖŒ6r‚Ò˛ñÂÖu®Ÿ|ÒFrÎx'P˝c<’ÎD|èªiÙO?≥ŸÊJLﬂ1µútüŸ∂˚hø{¶ìüÈ7Ï1Â3˘&√: 2dZè°Ì#°ÿ∆
-–∏ÛŒµáËì¢56±∆ô∂q§Úâa„¿o>ò…ñ∑Kù/M~Ê4Qi•˛É”õ!‡Iè0â‡]e¢è*ixæo“Ï0.C9NÇi¢ ≠D<∞˝Ï≥ÏˆÚ~(ÔË,˛]q∂’x>âg◊mìè∫M(–G›")‚˘m7âfØñ‰ØâßwxRÇ˛Ò+:u|Dûu˚˙“/f≥$ÂNz7uÅ»'Ÿπ, ¢Ãd1CùCÉüå1#ÅB¿ƒ`¶+ÂfXúô¡uO®¥‚⁄M&∏∏¨Áx’fT·Œhà‰√è$`,‡’ 'ÉOó“aòæ±i≈rVµäFÁü…Ñ6Pj}C¢—◊Ô∂ﬂX
-∆∏è;U{¸ﬂ∞^ä§Òº#∑%k_„õkŒ∆·u…»£lû ÓiFvX†H0Õ#ÔíëˆåÈî-äò)ÿı]Ç2Eu2R(„öÕ=—ß¶ÛÊ¡!«„}{ÿ≤ı(pb…f"6À,Pvì∫R+j’‡7ﬂò„5Bdâqô–≥F— ::ˆÄÁ0“ÄR¨§¬;æÿ?˛•g{öüÿ…ÑHEV'≈â≤Í≤+ ≈€"Ï0€˚®R?ëÒ¢påŸÃÃö<≠ˆóªæhΩ>o4›˚d<ÍsEv≠»‚‘àà’˝Ós‰_˛ÑåS‡µ/ê_õÂ?2∑$"∂2√T:@_§„ZéY¢ÉΩ¨îŒ:ÁN?ØpoÃ–ë˚;/kI≤ú©ÖÈ|ñ˙ëò°i(+%{¨•Â®yZeF3ÂhYÓV¬¥ëkÕÌˆ3I“sFÙß¶?z˛∆6º±ÿã1S¢ÿM√¥•}aZÇ}ıì∆¢‚ÒJ)ldwãR€|Nq€‹Äõè#<≠êµ·©Ï[œ¥^‡Ü2fú9“5î¨ïÆˇ⁄Ò_éøçsLFÔäï˜±ˆ.ù\‚€⁄	lªæ@îKΩ#r°LN«ïŒV˚E∞[uÊ:‰yz+ﬂqÁÙùâséqûCŸÀ∆∆·=ﬂ?ytqÖKﬂ.{ë&Y∆WÑ–…ñtîÄxb7
-›®à˝∫Ú§µFît%äÒ÷~˘Ñm(,Z_Nï±c™¬‰´B∆9y˙Ò¡…¡-<ñ´,…q™#€>kHej‘Â»¥ïN“m‹æù)ﬂÓMlÖR˛òl≥mCã5và[≈xU™&¬x5ÎçRÃü—’ÔªîCyiØ=2iE¯…ö¯≠D“/.<ÚœG"æ»3˘yb≠∑@4EÙyı¯ãœœ7kœ‚ªßﬁï=Ïx¢çyì€ÍùûsÊñoÍÉ˘˙0˛≠‡ﬂÚ»}˘î<)IŒa]Á”.„F8…®Âá∏òDI©ÁêNÚÚºõD%Ÿ´/g		¢LAµËòöñ~XA ’¯ßƒ2ƒmoˇÙÄ=Î˛´{R¶m⁄ˆÿnî®
-Ó6’´3®<≥(E◊9ax€¸Fj
-ƒ£ <1ßL¥’ôŸ∏È"ÑF◊`úå∑ç…–á9&ÀÃâòÍSkF7s3®€˘¨πõÈs+8iJ“∑Ã˝N€öFö3ßå äñπwâiˇ-T◊úT“å
-;ΩÈ∂ô†§l∑WÕõÄñâ0™SÁñëŸƒC'ã ÷Õˆ˜é›ﬂê’gP…˛%=µ≠˛9^∂8+ÂV4RX‡këÛ«≥√ø¬êƒdf5I+§(gy&‰nù©‘<OÂ]©ÚzB˘HËS£ú·ò(ó¨Ùp‹‹EGã-ÙÖàíïâ”√„.:<ÃYX7ûúo é√o®bﬂ†oa™´Ñ™aîÇ¨‚ñ∑ÆU‘¢o≈Ü}Ìík^Ç“≈ÊéV´∑¸Ü÷»lÔÅ≈ª¯µUû'0ÇWol>–ù”°wM˘Ÿ‚Ü0Î2ä©üƒ¯%‡G¿ûØc{≥Ytç√=}<X“Å<£≤B~Ï¶©w˝ËΩ•l?¨P¥Vk”%=ö›<˘Kvµ¿cS)yl.Ä‡…xã¿;«pW´I[±ÒïÅÒÜÜ´©∑Ô9Ã¢RœÖ±∞oŸf’Â/yâÇõ®íW
-ZÀËÆ¡À]çµ‹Ø"Ûy≠¶Í»xŒªzômiï‘†jÜ˘Û÷˘¥-≈ŒEõ•#4Û«éf¸K9¸î√]CﬂpL4˜†“öºBit˜u=(+ä˘B±\b1µ™'eäÛi@„”b#haÂÂ˝@·Ì/mÏ/mÏ/må>•6Vﬁ∏&m¨?	¶M5å≠√<AÍÕ0ùZ7äñ®y¶…Q£ı—£ó¢kTs∞u!»Ø|–geOhNﬁ¢ßc?x˜‘vÜ‚Û£·€ßdÁ˚,∫XÓ•>ü‡’¥≥≈6Î“≈‚÷√ÉŒs2À™ü•Tµ˘‰ÈÅ ≥)≥óq„q¬í6yN2úñÌb√KOyÊÿ5åΩea˛ê%˘8HØB¯
-x4ÙF)®s{tÀ¬—i›r+;-[È}\DëŒ√˙‘)¢^ ª’®˘‘≤çœ˜-öCT'⁄∏!ù4wπ+Bo¯÷≈qìò"ˇ" WrŸ∆
-]∑≤Y”mﬁSnø%Z1ë<Ø˚e∂´ô÷%2ÁÓ7≥E|∞®5"jÂu∑_·í„S¥U(`‚€∫÷≈S$˚≤ÙóG¯≥+˝á°†l TRe8ÃtAAŸúgV˛Íß•◊l€¢Æ¬`®&≤WÌf[ûû| E˘X4ÂSSïèMW>5e©§-uYEI◊®U!Èªàd Û∑Ë<˛»˙π’Ú2⁄ymûÙ≤7∆=™‹˘‹…—ıÒÊZœME÷WªTlÙÙdˆ€I $≈èqK’**ƒg=⁄pé.°Ù‘$
-‚]qÎ°K’¨>T[5}¡Óˆä(ÿﬂYÔßu )≠Äùœaßˇ+“fÎf›äÓ√h>ˆ-sÉ¸~®
-Ú√g™Ä»tñ„ÖY1ô–ÁS¿πRY0Ç∆{˙
-¿Å"Œãâ\ˇ0a¨q[S6˚ë"Øú;≤F¥& ∆∆£ äﬂb(áß€0Æ2∂∫tΩjÒ%7å¯⁄∑ ë›¶S #ÜÎ)∫b“?€Œ2.`É«¬æÇ˘Å‘≤ãKÂ€ÏXPÿÆ1ºP2ùMÎà e”t≈v	Ò¨:∫◊|,‡ﬂî}|z7⁄Voa…ºÃZ€biÙknr„ˆ<uc•ùñFíV:‚Öﬂ≤„6:3‰≤Œ:(vı=„HêÔù˝õg‘©o@Ÿﬂ;‹Ì°"_6yõqU|[j3: øÑ⁄¬ˇæﬂêˇQúÌrgMGD(óÃa@∏˘cÜh˜cˇË∞√…dx~›‘XkõM/ñ˚-,pÄ.è'Ï0gÅ&∫TÇµ≤Í
-àU'?,;E)1õµ¶AåÈÿ}íkU≠Ô¯nÈï7õ{¯X´ ˝YÛóO6ÀUëÁÕK.%Ã§√0GÜ$Äƒí/≈çdCÇ÷
-v‘(—⁄pØòríûÃ,JÃwæö´=O™7e¯'—€ø¸SŒy@ñ›1Lı¬6oR%√@ˆá¥ ®∂k°W⁄‰V[≈ïœ>Æ'ÅÿìÚ$àmπå+‘ßø§ˇ˘“ø‚(–ó&TÍ©Ÿñzh¢÷¢≠m3p^_\%+Ñt !;’;MohÖ'Gã/Âºıƒd`≠‘#ûY°F¡“√nH2CµƒpkÜOÈ±˙2ÀΩ9wMMïµM`ô}ˇòv%t“¿/FA≥ôÅ–¬x¯
-¬©
--°î∏¢¬«ŒcÃå¶±#" Õ©	À§{¥)ÙÎk,ß]{e®:_#¥°mw|Oÿ˘iú1<.ï¥¬[Ã6…Àcé 8£"ˆ2Ã‡XõÒfK¸ïÍ∑Ö∆)¬å˙ »¥ªrœvC0∆gDïÒ¶*’uÈs‹ …:LÚ<Q*Ô9"˝q˜_@±~’k} πk,a?úz¶¡ÙwÓ˘óØVZ˚⁄•˝t˛ÂˇaöÕl;GIÉ©‚b|S	¬KoHπj“≠∑kö˘Ë8H˛ôTóA˝V∂«>ljN•?™˙rÂÖÁj˘ŸKÅ,Â◊Ê∑\'QcÔH—¥-rF¸ôBúQ¸9‚™∑DcÄ7¨¢o‰CvÅå/?˘Ì"¿\∂XbºíQ‚ªh%ú˚ïsïqG*H ÄPFbÓ ©¿¿}¬X≥··—8,fﬁÀ¯êès7˜Œ˙:€O.¬ñ"íg8—IrÏ¿õeÏÙdﬂFø4: »=∂&¬ŒõÎˇh∂ü˛‚˚K˛k≠ô?÷móh¶Øyà‘3J–?WE_oæ1îlQ8âk
-ov,3HÑ+`[πpW˜°%»BR`4zvÀ¬kFuYàÓv/÷ïî{'ÿÉ™º‡D¶0ÜôªÎ»Ø√^C∞òÉ¯ ‹zˆF⁄„	_ËgÇï‹a/é˚ËáÛÉ<òd°·qüÁsøÖ◊?&∆ñ¥Å4»fÖ6Q–Û ëLU>Á˘,€^_èì)Ç$úvíY 5” »Å™uíÙb=ºt4~ ßøÕí¯õﬂ˝>àqkûûÙ¢Ó$F2l‚sÎÊõ(úÜ˘„M%˜:t÷ƒSì#Ì`˚M”©Üö¬_+¥h!‚c–N:b1‚´¬¥Ù!˛"ƒ%õ”2–æIöƒw>!¬ó¶àHë˝dC Q⁄˜&dòûònèıAQ#WNÜ˜√…[±∆˛\!ﬂóbå,`Ò¶Cî2ó#´€(ò‡›uH+@<)1rÿ¬@Û¢Hsá/q0-ñ#ÀX∞ú4	ha«ÃGÒÖ˘†F¶ºÌ¡NéÖx6˙£ GÔÂùÊ∆√µ™Œj%¶
-|_E^˙TAU|q·©^÷
-Ñ¨;hÒ[dtO.QC“‡∑ícÑNIôOºè>1çÉ–uº•ìÖÆÿUV9FI#…2ÿc≠Ô™≥;E≤u÷˚w7‘kå[oDÅw)ßêôÔ∂çÍ'A8@‰ÎÃB‘DjæÕÏ◊0´ëóçª˛%∆	°ç‘a≠º„’mç˘6C∂GÏÿÔ√™—¬Àq/’nî‚BKøÙm{◊xm”¡√ë§|Ë;J.ËÜÊ0ø÷I£{||rÙSwﬂ∞‰ÒÄMûŒfÚdÜ~{ˆı{—AOc‚S2Ö_ÛT‰t/¸LÄ‰6nh+<9Êj˝˙=Ç˛Hsä˜ ¯<Ì†≠ÒP_yÈ5å:n‹%∏Ω˙9≥-Ç¢¿B{ ©qcäG¡çî•~$— Wy[Sòâ]ôìù ±Ê•„öSNÓ∞˝ó^î≥©ÅêÔ“8∫±Ô	Î¯ú!˘÷ê|9$ƒmÃf·9J;o’;∆@]|‰±Kö≥ƒÜÅŸã)Løòo˘0hÌ∞˚ß;;{˝>∫ªøw2∞\–mpë§◊€5‘ÄÆÎ∫d|⁄œÅf√vµ⁄Ä˘ Â%Ü‡∫0ê$õ¬„›‰ì`:ãíÎ Qp›˝}{l:»´Íà§…kò†ﬁt«ÊZuâÀ¡ÔÕ5À[Ftõ¬|2‡™öd,:ÓâÔfVÜ¿ßì †‘yJ‘ﬁ%†©¡ä ¡Ò<∏Tj?:è¿.◊î–´Ú\¸lﬁãC\;2ˆrp∞ODƒ¨fê¥À˘e¥¨{∞$F·ëÂn∞Z»™—4ã¶ªÕ‰¨%–u%O` ÁÇÒƒ∞O·®R0pS§`là˝πÖÈaUÈ)(°ø• Æ°^T’¡´‚®¥]ëﬁ5ZjgË-móìœ´⁄óºœiö?ÊàÌ“6ΩÙÄw#M‰NwjÛ«fw‘Ä:ûaVÁ∂1I$∑áﬂÑxW2˚Í.åÇV–&∫ÚÄHV/>OJ0∑_WA&Br¢ãm€ËËº≈ÈïI’¨HG ÄãxXgÒåwÛò£rIŒ+o@_#·iÍF dS®Á)>V4+MñBax +ÌMyÊ…E˝˛ﬁ†oJEnHjOèwªÉ=¢≥;'{¯’ëÏ“ÄBu!ùTäGîßx∞G˚ôŒ –Ey”xB;Ú]I}ÅÏ∆KéË’Ñæóıb$w∞uﬂãé@Ä∞¥X*’’nR¸æ…Lû‰Ã¨ã$»PÃàMÛg+‹hπ,ﬂŸZëÔ o‡+∑úŸ‡:úŒÄ≈‚r‘r`>U0`äÒKÆ¡;¨Äª:¶Ö »,ûH‹{‰áól3CöÚ∏qæ|∆0§ˆ˚w˚ıÊÊ∆vÔx`x≥ƒ){[d á]Àü≥ˆ˜lx—Œ0£Uÿ»˙˜O;˚i2k£"mg”Ü>‡˛höê–ùLáËDz¸oí˜F!Wÿ¿,ÙÊËÿË¸pü›‹ÂΩ8úBV˘MU~”.lÃz5ÜŸ0 ¯Ì◊ﬂmÃﬁΩÅI<`WÌs<Ù6ıﬁµØ⁄[Ô"ñç=?·_AIÅ^µØ€^ë'Th‹~˝√∆Â¯ç÷‰Ãc¸%Ë"%ËÜA~±◊È1∂øcCLíë∂áÚá-pÓÜŸÔ√~œ∆˜ÃnÛ‡]N38O‚ñÉé°„3µ^}»†åÌ<ºÁ∑A∆\CqÎ—–Ê£ﬂÏÏÃ∆ç;¢ıÒΩ“(g•AÚ}¢°N?,¶b¨”äQÌÉv2Òf@ÊÇ¯,˙_1ãQf¸≤˚å.ªÔî3s`∏^‚£aëÁIÏ‘L‚ù(Møoñ§Úœr–*_KÂÁ∆¶µY˚#bn´Ì(¢0õê9'ˇn∏6®ÛIÍòBJÀÚ?X˛∂’÷w7l›ãÖ‰xÊ‰¬ ´~1D¡{Græ1'ê¡Œ`G}_Å÷fπãD¸Áêµ∑ÿÖ7kWB	∑öl~´yÅ\D%|ΩI‘†zØ jh®’÷ªÊ*Ù— 3ã⁄õ1Õ{∏1<r‘;√XßqTå/ågE^—ö8ßF±èﬂ["qÚä*1ÕèÑÚä∑®bÜ©:+g~P—ÂÄ©™h¿NPŒŸªˆ}6ªF&Ú˛Ü†a%R¶âìÿÂI‰3`œ(”éì8Ä«#CPzÉ∂ç3ÒJØ◊77™8É∆–Xê>nÏΩ€f{ÔFﬁ•õìÌ¿ “YE^ZÆπ^B¨2â¯b±Ì H'¨˘E∏÷ßE7.&÷‚◊Î˛{#‹+Õä€°Xô∂˛Ÿ(„ Ñy∂ŒPüˇ¥∏™Lı¯™≠
-ˇΩqˆxß∫O˚¡üå.æÙ“`√A≤Ê…ÏìF24’£∑C›Õ∏sˆèèh%˛"â¯y≈Mè·
-¯ôË•[A•Ö≥GïÙ≥‚Zπ˜*†=JxÜÏKöi£ã·Bœ@]V¥ŒK-—¿´ ˆA^˜‚∆ıuÖÍ« Çy/k<ëﬂV®ºì<M‚p“x¢øØ–¿æ∆Òµ◊x"æ‘W}¥ŒQÁèL÷≈°úWIÏáŸßﬁ5¬ˆYªgÑ‡∏cî£‚… H≥¿=‡íÅÁ_∑V¿º^åÈWO˙Åèaw√ã"∆0®ö0<ç'ª^Ñ	faÛ^y˘JÕ<KìI ª˜§»º	Hò/avÒ≈GŸ	∑`AõlÍoˇa9íå'«$ =yÆYÏ√Eßäé/”ÙÂTñ∂¸@FU´fYË”˚‹ºÇ÷Ò∏öÇ˛QÒjéDh:´j•?øÊÌ.˚˝°ıÜ›ÓÉ9_3œ∫xåÙÈh€˚(”p]‚6\á{nÎqGxvˇx\ßÒ§›fäÎÌ`◊ôì`Ìˆ<Zˇ^˚æÈxN¿oY®‹ä≤«Ip˝¯=CﬂàŒ˘è™Êy“-
-ﬂ“$
-n™I¬ºa∂ZÂ%˚»|¶~ã¸nD\êæŒ0*@ÛÍ“¸*7ƒ#Ï›KØ‘Ï<SéâP≤0Á8•bø#—úÜ1:°@ø<K3ﬁÂŒ¨∑Ú‚yP¸&~8Èt:n%?ÕbÃ!g$â!lñkácæ»·XÁìäø,Oq°ÔluÔŸr˛≥
-söΩÍ∏º∆∆∏Ô¨∂ª}ﬁesˆç„†€‚˛VÈìÛ¢»Vyè=pÌ£UŒ8z>wy2r Õ›ê-¡◊˘Dmœ˘ †ÓtÌXóB√÷Üì|ˆ√ÍpÍÛê
-tD/≠’}¥éŒK#Ta]«*»ßF%B∂Í(¡ÅóMæ¥ Añ√†úË@|‰‰â0´·kÏéB…+√ˇƒ%*vË=¨
-≥[⁄uåW’a}Íã”'^T’¨/‚¿î‚ŸÙõyA~sc¸åà√$• îR¥!=/UA±ÊYjB◊dÅö∞µ[F®·b  5π∞vÙbÌú¿≠Å¬ü˘q[œ0XdP\P+nã?ƒﬂ‚…O∏ï,›¬A[ë[…¬ÿ≠'± xKÅ¥:nÀÇxU»ñï«wW‡Ö≥ó%∫à—ö∞.•
-ÕÕˆ"Z®KE˙‡{ê1|¯oÏﬁ‹v˛ä7´è7ªóSå7€‹¯Œ6oRvoÖê2Ë’ÒOãU1f6’†ø†i„√¥™xsê	∆	«Ôf∂"r©˙øE’s?Â·îE–É/˛ΩÉÕÊl´hÈñüyafWÌÕ-6∆ˇLµ»Å%óﬂ,∞$≈E€˙äTChU™=X®ˆª(‰Ø7:[HB¶5y·ëÿ'Î:1¯íyµ≈÷V«MﬁC¢^ùŒÂ¿“ÀZ/˜ºPäJu˝Í)˜WR◊_o˝˝@3Á}G9qËﬂü¬,L–ÇDÉBtó{Òˇˆë[t?Çéøå¬çº¸lfÿHÕ‰µÇÙ®Üe˝`ì´â‘˙Ê≤Z£´V;*äÃ	„¯}—ÿ@c‡ÈËÉ¨¥«!¶9‰–ÈtÊ⁄fUö)û9iY”ÏÃ4ÕŒÊöfgµqÆü‘˚Ôå Õí8åÿø∏◊ï‘í…J~∫[Ï≠@◊oC…˛o≥Kƒb,⁄'˘0ñ‚R˜˛p\äl>^ˆi7ü4-—)”“`JÍ~T∏!7D}Óùv´ùµü\5ûÏ˝ºJ	á»ìÉΩ›ﬁÈ¡
-_Ç∂⁄xÚ≤˜‚Â
-ïN”LÁÒ‰Ù‰≈ﬁ·‡ènµ¡yº’ß≈nëÚq{ê¯…Ã^1‡Íã¬kö⁄ì¡€=Z-∆
-±ã4»≤∆ìﬁ!;>9zq≤◊ÔØ÷ƒIpW‘¿…ﬁOΩΩU6◊.N¯…Ó—·ﬁü’wm≥™9ããwr¨πıË≠¸ ´IO∑˙d≤’äjÚ«
-ˇ1ªA6I√Y≤oX3/ìRÑÍFÿ^ Â@´≥«ò>∂≤U&π øˇnÆ∑‹AòÔWDòŒ˝ePh[¯Ôﬂ≈3(¢5%}ÇX¨#£ÛCL|~íêãﬂ9∞b9KÒR∂‚ÂC*ÓWã◊õõŒVõ≥∑Íê™“¸lŸßø¯ ã◊[o™˚Éúò„2∫-wí¯™ùf[‚~˚mÚaµp∑“bê9.ëØ–v⁄àò˝∞Ïµ˘ùC3˛Y$πgßE¸\Ò‘^Ü(3¿¨˝– ∆Cı4˜ﬁŸ.HmEA #⁄Cﬂ 6S”√ﬂØﬂ‡ï“ÀÔóÈÊπ7„é‚„¨å¸≤‰ï.fòZ=üáÖŒµ 9Y_z©7cxç7∆§ôS(R/«îqﬁ›∂!R≈•Q0«Ã˜∆ETX	ì›¸∆z<{Î=€GèÌ¨¿÷0¶ÚñY^ˆê“ı´q4OäYËç[ÏÕc ƒÜ˛‹aà/¨›=,∂è¢¬éè≠t•z]yæ-‹—M£Èu∂ŸŸ‹4F√◊‹(—Vç‘& 5zπ(ëŸhdÃPcMÌE¥tõ:Ì⁄û¬öyWY˜÷*◊0ï¨Ä5ày”Yà+”?~â©Ö\|´∏Ωˆ2â™oØ›OÚÜ˚¯òg ìP± Ú˚ZÀØåm+@lAÍ7sÉU\©Ö‡‚∑ò¡S*{*s—Î:¸÷3(á7®—›Í7Ææ¬ jÄ!Ó˙¯õx¢fÕü[i©%n|+Óù2_VﬁZF∑ıb´"DåñﬂZÛ6^£µ◊»Y~wˆÓÌΩjY≠9ŸÔ˘"´)V5a,x(Ï≤bıs+ÃÀ÷ÏTùz·ezrL¨∂)öÜ/l◊ÀF±ñ!>|À$C-„ﬂÿÜI0,*•◊êQI≥¢(@‘¸AHP|B≈˛s0'òõ™a0ôÍîÄ‚ñ[') ?∫\XëÌÕw≤∂…≤i0
-gx¡≥[AΩ®åÃsxSu®^T’zõwÎÌ∑UıCŒë5©Bá˛¿j≠ïTAìn¥R„Ñ
-“€R‚¿∞~‡îKänI	5'∂π˘_ªÃ@œÙü]/w˘ñÃ_hï’+o‰!-£ôzYù˚oò¸v¨É<ë œíﬂ‹køedfπy√j∏õzÁö/h÷≈S'∫¸FO∂‹®]◊ä~˜§ÔÔø≥[Êœµ™K…vWÎT¸»H>®˙≤„;’„9Aû?9£-ÖzZf÷|˝∆|yÍ¿∂T˚¥¢f√ä˝ÏÜÿA0 e«yc'mÔì∏©≈<#u{F:«Gè(u÷◊BéÁÛÁ*;ﬁ}N˜Ï0m©«M	ÅÁ≥‰úÖSå1C’˘⁄†Ü≈=Ñc^SñJko.%.Æë…óT‘ƒÒtg≥ï/Ò°¿WÖ?+Â-Tr˛)sOí»∏Ë]ë†o¡ˇ;I|^2è¡•∞îdL¯Ωí5-ΩG∞π=∞¯¿Ëºù'G˚{fÜNôì”Hƒy ÚAÅy¬á1Û&òXò_ùÃ'¸ı{öí-€⁄´â0ô≥3˚dR|,6? ªAˇÙ;b5D√˘ØÑc∞˘Ë≈mª»ƒr\ÍØtï⁄–ªΩÿæ›¿˜¬Ë˙ÑƒÛ˛4"·ï}Óõπ7$ëﬂr∫Î1à¿r$‚ôÃœõq` ‹º|PŒµ9–“.⁄—ç>Ì®¡‚fÿºèÿ•zGb‰NUsB™vm˙kÀîgã∆ám&^GmA<Uœ‘Äı#s ∆•ü¸j≥∫¥Â‚uI6A!D≤ÏAƒê„—@¬Ìª®ΩÈ}ö—≠Äxá⁄0h
-∞I˘óP_M_/¡ù«è’:iEN∂ˇ-%◊O±)∫tÄ.ê≈kØ`Ì'º§Í¶∂h«óµæbh™G∑‡%ˆËdç≈4˚´„ŸúÎ «›5›dRDTPØYÈûGö†Zu!€U«JÓ|§{ÖS£?KÒ˜r˘‰e‚e™¬[K¿.ÜZ(ß<
-†„ˇV°fïx‰Ã?«∑‘k6f–Èˇ˜æì] ã/ÇüCïW¨◊·yQ_Ù√®IP«¥9≈åÔÕK‘ô9-§a¿Ô∫•Î∑éV-∂stp‹=¸{π◊››;°ÿ;,»~—Üx7∑∂÷ÿΩkÏÔíõ`	–‰ÚÊÊ˝5Üˇ∂ƒø∆ÛÜQÒD—»}*√ˇ≥=OÄ|¡õõﬂï_4„ ∫Úp‰!ÿ–eˆëì˙b ÔhòJ,`cèél‘uΩUjÙx–a/∫'ª]÷;<˙©€Ô±˚Gœ∫˚ÉΩùóxkíZ∞6á¡Ü¶∏^^‡µ<)•Í*CMœŒ9∆õﬂ¢“¨E_ò»®òzxeÚã4ºˆX6ûE~%ˆÏ{vòLìî›É!û:[Î?h≈“ûÉx∫•æΩwf¬n¯õ∫°ÏfväÄÈΩkoçΩ
-F9$¯Â)UIÄyV„áUá—xÊ·irƒ…˚[˜Ÿÿ∆É⁄õﬂ?¯{˚Ô?|W±f˜Ó≠¥f2›ﬂƒ~Óï∆ÇBıèã(zQå∆¿Ó™:˛˚Z≈¨nãª∑›6˝”ìÓÄÔvÓûtŸÀÓ…ãÆ5⁄uõ
-7≠,?“∞`Én·Êﬂ°ÿ}ò◊Ê=˙‚LFçˆá€‚{ÉßˆhpíÛ˝É“{$¸˜*_)j›Q(N“*Z9ùâ˛^^[ŸC˘ïÓA´—,∑B;π∑Q;êÁOD»ΩàÇïçàÑ@≤õö…P7ÛfÉlVtR—Ñr®nÊÃ¶¸NwcõÈdáL≤à&l„êMºi»‡◊Ã£≥_⁄∑5&€ö5 fAûátKa ◊ÁÆépR‰€äi‚Û√Ü"1ÙÂS˘∏o2ﬂ—:e6ar$'‹ê‹çYπ˙Î∆·	T'›l∂„ΩW{'?vªá¯Ïß#íµ˙›¡) ∑b„«”É˝ÓÀ∆õÚnZ∞≈m˛éI¸W≈≈ØmÖk˘¿ÂÁã
-˜&¥–6æ)†5Óú'Èû77õ„¿ÛoCÀã¢Xæ~«æËæﬂpt?ÔwÊ“!ÜuÛJı¶/◊¯‚¡Údá
-j‰$±ûAù'hiÒ‚£ë	$
-MjÊºŸ2n']√ÚñçXî·Ä«Tµ¯∑ë”∆õRøÆ;HÙ®{*∑≤Y” eU}Îc}´¶SÙ+ÈÆÓ≠Ç<™Ì{Â∂'»®ŸÕ2(T1≈Oü1ÔÔﬁ Îü;oSÚ®úˆw>4r´√∫_VïT¬[3∑ë⁄[ÜÔÛ2+˝ñ£áZˆoMË’~fbrrD+ì:)Õ<cÉ£^](«”ÆY~gjjÁÚj¥{˘–ú]ÎÄ]ÙRzöíHóRÀëøØ¿ãyÚ®\	óKø—ó:ˇ‹{7wÍu¨ôÔZwøÙ5◊æ¬è≤Íõ[∑?«_ß/û˝m§CJµ…ËŒ($…œIÍg’„æa)EÁúïÂ§kK„#‹∏Â>LÚ`[ﬂ◊∑’	ùÆ¢5≥5∆˚uíÂn0'°%GñÖÃÎÊ]I8Üæ»éÛhTîJcP¬©|1Úfîé ¿@X=«ù
-Y≥Ü6p^“ıÔ‘Ó⁄“0™ÜÛ√Ü	0=¢{Óà4†µ{⁄π#∂4J“e˚∞Åæﬂ_£‘Œ8M–ãœ“‡<HÉx¯ÏŸ—?er!S¸N‚òú-œíﬂÃòüéÈ•fOßµ0ÙQnJ3uΩ&X°/ÿ!⁄qÕÓZñÿÁ˘˛1Z@´îúõõˆ“∑∫å‘0ù_¶ÁËW˛yp‹∞˝Ä; =πï‡)Â5°[o_uèaı›>l„ RˆzàoÌnËÙ?Z–Ïﬁ?ﬁÎ˜û˜^!N|˝^å€i∫¢ë›hÚr8«p±–‰a‡ùp…NA∏Jœö1,Ú ≥(ãÄPp\‘ßÄØaH˘¥Ñ§oWµË∆›Ÿ⁄Ü‰6¥°ıPï‰}É:⁄áMêIOó˚)1⁄íKÿ≤øT˝Œ¨»∆Õ≥âH…çZ7gF◊7n€~8≈paDÛ[ﬂUÂd˚∫Ê¸0OÎò€˛Å(%[óµÊ∑=KÆÇt~√«XD∂JÂÁ7â)|–y1ø’ÁPä;DÀ≤⁄ÇÒ‚1∞"]–¯±(•F-~œoõÆÔôﬂ0]2$[Â∑ÕmxZÑx?ãR≤aYÀi€mõ—óC€]≤Wdy2•Æ¯¶≤´ÂuñÁ_‚Ü}jöÔ`ûΩM\¡æ≈•N*/√B´´à®¬'N‘¶1Tm(µﬁÍ	·@mÜ<9CY´Âî*¡õrÇ=¥ îå´™øiëË€ô€àÒÎ¶~Ât£(*I%P]_.üÆáíUÉ#[ﬁˆk:ÉµÜq!ó^tÏ•yÜ¥3ìH∞›pÊ&+^Rÿ•¨”yõÑ1ïòP]i,ÊAß–3ÍZîÔ¿´=ê!ê€4XπSÆ{¸S∑qCKpâ§≠~T›ÏaÕ≤Ë]«ÁAp≤ .¶ˆK‹®^…ä@‚8Ÿf¬F£MNµ¡‚¯£ﬁ{T≈˝û¬+ˆ˜7L¡&zÄÇø@$ƒë¯MΩUlØ¡¨1ã¯tXøi.%Q1çÅÉæ6˙yœ∏Â?YYÒR›WÙzÇÚïäÓÓı_ùÙé˚=´Üy Ø∂™2’ÍzÖ˙
-ˇ¸À*êiÀˇFW&>0≈˝.ÀâˇµÕ∂ËgS/ΩayﬁÉ8rÇ6Èè¯’O>0¥í≤94Ã6Ø#îHLƒ82⁄6{–πøÊº@È*)“–0“—¬Ï1ﬂáµﬁf˜ÏjπÏ`ŸÑh˜∆|è‘i—{ı0ÌﬂñuÍ@
-|y2”ß°åY„
-Ù´¶(≠„–•Âù~≥ ¿	Pÿ˙∂êvÕó„ìÊÍ3ÆöﬂUS√m˝æ‹;≠êhù•±€»kÌ}£9ƒ2ß(ßã∫|`W"⁄∞®Œ}cèµ—πö∆ {ù$W´-nIÚëˆ∆∞ZxóÅ≤ó®Ë’_ø~_·Hî¸áQNÕ´êÌ÷rJv†ß3Cı7√N,£∆wƒJë¬ÖlÇK`û“!–<ﬂ†˘Öß‰·ÖÒ+òŒ<MøQ85_ÇzcT,ﬁc£—Ä≤+}S22ôOfEd÷…‡å^&º—ävÃ±Õ-ïhïfˆ:v
-lm∏–¶FvÁ„;-n∏5ËËÒ†n∆x»k£≈k”8ÚWŸÚaÀnˇ∫9òJJqÌX«6®ÒQI¡—ÀÜdÛá$«Tﬂ˛U¥O°üÊË¬aQ?∏™—ï®#mÌF Cﬁhµ¯òÎz˝/ ¢wôV◊pπ€‚µ}¨k≠Èé"aëò %xDÕ¢‘:Â#´‹ì◊Hû∏x›¸(¬˝"¿ÉA›Yåö∫ÿ)=6ªiöá∫≈$"ºÍÁIÍ]P‡ˆŸlÊΩ†Ü~ıf·Øì O”¡ö´5öôóf ¬ßaÎﬂVˇ:YTÙtt˛ö≠oUë˚¢ñ{‚b≠Í®Äﬂ˜î±@§áîÍS“©átŒZ´ˆ≤¶=—1—›Ú≥•é˘„Ú–U#<Ãò&ŸÌa$ô¿†¸e¨èF3ÓPÊÉFqMûÜ"'Ù†©pu:ƒæì/Zôòh¿¬¿‘ï@°«kSå\·ú‹]ª€2‹®’«/tã⁄-(TÆÛƒ8ﬂ≈ƒí‡‰…eày¥:Ùøb!-Ω¿Øí-÷àå`Øf$gØ‚¿r)d›º7„¿ñ¢8+!kDÄÍµ·QüZÁq„=áﬁ»„≥k¨>¸”ÕÓß'˚ÑR%¢ƒëõì®c€˝}L|ü™Ëv∆´£Mdh¨	_ØGX◊ Ï]„"Y∏Ä„Â7òAzS}
-3úÉ‹Èk‰òÜ”`@‚öp≈m ySn.ıÆê¡å5M™)ä‰«i2ù°æ±7ÿy`)Ò.Ó9vÎÉûö,¡U–'ˇà5<2q<°ìŒ¿fö‡éyz@qºÕnË•a∆ËÚq®“a?ÚàFÑ•a_`ÄTì6˛áﬁ†c/À)¯»√ób0(uaÃ„%äÈ¡ç$∆†•!›2è)ıXXEzg·§p∆O¬3X∂≠Û·Ñ¯(6~·•xÂLè¿º/ÓS©Onî˛å¶i‰ Åoﬁ°=º ˘πEòôﬁ“>P-òhHÆô”ÛæDù¶JìÇéS =ΩRÍ˚ˆ	 8K¬¸L‰e`~Çó˝ >eSåÔ6¥NwQvÂëËÁºo6÷ÅAÆs^πNi+ÓﬂX≥Ñ˝iêè∞‰¯®?∞0⁄≈®∞∆NÇ¡°yõnèÜ¬ﬁ»/7+ÆøÕJ∫>◊¬Ïv¯∂œØõbìñãña∫W^)ÏG∏|`b1
-~Tºn„&15î’K'‹M≥ôoæ1[5Ïe®ùÆèÛi‘h9Ü3{aël6°≤ÈPcäZ¬•iYìd’w6h2€2n6–
-PËÓqO»"Qç—®±Ü»Öÿ√E¢v˙b/OXVæ·aﬁ¨îù·hs«ò$8Ù¸îƒ:|3úŒí4Ô Vy‚NêV'à/ŸSV˜™ÛSo∞˜ÎãΩÉﬁaÔWòÏØØˆ˛Eæ6íÌö≥4YFç»Zva¯ÌÕ«irEb…û8Æ•aõ”ıl@Ø∆“'q§mL”$2ûƒâcáıA'££ÔÚ¸´Ë$5¬¡3Ç ç·ît∫ bwè1à$[´¬éÁ]ºã≈áÄ4c—1≤†ûŸ$â/ë»17»`hù€§Dõ(πh6Në›	~√ÜòÚ
-≥
-!äà1Úï„N‚dX‡›‚H6D=Ç∫›±:„ãˇûΩHíã(xƒ›ﬁ£›u£Pû/o≥Òè*‘'ˆ¬r#º˚n(ƒD£≈Ê{â^ÑÅNKüŸ~˝—8òz∑ñíÌÒ£g?ÓÌLÇ ù·¡◊‘°èÚªÜs£π˛‡§w¯bÕ)`Yxx\râ≥!J–
-µu˝üÉˆãﬁã¡˙OΩı≠ç≠Ô[¿ÅÔ	¸Û—{ZLêÁ·e1t˛$9P˛¯)•vI>N¢Æ{X<—¿ŒEﬁáZ;õ≠-ˆ#®‹LL„øWéπ˚ áf°∑Ï†çå∫
-("¿B yxÀÑâ‰ê,\£Àò˛içãDDúòò«}Áç’»≥Åc≈4÷oq≈At¢k7b3è5OèŸ:q,oÑ¿«dÀ|¿$ˇS[ò^	Jâ3ñÛGÏÊx¯–a´úHh&Ñ R\ÁcúÒDˆEé?Æπ∏FE&T∆—‚3ñÅ= .RLÃu˜‰§˚ØÉˆŒsêˇ(Mânπ$πéaG∆4põ¨… √?ıÙßb∏UñXß™â”Ü@ø„dv>„5íÄ◊Ä—§¡DÏ<[ƒ∏T4}S’Â∑Y8ﬁ√”Ég{'Àå˜'í˜I&‹ŸÂed€[~@¬ò˛Ò ÿ'MÑ5˚Aæ∆éGŸ;•@È˝˛õﬁ’$ä‹∏`|"õœG€KCiB\ÛºúVïã"B/júyJYö’ºÙ¨b*2;Î6{m9˝÷XêˇêKO¸•)7‹À§oÊm|ûÊC…’‡wnE$U“âø∑»}Å∫Ù«¯e…ú±Hı≥£4>WgÁ¡™*È¸p“ËPê)P7%qâ|Fzß
-r≤àS·¬¸x	EM“Ú†⁄P*ÃN®ï=T¥Ï6[Æöîã»
-'ê!F◊¥›ÂˆÈ©’ëª‡⁄ ‚toZ‰*÷∂6ê«0Ø,9ÉúÃ2gÉ`íÅ4=Aiz˚ó¯Î˜FK7g˚Æiû7ﬁ¿c˝Å∞‰†J¸3ÜE.i°ú%,6)^•\Œ¿Ï
-ëzö¯† íAzM'¨∏π†}Øsø}yŸ1U=€lYiã0Œ*›é ´û¢Ö${ïÖóÄ™9ÈdvmÖ©∫iåóí%ÁÊ‡Uœ2º»ŸJıËÏı3Æ1©„æaÆMSãi¢˙)E¸»È(ùG*3>úé<Ò.Ã%MõE™ïÖ°Çl.Ñe ;¢î2U‹#ªŒÄÆ<Ã#A˛H!ıêåA{° àõ„"+ı∑e.Dø_áIk!=vçÑQbT–o›8πØLB@ª°'¶≈óÀÄ–˚sP¢ªá/¯¡ŸÔm©]cy†?!∑Ê1|Çﬁm	«¡A3Eﬁ¶ˇ1≠^{l¢¶¬æT¢ûraÜ“qÇZBsˇπ˚cÔ*’x\ÿaD–∆X5M›â⁄(°°º$Z≈‰GìqòrÎ„‘‹~{É^˜ò¢⁄vÍ;>’«Å÷&Ï©R „‹ód}Ãö7+t˘(∏™2≥¬*6Gµ yÈô4»πYmWçI5Ω\˘.Õ‰Æb»w)∫PÄõCπIUåräß2û"XÖ–0E¥ÄáeYoêEíÀñ¬˙Z\≠ﬂÆ“ıÁŒ6EÆ∂*p%˘ùb†´C‰Ê—á~1BÊøÜ¬”–≠¿g–%«ıÏ*Ã«À–∆Üi‡MÊÑ¶A·ÿ®¶ed!¨,:è"kÏ‹~ËÉ*ÃÜEvΩ}Fñ¡Œî'A.o&¸‡EïÅ“¡[+§Æ %ÌØÊ*”õn˙≥Ïp”¬„†c›`=Z≈hØ·˛ƒS∆C‰h∏!‹(Ç‚¶ç–gëy2(Qc £T√<Lﬂ¬Ì<÷”¿ÁäÀ~Üem6ŒŒŒo[-Ÿ/Rπiª˘˜÷‚Íkﬂ´™ƒ˛2u7÷¯X⁄ffcf≠iä⁄dMvzz“TPy£aiôáÔË™ÊBó,¨f ¿ÿ±ÀOÄÚ†©S—Õ˙:;Nf&Ú&˙F)~;GÜ˘#GmFcTzPy÷@Ñ7áÙª¢ƒ√Í˙Jê◊Mú»G’ÂjRJÄn®+Uó´i»V tk?ÚÁsä÷4ËS∏ælÜnAvﬂ:nRßR`ê¥∫œjbúu&qú¨/ój´l¡KQ! –êXcyxö<õKEãôSV6¶d∫fç⁄Ã¡5]0B¢*e•˝¨*Mp)\ÿ2.3˚ï»|…˛ØLrnLÉxî≥`⁄ãß7≠Îª\2SÙy1êÎå|√9Í*é·€∂Œ9ïõ‘\—
-—]ø¿tÑwêá@è”X≥‘ãÑ€Cƒ‰æ¡_£dîê;GhnëíûqÖ§ÖÚ™Ú◊NB@]=*<Å(ïÖA‰ÀÛsS~.Ã:/ﬂ®a¡â˜ ®PàÖ»Ò≈–9ËÑ|úxﬁ˘ªPTõ˚†H¬1ÄD¯¬C'êÚÉíqnx‡®6˙¬ä˘ Ò|ﬂB7'Ä•"'´Ë£”È8am‚≈{«‘Xì)÷ebı´õ[fcMÓí©vΩ)¨§¡41nXêÉ≠#T*µ¥ B_±Pôe
-lº≈5&aóA +îÜ»ì
-ñÜHÕX„‰s$\›∆ªA≠∂jÒ˜ƒv9=˛ Jπ˙‹^S˜h–íπ_Õ«kÏ5çÂÕ6ÔS“¶Øƒ÷Í‚%Ò|r"_<◊Ω(z^rSOjÕ–ÒT≤E"π4i{§Û¬:ªPÆ”∞˜Wé•˘â3≈ÜúLñ:{{mÕ¶‰ì)Ûq”ÌÍ∂“@¨› uõä˚CêÒ… ,È1-ù”≤¸–’Bïãã u‰ú'})ñípÚi÷°ﬁÆÀ04ô4sÃ€È‡3 ¿õNåÌ∫»%Wù§b‘_vèO˚:ì◊/Ò/1ysıˇ|÷ùÅÓ1ÊVÖko‚Ÿˆãê∆ﬁ¨†#ÌS/¶xîuÅÎ<’1Íjé∆òÙ\m´ïõ∂‘'(÷&ƒ6˚R¢‹gö”(6óØIí{ã4π¥Wá%qƒ®N:…6zuêaŒŸF3√¬'Z9–ÅWã£Qkíƒ¿ÃCCâsÄ †û é°[˙Ø—3Ø∆-Teze∆…I€zØ—HY›v€p•'ï'òc÷6ÇÀzÜ$ˇ_p–Û4ôäD⁄zKã‹≥*¿Õÿ»\œ´»Ÿç	h[÷võó†ö˜PÉ∂UÕcz[fåÀîÉl¨∆ºç‹ã3´ è.”î~í|–&|	rFR{xw@€òXI2[úàUß'?áuRY÷+∂Üª‘i ¨ ï +L˘µ 9Ö®ãww‰ûõ∆˙“©˜°ìqï<Û“ÊGUΩŸ:RÜUóZ≤mvx´HòÚV∑™\ÔÙv5~ˇòée¥{zëÖRèﬂW!ö;k∑<~?ôïç[Ú‘H≠WÇ∑Bîƒ’≥o,p÷çÛƒä[‘˘√]"RèC ¸w¿£∞êÂÛkv5)>Åö¿¥T”∂∞Vst/x∞nÄ*	niÆ‹◊´åı‚=°‰-$y”mÚ¶D/+∑Ñ{óa¯ÿE√ÿ⁄Ïﬂx+›∆F7“l⁄¸¿{[dyx~-ŒÃ#Ò∫Ô7f˝4ôµáQë∂≥©q/‚#}≈õ1cÅ«èﬂøá£î€ˇ?   ˇˇÏΩ›VI∂0vﬂO™’_w—CPÄ—BH¢àhzéu¥öÑL™RTU÷…ÃbÓ|mØe˚ 7«~ﬂ˘⁄è‚yÔΩ#"3~3≥R´œ7πf‘Tf¸«é˝˚Ö báçOVı¸Ñ7≠¸RQ~I/¨Ãj§·[°°ìŒy0G¡ßŒug•LØáôˆ0F6ÜoË‹t–—ò
-:Ôû,~º/O§ñ€Œï)R.›yî_G—X_◊—9&‡<Ô¨»ƒàÁVÜD#ø‰SW‚›¡≤ïg‡NÇJ…	eÜ¡úÇH9≤(¢uûëö√Ïua∞lçdb§ÃÌH√QJoô:‘—Û>øEäe.OÛné⁄∫÷X&5y}…kÛn6K∏¢ïØNΩ¢ı'aëèï£SY‡IgŸÃò©&j%ÿVíA^†∑´ëe€⁄¡øë–∆moÂŒŒéjßx¥3¶ﬁ.¸ƒﬁÌøŸ⁄a€ª«Ø∑°Éµ˜∑éˆ‡Ø9ˆ”¬]≈—ÅÉÒXG3ûƒ¥¿±,¨)πió{x∂e⁄‡hËéÃ¡/É≈(rhö‡Á<ø⁄y≈¥ØÀv∆W£ﬁ5Ï‡?rXxa& ô≈˝Ñ≤ö‚∞ƒœ«x6jPÆ+Ö6Íõ»9Flÿ¢µaâ∫ÌVÏ√;™…Pz„é(}Õ¬X¸yÀsLnÛ‘Å˚EÍ@#˚^∫œŸC[¨8l#ëUUœ™D<Y4ä)GÒ0
-0˛ O¯^1TëÂPÍÉl(,ﬂ€G;/ÊŸÀÄn”=⁄}πpt¯í,‰∫s¬º=åyrƒ+’eàF&Ír ØŸ≤e˚—É8(=yb¬  π7œèD!¸u£fÍ]%çÌ
-ßüè9ÿR\¿-ï,√≈4Õí¥C>?QZ˙°`Tu©G4Y“j”^œ¿““î›eD÷ÌõΩêÀ^Q}⁄îDó≠πÕÓVoœô∏¯‰4Ëcﬁh:ÚP _‚XΩLñ'ì#‡@¶%ú_è»±ÛdÚÂ;..¶∏◊kÑW_¡)ÓÌeîb\£(€Ï*±~Àák—;÷rü-+ÊhÅu<ûLsb•ºÉ-∂Ïèq∏·ŸWª¨¸É8£±£LpqMÚÕd„« wŸè~ö'á©…0à]ïòú†b◊¨ÂŒ)spÂBﬂc© ea„Á≠‚.éÆJ6&r@˜ÒFJÿs¢OõÆ1\”πÅlVld$^h‘Q∞˛ùlÇõbMìzÕ0”îI>eJrzÖ*®çN¶¿»µû7`éˆª›Ó”l“Av\$CAöf§≤ƒ|‘^&†	Û¡ºﬂAÎ∞`Ïá¸}O˛É:o¬ÉxÕ5|}€LŸ≈«]0rƒgßQ ÈÓ:Ûd#vº«ë„M>∆Àl´$ku≈¯Ωïπ;ˆz{éáÀ¥-…´&Ï…9è«ÉºÄÀd]%Ñ~ÙÉO#≤¿ü⁄lè5Ï˚\˝±–Tf?Ô,Ò]∆ÎXb=8KRæC1
-%+™äŒïÍ,ák=›†ÙäÆ98ßÍ‹YW¢{˛≈Éæ‡["œ·⁄ù_˜a–ôN‚œﬁìx•QŒ~ >{Ï≥‰¢…ëJ:•πëµÇq•hx⁄z6âáÒÄà©!œä]π¥RHLÌ á”+¥î”R%Å∂Êƒ,J∫rë[sBê~Ä\ÇÄÖ’LÖ∂k1&hØâ•ñê->-qü§( ÕZ‚ñ(˘≥WﬁBñˇS‰Z⁄ˇ¸èˇÂˇò»”d‹&$ƒ‚ö#ó8˝Ï?/RXH•ÆÉç`f‰òWB’{ô_ è°F¨Ëí§3˜I&»ºäFS4ﬂA”tA©+•∑2Gﬂ:hp|ÿ⁄'k◊¥=≥wÏ)¸%„ìÈ˘(Œù™xÌ K}∆ccıP◊rÑÜä6±lèl≤xƒï–ï,64—Æ¿æOÄQõ|yØ”hT•(ñ⁄ŒR˝‚S∫ÿÉíì]Ëú èË“}Ts{∂Åùìã+Áπ>àÚrÈ`’ß“√	:Ga£øBúâä¡›∆é∏9∂\Çœ&˜ûÈ?eÅ¢ÜR’B
-4+éŸ◊Ûì¡O	œI÷u»=¯pÔ≤¯óˆkÜ[Äpö[ÕéøÎ‡í‹ÎÍUY5PÕî¡–Æ:.⁄dÓ÷Ìô∫]M‘\ﬂﬂ>rÓ,ºA¿Z∏X’Ω;ªsm-VsòÛ≤èuÃ£°CÒÖdrN—Rú‡£.%H=ê:ÎB«˘:SˇÏUÖ®ƒr=:/”l=ôÊ‰~Ç∫:X~'X˙∂DΩ†¢˝()Óê£-ÿ!Î≠è´®·iqEV`AVòu˝D+#∞·(‰ÎC‰@Y©Ú•∂(ûØµCã ÿõ•Ú∆πÓep(*9·8kïGMﬂŸf'Ì%a∑˚c!'„¯’TF|∂∏î ‚ä2RÏDÜ4zMq¿-rÏ¡'çx∑ÊúõBµ◊‘ÀëeÂJ§†”.ƒŸ˜ﬁO§›ã,-.⁄º‰=€i]`qâhiEc®tÂœ=tûnw(ï\â˛=”b
-∞˝ ÇÖÚ±°Æ}•˝àΩaUÏ>=◊•
-}q]¨xôöfó*¯ß ì¥q^ÒcÅÃxóÌe*É»¨8Y,BöpEÈŸ(9lÜ ÜÒPRºzQ*1y#∫P
-ŒDö±/a¯äX1¸usYÕ“π⁄G Ck3¸Èa2≠ó?{û;FŸí{mo’¸5•säS)⁄ÇÖî©r\èvf91ˇÑR ¢çÇ§yDKNîGÄP˝EnÖ¶Vˆg7›ÁØ–
-VG˘!∞ƒÚ™áé·C&÷o9⁄N˛}/t+£i§⁄/ñGÊâŸU?uÁ”õ·#Ωëh,m™Ô’≥·C¶QºòfêX5*æ≥2ÂëïŸ®}>ßÂ6j8•’&C©¯$ç‹'“˚çªº5Xµ“CMMóªßìÀ<y:VŒ≈Ù*;;∆Åä@øøUÁZ„ˆÎ`d®ÖSÙu£Xët	G–i›ÕŸN±ÆQîûrjcÜ˚‘Yy["Ωo≈h´ªÆﬁòì(6u‰ÌÀ%9P/Ç·nñï`E(Yá2û¬ÉŒzÈMb?".B §≤©≥€kûë©™íÉﬂ*ﬁ<=¸M&Ë©ÄÅ´ã∑¬ÿ˛Ä
-Ç!_1˛µjSq∫‚9y6˜<◊£ŸûQzËe ÂÓ MÙL;xcÚo„ì2m≤»Ù£ó9≈öã,Õ ı’$ÒW∆î˙∆◊W>Tv∆ˆì—VMSw’paz˝õèmC¶î ∫~JËπ±Ò›ó‡Ûî‰Ù∂’z÷Èÿr—qÑ®+ ûÌu…˙±NÁÈØÔÔ@„p¯YßcÌ„o‘A]E7∑HÔÓ$?@?¸ùÒ≈ëË∞◊H`÷ÒçAjˆD¨Ωl◊|Sb6<ÙwåßÇ>ûPÌ$À·;yR⁄ÃÕnûÏc¯HÑ≥o∏∑”öªs≥ÏbZµã5Á‘◊∫s∫Î∫Ô™DÕôÆáFE≥IDÂú*Ùiú£œ0©Ó“ã?€ å(ﬁHZ–r1êv;ØXÁ§_FU†∏ìeAt†–JÚ0%Á1∫Ú¶√©[T®ê≠õöÚµ‚µOƒ≠’>Km◊Í¢ü˝÷¨k5üHXF1`©ªÍŒQx¡/\fn⁄SJ·˘<N/ÜÖÄæd_Yñ¶πHÏ>N∆#y¡gìµ—ô"z£ò*Ñ 2ú∑"X“ç–-ÀiΩh…ö~ÈË"Zc«G—x™@cq’ÆÚ¯Úä˚ı˘∞‡Gm/nL0Û]™[+Ôº¯™ºq≤§ﬂQhIøÊ-óˇä»y7‰)ÎQPQ‚6ﬂ1Ú#7è‚}Üù%‡Ûπ5Œïß±8GIÜsŒ6U	óª⁄∫w‹oç»!∫Î! cZ!–YBÜ¨—è+JÖUƒ&+µÜﬁ*ÍI≈Baüå®LU∏Á‘`ªÅ˝€°#yŸ6# aﬂAô!¶¯£¬êåg")Nœ EF¿»Ÿ°	£Bm‹Æ‘ö}aP√`K@¡T]U° ?y„åúﬁ,ÙLÀj˜‹' 3— zã“ LÄ1©èÄ$‚uä◊≠{G[˚§=9=B“Ò2
-QºÖaÕ?˛]¿˛I1k
-B˝Eêo°úöÒËîJ≠OáıüXXî˛ö`Ùv¬ÿ2É_Üêz¡a©‘'Œ Keﬂˇ¬∞‰[wn5!úﬂ˘Q¯c«◊ê;f¸ïo∆Ö£0csÖ\è?uŸ~ﬁ£·L˘⁄ÎÄ»·’]ç`e‰
-<Ó{ä‹DÜ>-J„g°;44qsºÚ]“◊__ƒ´çú˚z›U≤;s∏˜›ˇﬁùp?ÁÚZÒ™≈¡¬_ÁB] π√¸Á¸Øˇ”¨ZÑ?ÍNzØ∞æ<$c2º¶‡∆Ïá“’œkP˝pW—Õ}¸9êvp‹é¢‡ZŸ@¯›Ù∂aKÃVÄóABIêqc—,:˙–ítƒu†Ùx›\ÂMl”6+Ω˝ ó1“ò
-ST./ÈÆÇ‰Òˇ}Ê^¢lO]⁄§˘X¶Ú-8œí·N>"#†Äy2È,-ÙXß4∏∫°øZ√|…ØÈ<û¯Ü„UÁ–W?”Å'ÅUB=>ïl >Ç„i0§]·õBw≤3\ª/s`¥—vÎ(ºZnè¥¥ ≥÷˙'È`gÜhŸ8I—˝F5Á´≥}∞8öRÁZm„∞¢˛ê2„™Èå[òSõÓQûπ9-ú™Ëâ›8m»˘ä†ï∏ÊÓ‚˘V´L∫§’∏ﬂVºB„ìYÎ«Ra}Õüìi–πå,ßŸ——![Z˙oõ˜;ãm∆-ó> fîç±-©,¶Ùú¿°∞q®\»=‹)∫úÿ$¯\˘Ô;¸”™∏©ƒ=Û\‡]¿yÚ…∫Ù=
-%jŸ„©a|«ﬂèR ∫%.Õ{ëâÜVÅ\%bÿq8%–7p8Ûú√I˛Ì£&Ó>‘ÇÌÚÉ,@ljãe¸5Q€—ßÑO^ÍgÕ¸oìPqû˝øˇ˚ˇÒˇ˝ﬂˇs%X—'ÈÙ
-Ë˝D8ŸZŒ∆•]È*@œääúm√ú"ªà`÷rd_≈=ıy_y›ΩªeêÎvƒq¡jÌQé¬ëÇÆ‰j†Qÿ!Xƒ$‰ÂÂ<[OV4’:l∑(@n≥fﬁZÂ±Ohî÷êΩ:œjü-d•˝;8îq}dcKVDéÊ.≠OèÜ”L±ÑˆqÚßî:ä∂™ÍÃ‰;õPú¥≠ôéë@?UX~x}37Å⁄˝DW_Ÿ÷ı∂KDE)ßÂÏ≈À∏ŒpıU™†®äCû~r_q–ﬁıè™§6˛îÈèî4äo)ªv’h›rÒπZÆ¡G%Œ®ÙB	>&QYòπ‚QWŸ&Ò†±ﬁ‘LO<W[\íÍ WUŸà·„π°‚hø‡kº=óRÂS£JûQÍ“—¨-kuåKπe+‹Q)ÑT€ÉHÒ©`äÈ≥ÉÏW›
-
-(üzJ(√–Ωçà∂ ¬8√T›·ÜâÆÖŸÕ”∂T›Ç∏]·¬c“ì≥^ï
-¿!‚FA$T†(»)}Eƒ-ø.¢Ivl–°M÷¨Zÿj,ÒÙ4≤AO‚5/!≈Ω4∂,Q%	W~¨V.W∏°∏êÑ(B5{¥Ü˜¶BïJC˛|´ï+]°Ef#6Øû,@ˇ$4Ü≤ô÷sÎ·æ$çi¶úƒÁãx,Ÿ‰„ÎPÉo˘4Ò\¡_ı4Ü˝_ûg√„Rdı5 ˝°x•˝ƒc∑!ü¬ÚWÇeJ)˝’Aô;˝ô»CôMÊüD‚:XUJvﬂ'◊Ÿñ‹Z	üÜV/Ô¨Ÿ&€q•ZD©«={@ÓôBr7 ÌÙë≤41Üî™-ZvÑgpRpôfﬁ`.îΩ◊€Ë/`m™[~®ﬁöåbRŸ[cNÔ]Ô}1Ay¢X¿4û©ê≥M¸nl-kØÖà›ı€IÆ«§ı?⁄y—hm¨ctM[ 7O \Ú≠R…ìpj+À‚˛xw4&7Qtö˜î2KUéƒ˜Ω2Ωü“ÊkÃ¿Ω©&9SNåöØÜD6éﬁÍ‚OÈŒÔ»"È^CK¨˘Hæ/Ωøµ‚lkòFAx√'KYà⁄≤N7/è‰\2$p≤µ7´5;œ¶HpuEaEﬁ+|Œæø-¬}˙¯˝'ﬁ˛PX7∫%‚>@˜∑ÀÏ,XIäN◊òb1C«±™  M¬3H‘Vía‡†,°6d”ã˛N_O«äÒ‹sıΩ∂qv±nÃÔA≥v[sÍ;jL¶Ÿ@)Ì4Á@2ôÂ˛÷5ã;upƒÏ@" G◊Fã^è±eôTØ]¨√˚ºÒÕ\W+Îp{7ß:◊™üﬂ¡,}8Ü≤úòB◊ËU˝ißÁ¨I	5Õ¢≥AïGK&Ä  ¨fL§J¢È®Hã4ÊﬁŒ∆¡$$9@:-≥∞QÇG®àÚ“(%?T%NpÊ'3ìt—≠¥¥3¶»ˆÓã‰†Ó,]«§\îËèÁ˙l¯«b;ÁÈlÇÓ.„!†ù;µ1’ÜÉ«†ò™D"sø|∆	êzC◊î±Ù*ä&,Dò(ù+}Yú?7?ï‡Á§®víóó≥í–ÀÊÃOy‚¸ï¿¡‚ë2ÑØn⁄∫( ßå¥äz®oB?‘ÚÇD´∫î”)#(†PÚ6ò`h/‘ÖÄ‚Îi9J#K±ûùÔµƒÉjJ> Ç@∆∏z∏º|Àe^æF'
-êÀÀF∏}D£Vq{-FÔc2ì¥<~—:;éÇãº˚¯Â›èîXæ8AæDe¬täXªÅŸ_ŸÒ≥u/¶i
-µNIèÄÑ˛’È¡>u¿ì~hÕ | wá'C6â	B8‰‡ó÷∂!∫v·?#} ì^n0Ω6ΩU´jU ÓÆì4¥kâæäÁA√óô’¯kΩ“wÚ,äÕì”!'ìÎ(}‘a3¯·®˜sLÏ€¨t,Ñp+!Ìﬁqª “iícÚQ5êIläp
-2⁄,'÷π2]-NB.LqG»[}£Û;ÚŸ‰rüN3Ã“‡ê=F Æ ÚUv§¢lLàâæâ‚`\⁄~4éRë®7ë|±Pò?0çJHäÅµ‰bê[^[4ä©[·L'ª‘ÊÜgù5T™T(qhÎ_ZÓ‘[—•h8çHâ‹^¯∑Ï/˝yåt•wv˜/∞∞Wò≥¶Ç–ËÃ«¶CìœS‡*«òÅ1·ﬁòjΩÖèø≈˘ÄÜ –ëÿ∞íà”|0Ôp˘RÓ≤ES à5+«—≈ü∂Tâ0*ñ√ΩH
-‹õ†úW•aÙ	°R.”‡_˙¥3XÕd∫``Cï%˜e›≥ı˙+‚ËfY≥†ÁÙ˝›‚{•HŸ¶≤§àá üSîøı°îÔ	j◊kvâBÂ	‚DH ﬁ˝‡‚NVêaú'@F»7ì	ª∆ÿÏS‡*‡èÎ‡¶h-M0£∂cõ«`®¢Gä˛8Ñ7(PYïñ…LüIã˝≤
-á–p+_ge‰´Ú≥hFoØ‡~Òq@rm6ˇ€ùR™^±˚ì~?
-ﬂrH&°Túß]≤Åíá~ûsäÜµ⁄eEÀ$˘·F ÉÅ√"~KıÔ ’øc≥0<JÃ)D|y£∂e˘≠´©∆¢` {"f*kwqU‚†¢&3!0ÜÌ9O rÛÃ1+jYê 5vW≤òúƒÃ≤mI»ãÑÆr;IjÏO--RToüj j·®©W≈ı·%/–∑ë/ ¿Öd"®Hgú‰®òÑ£jÎ≈7@9÷-j^à*ÅËÇƒ±∞OÀ(åã`/@_ƒitéö“Áb‚µóÒåÆÇu6»ÛI∂æ∞ ◊ÊR‘Èˆì§ø©-ŸrË_gå˚Õ™≥∏¸¯…œOV◊û,‡ƒÀ¥X@5—Û/Éá¡p äa˝®è˚«nÀ°ı ‡]¡<I:#ÿ⁄˙EYû’¨•˜ÅQúCù‡ä—«„<(“4§≈≤ñ¸…Er g“èai·d,Çú^’∫ƒ°Æ—bÌ˛†«aäqâz£ÇõBúı$}®^ `≤(≥«ì§å‘ôè||Ø7†àl1£„{Ø-ªéÇ´é¬€ö£UY∑\lÍ¡†À^äŸºú¬4÷ıè?C4R*∏Á ËkÜºMá *T…Ü´_´%Â§ˆQXRs‘Ûùmîß˛8äGÁ”4ãx¬è?^lR⁄Å œDFÖJIP'rQí¨MTk ¢‘^‹2⁄gL«W@ìK3U¸xHúâVß(/eË¢`û®ü§7ÎÜ`$ﬂ´¢ë¨åÿ⁄uyÒ¨W‰Å«ñ•µÿózY’–÷—O]Duo‘_/‡§%1/•Ã∫”1t@9∆$y“YZ]]ÈıV‡?ù«?˜ü/_^Æ≠Æ]n^o†∑ßl’Ω”‡Î(£áWÒ!èÅDÂ¡hbÛ<í•1Œ&ï<M*¡"s#˜\ T]} pe<O%ÇAÁ»Úµ»Ê˜√îB<*=±mﬁäyBKÒFeˇ]	w<ƒŸá)bm∏ËUeAä1ïä|[ΩÒ≈YÕ°ÜìU%(›uã´º˘ÑyÏæx„Äƒ÷ãxå€D› ;®úô7NKkkÁ`Ô˜7øÓóM˘Ÿ÷;y}*"KÌ§/±¬ÿÒ’+Xªfö•^©Y2ÿ3œ]&7É≠#Æ«∑âÃƒ‡æt6j‚Úñâï¯[B˙í8„¢‹gÅ1ƒØ«ØÉÏX˜*d!∫v£ã+^ﬂƒ≤N3Lq;9Ñ·¨Îµ˘‚s®b/SŒ!ûÀ¶1>Àˇ`àƒF˚QÒõAz3ß∞õñV~‡GÆµ˜?ÏcœZœﬂûÓµ4t#ó/Çk8†…±»∑„Y∞œ}√¨XËNQPó+ä;≠[…ùãµÍ“∑π‰`…Rïóï`∞)A°U≥¯RU¶Ô¨,ﬁ€Uy@∆ék≈óöa8+ã˜UUù´∆Mµ‹UÔö°˘!ûÕc)œÀ˛…üïH˛˚[p†~pÔÔ ùûD9ñ†=nL ¬Á”√j#Q8sπ.cìx;äˇ.ÙêºiﬁóçŒäÙ∑Œ37ø˛∞\súÒŒVÀ¶yßÒË˛\"|'|˛B¨≤zâ⁄åÉ‹âÜ∞›˚
-‡ïT!..·j@ó'±a0E/õØñm∑Ö˙—1¡«Ä“˙N´Cä¥uJ¡8o™ó2˙¡Érødûëê¶Á?aqy˜=€ﬁÖ1M·—√]+˜fºV.lÅ¸ãYgEd÷thÍºwœÔÜ*‡Õ[†¯û_)ù†·‘SÉl√®œ∏>ˇ$+j/?í ÏÙ˛»J<âˇN¡éDN˙~,>S7P¶≠ö)KkµŒ¸ÊŸê„Õ¿´∏?XgÀÛÏ 
-„ÈhùıÊŸ~rΩŒñ‰’ÄËÉ®uYoÎËË¯Õ_ww®Ó—Ó·Œﬁ·K™ØOvOD˝ÔJ%Û@1Ö˜]rªÃ≥sÕîöR¥¿ßÌéÂx5=öhOU>∂µâΩ;Ô ﬂÔEÚìéY$0ã8‘çûAÒ•pIY%ˇ•A˝ËüÕNa€rÿè»˝8œÆ—b"FÂÑnª)„ù˜h´â®
-êG3H”Unir7œﬁâMòg|RÔ8{1#*tAagp‚~3D>Ôõ—"áwœY<Üó?íµ” >ÉÚlïmÃ}ß‹ëM†q›iÇ≈7X[·Ú¨D8B\NÆÕ„V™‡H›ΩJ¶å´ø‡‡èÒçÏ_eÉáÄT¯G•1h{ÆD’yl/ÉCÛ¥læ‹‰¢∫ëm`->8ÿﬁ•9kÂyÀE´ÛlëˇoN?"≈ö∞gJ˝>GómÖb¡|˜—t\¢å2ßlÌS∆oÍ‰ÕwDÁw//£ã‹Å¶c`ÿP√xmMÛ,V2∆?aqOü∞MóÎí"◊`ù^˛≤<*1R:ÉR“äÄ™tπıOëÂ∂R(k«Ÿë8ªtë™\Ω„£¥]‹V^Ωª+’ﬁÿWT+ÔÍÎ*x/˘k*Ç,•ˇÇù5)\Ñ5Æ0	∆¶Ck˙ÍV†ëâbz`2˝Ú⁄˙)»üœÏªÎ“xTÖj¿¿ÿc3ó„ñ[÷÷ °ACÂı∑Qz›È’£Vqπäq„Çö-⁄ØZÃ*ÍÿüÕÚ-…¸¬€’yaWÄ<ñ´ IÂé˜u@Â¨B)Iﬁ`A∂¿^'£8°(Ûïm0SOMÍgGîfo1PiU™í∆Á €u∏U‘cøb≈™‚vßÆ”ﬂ≥TtƒGFòÓÂﬁÀ”Í¢Î¢®Tt´ nÎ•Y˘∏*	ù¢Ü]ÊN;…MLI¯Û@%Zõ2c!®]‰àXPˇJ˜^P1õc=f*∑€Ç©·?ù~à§¥RÇ!§∆[äM˝J}∂\ygBB(+Ëk“wÆIFe]ô$âSUö√‹Ü œGÍ`]ﬂ¯PùüRaTÎúH¡¿®’ÇåÒøˆB{§∂É¢h°¬⁄ß0ÿRl{ﬁIú7ª0;Õk˚£◊—ìŸYwÓ¯†õË¨E¢9#VÈ|
-îO;dìπêr6Ÿ/d≈Ùƒ	¢âLUM‡ﬁLQó¨Hª∞÷wU'À·'™¡˜°´{’t_yä$∏ÎﬂUk/“Ua<N∆ÖŸYÅ=BWo°\mqŒPu"¬}·NJúwU¨Øî¶e√÷vWØÙ˝V˘æ+l‡(`ˇ‚ß£8öx@ ÎÍ1≠@©C˜f6‰ …ﬂIÈ±1Ît¬ÜÿﬂÌ∞íÒ≠î«ÍÄ8,^ÈÉ˚*Â—ÈÑéÑÚ“<±$ñR˜Qr†…¯y2ƒtÇ &üÔ¥ß/‚h(4%œ§°%§®Çd∂C4®‘	 ÏÅËÑ-ñTVzGí¯ˆMªU(L÷»j£5'Îúo¸;dm⁄tJÈr°“D›L‘ÓjßS•Õß#3‹’OEî,ß!Ï kß ªpﬂ;0Ñ•£"ÅEéH»-√nPîΩËÔAL'®>ˆ¢–¿£i7Œv≠ ö;!Np„1o–eG+ ]≥∂“≥^dÎ‚Øóõ,R©=@CŒ<b®Gc}áöÀjp–53ä»g∂•\ÛfK§úΩWíR–gMπëùÎ»Ã»ÉÀ¡{hï‹⁄ÿÄ’fA(VG‹Îxü∂‹ÎxüñÃuúΩç;œ—,’Ñ3ûœr≈ÎpFŸ≈´Y≤ÓsÓaf—üfE1¶	\RK{Ê‡üöi(Ü≥NB∑…©ûÇ⁄çgnò≠>›∏Ã:p„¨z‰ÍÕ†oËÊ!©ÙVF™Û⁄AS9Ó©Z-ÃS©Ÿ®db¶¡†ä≤Â¿äpõµÉ+;¢Ê≠–y∑`•XáÂØπ∆SŸ.”ÌŒÁ…øˇﬁîQzÒLÑ˚ÀâøöOd'πh¬
-)Ta≈õzûP¸¸Ì°jä1„Ff’≥–:˙3&tM$,√„Ë:,Ás©®ùí—ê1+ap'ÜµOâÙ€ˆáaÈw¢Ûº¸A)sæaÒÆÀ¢_B,ŸèÅæê$Z4YáuïJœJVæ®ç)L∫kj´ÃMº+h2≈*
-N~S/®–o^±ñtÛb≥QîΩÒ«$nƒRàíÂ∞bQµn\≤ãŸFÈÆÜ‰Ì>V ääu+ªÿÆs∂· ˇ	å”^ï*∆IÑQèÃèç ◊j“æULN‹7déÀ¬ª#h¿Û»¢≥-˜iê]5+ñc•∫!QÀ≥ÊyÇÅ‚nÄ±∏åáç∑_Ø•Ó˝Öˆ•vﬂQ‰%^¶åÅ6GÁ_kÜäº[|?,ÏDì¸$ Ûx‹üï£IêÊ∏µ≤Åzöb÷òmé) I#µë,™
-v¢rΩL'
-VéÓ‹U˝lÁÎL®S˝ÖsÏe∞≤“æ≈R]®∑*∫›∑Ú]‹V{ø˜”snÂq7‡®ÿ~“◊H´x◊å¨ ¬˜%©Ûlè‚ºΩ¥∏®ëWj√∞M ä=GÛœæXµÃìáãΩà
-BÕ∞æ ^®Á£PÊ &Öå‚µaR…+•˘¸DYö€:;ÇSLß:Æ/SÍ1Î.êﬂ.∑N¶hHÊæàV]çO∞<[WÍdçß·ñE√i:ïë]ÊŸ(êÖÇèSåu8ûß$Ûd≤	∞à◊HWSÕ}XNqàæ˙-Ãì`}$gm ∞Î∆iPVD_K`¥JÙ[\ÒÏE	`x`ì—õ‘[ƒ!a[edºÈä¡7 #—)õΩ íVLœ•ˇsf¢o´DÙ	65ã*JdÉ(ú]aüE	∑Ïhè’√Àõ•îKxÏå4-
-ôl¥U¿bhÌ~ˇ7ÖÉÛ“qå›æ≈àπÌ|–∏[«¢√õ<ÆÇÅÀ∏f†(˙ørﬂ9◊w¡ÀTÕÑGÒ∞ﬂWTA§€π2˝î‘aá˛#nœ‹È?=àÚ V±®ÿ©õËjF\y H/&√Äe?»2!ùgÇ:rÃ8äÜÒÄbJL0L,˛ó&†‘<"óã Œ˝¯Ú|8˝CÒe™¬rb∆9„Ç1fÄ›<à›ÿÛ¡¡Ñb2”}S>Z– AAØ0˙* GÖNbﬁ>¿Ç ô®`G£ˇﬁã‰~˜‹˛⁄√ˇyàæ®£)q©†é˜ ö∫q/®(b<Ó˚ º	Ø5JŒQæ‰gwõgóh(!ÏÀ9ºh7J~†1&Ó€˚V3˜YSká≤˚?O¶MËæË°ò≥Î#∫u»_œÒ1∆ìN?¯`¨⁄Í˜ø(?T~ºå«np1h∑π˘OE8N˚ôkKµüBYKT ôuÜA“t§®Ô1eq(nJ\…à¡˘•ººu~6.E]E¥KGW~{ËÓù_£π>)óXÆœÍ›êsΩÄãv~–Ø2\%=p7Ë—=MÌ\'°·u}+¥¨Æè•¶”˘YQ#˙÷∏P€πæsösƒ∫N Ω•Œ…@R„¸Jg¶¯Bﬁ
-ÜÆcŒ“~X∂sä _ö—°π2àC%Ç ª!÷.Óà0¨*\…√Iû|1GﬁY„§@È≥é˚ﬂUŸÿ©&v?¸¿b˝ _=ÊDd êükD≈m™?p‘Êıî’K	7œ(Ï^L≥<ÌÒÕª∞nd@‚∏¥,ãz≠víÏ◊ ¯Â¯î;•ôÜ¶\[›gT
-†X+ß®TQª¶Z”∂j¬WÍÊË7|Öó¯p$Ωr∏ßñ•73Ω≤J˚Ÿa“oü â!7≈
-ËD_tﬂîÓX±£Ÿ|YNù⁄Åq÷Ìvœ#aåÌŸ^òâ;π¥ÅŒ∂>0»1•∞*vVˆlÔ˘ÔﬂﬂñnÎwÎ »]`|ì¥M&#X£üÿÖˆúª;˚≈Ë§2(ß}°Àb-¸∑|\ŒC∞î9⁄˙¿œynﬂ¯"j(íÀÁŒX‘ªÜKL[4„ÍÓÏnü~˘Â’ÓèøŸïÂSÄ”≥Ö∆òq~c&7kë[ âƒÛx@-÷∞uBjNÎ˝Ÿ∂t≥G'ıxÃUÂ!$""?bﬁ}G¶9¶èπ¡ŒÉt*√$∞”¿}d›3m8ÜõÑÀ3ü?ÜI˛`aÚ∞ÅEÒL«|}}ïD)ä+)≤‡P'¥Û&©õgÊÅùg
-åÕ3çtäêWQ6â.ê;√püµÒ2Ç˛."åhâgÏË¯3j˝‹{‹Y\\BGë¬IÏ≈óç|¯?ád[Ù”E>§Î∆a†õfcz'ÅkÈs—cÛñç¬`ä]XèΩpWÜld∑_w◊D=Ì¶B%;-uÖâ‚Ë´h/5¿íﬁ∂∂“ò‘€¢ëarÅSÀCô”,Î˘ì>8?5Øc®b1÷≠ï(!|Æã±m€6•÷ËÚ…ÙxÔSﬁà‹&°πJÌ¬ioI5çËnéVÔ8∫¥◊L%√0:œm~û=c·˙Ã8–Úh4œ˙ôy‚Ô‰,óÁUÑãy‰°ãñlD⁄÷†$ã√à"@#(c¡KkÏ(Í#2o!Æùﬂ}¢∏¬°Î°ÀÖ£ò˛Î=¿0Ç√§ìL÷Â@
-Nˆb a4±Ê√C2§<ºw˘˘ŒÙ∫·ádQ∞⁄,Æ"Ù∫ñl™à¿^ùæÏÙ/Æ-≠çË-≠v)∑¯OóPÅÕ—)Ë
-õ7¥S0⁄ÉÈ çÇê˝+–ùÒèµ¸ôÿJe©]à
-f∑‘e‹#b∆…ŒEaHüwGDGD1¯àPΩRPm!°m¬øpo8≈ËQ∂ ÌR ©öò¢÷sB©ºö CÒöo1ﬂ†Y”Ê§h±™æÜG?t√CRŸÖ™á-–ËsõœEâ˛<¬X7Äüç‡ åŸ%„Òt‘®‰á`4mT<„AknŒãE©‘ÌÛàLZ©=ìÅú∆´-2r„$p|7éíi¶A‡˜∑–Pè;ˆéˇ)˜ıÓΩ%‹ÿÚV]`&ÉÎ•ûlßK’`≤çQ	iZ¯G∆\æ%2áƒX¥‰a‚≥p|∏rë’u1=,5FNAÒÂôÔuŸs¬g∫dcﬁub$÷.é¡≤Ü ÕiüÑOÃ Ú;;}5√ ÚD¶]1∆"ì)‘„7±2"O»ˆ‰®‹çRö”¶ı}á∑a}ﬂënXΩ8ËvJÒ[o9àµŒ“ä≠Ñ’¢QE.s÷µØ8°√É`‹eL√≥L„1u"úú%yF‘ÜZ«Ç3€°–	kå=≤sk7 @jÓsÅpH‚m¯ÄqÜ&* í/\C†§.ï›˚Âè˙[√©xÚ$ÜG©g@,ú^DÌv6Õ≥	WrNGÏ/Ã+Q« &«—ı	˜B›Pö? y	8⁄°iko=Õïílë8>›€⁄'/Ù∑áTÃÏK'∂i4	bJÒC®˚˚[•?Ac+{˜~ù«Í":ÕÈá$‚Ï‹ÉõrûNãµÅŸ (yd◊Õ1ï:2˛m±‚∆Ω`Cjovè¥L·∑ 4î…µi8 YƒMÇ˙gdœ¡ÿc“òËp˛πÃá8≈`≤!ÚﬂzISÅÇR{;∆„+b98Ù— ËQÜƒeﬁÍ|=ÂçmFE˜5nêq5riÄœe˘h_vá‘¬Gzó®	‚ÚÚúQJ+∆	˜$636‚¶6≥5‚&7≥µQJ:ﬂÄ‚Tk{Âa>åB◊qŸ‡¬ßÈ9î[óNÑßn:`{Ky]ÄÄ˝—Å„,o∑zDáZ~'Æ£ÅÓpÏß—µÄ=n}§Äà÷©Ö/ä∫¶„Aí\πpáâ,°˘Ug¸˛AIö±qôØ@Ä,KXÙ1†Hà∑îÕ9 >'H3ÚEHôPï°~Î uj|ëYù≠î#¨¿~”1ﬂk≈∏®%eΩâS€3¡|tàë1üî7D÷ÈV∂ ¡?*´À 6|ß-%è˜∂Y#JIﬂ≈hﬂ\≠~¥˜ˆtÎeÀ◊∂¨Q§Ì∆ÂR‚πòtÀÿ’A–ÆØ^ãóïµUÖY±ÜUZ3kãıQ¡=/∑~µïØ%ñU◊:+ñEîzsnE¥.öp‰¡Õ6sã’ê¯˛÷”ƒùv–‰yQÅBÁb≠f`B≥9u2ﬁÁà~p˚æ·È∂MË
-ì…ÑJ¬/4∂Õˇß¥}ãyEblsCÔmìÒÎ`‡!¬66˙[Í.-Õ!w8ô8¡Hl∞≥#ìééﬂ¸⁄˘˛ANøAÇtó8Xıö+Ûz›l§Æ›yLw–æ.◊Y…hkIU	¬ırh:5ìùÆÈﬂãÉ∑NÁFˇ(Ç¯À3m|‰8˛1:ÖmÅ]·y`‚dªE”Êf\gNyŒÙä2˘è∫gzâpÌP‘âÃaê¬M÷é≥√‡∞-ÂÊL9ñóˆµÉœzõŸn–ƒﬁ…ëgNÑ¨¸ÒÙGYiv•4TYOükëåD´∆J®÷g«—U0*ÈÏîR=
-~Ôz◊[∏‹•î(Ÿ%∑S£à0öKIGóYßÊ|œÉ&ü¥ò‹m€ﬁBö Á≈Ëœƒ*|’Ÿ_ÿí9«JŒ\ªÄY)ã rƒ†\™¶&Qz´A	<Ún˘À[AØÛ“Í8√≠»Û]l/ìÀË_§⁄âœÉõÄB˙5gÊÌEÇ∂∑É÷˛€√≠R’lÔÓø=`€[ˇ∫uÏlµiôßß;Î‘Ø≥w∆1+U	˙=ÇlΩ∞Ra T"g˘ß!d¯o‘I´Å\Iæ∂8Œ®Å*⁄æ{o0ƒgA†Œ*∆ºD'ÓﬂÍ€æ,ˇ|Ó_2≈∆	Ú9Îˇ1SCÀs™‰ŸÕhéÅvKsluávÑ™Z@0ª]a—– ]Éåö÷„è·Hºüe`d€›˙bò\ <ºôÊ2sÅ¬'IÆ>@Éº77´1GòŸﬁº=mq©∆ë#°%%Úü+∆%◊XˆYBœªVå÷Œ∏Ç5 ~®àl§0¢µ&´ÚÙj{z>7#|™9µ®o0JÑ’ªÔX“ádäv4ÖΩqı“;ÛØÃ∞ˆÜíFÙkÿË™ÀcXË⁄ì.⁄(NØ#≠o¡=Mjajul`ù -@ü8¯j&§7(cD≈e@UÓµ
-y2©œ^∆ﬂ©ã°’∏ºÙVQg+2)aHπ¯ˆEƒŸv+°≤≠ymµïxØe-˛[Ts˙æà∂xÃﬁ∆PS≥r éàª‹ˆ'ò¿#ä&ÃS¿å5MfC’Z¢§L	SÆzS!Æ¥ø	W*Eì˚Hé·4Ë+o„Ï9çÿî}QÄ„ØÚÚ9»ØÖ£Ñò1Ô[ÉIôΩaÿYúßìxÛ®cFõepU<'”sê˚x•ÆŒ@∆Eóß]ƒN.~qïã7.˜3ó”ôáG{ö<ßÙ:⁄ÿç8J‡—b∑<UΩGm•ÀMgtOÅ2ºá±yJ∞Ô2ì>‚˘ã‡÷ÛÃ®™g1£ˇ ºÔ]"/àö‰èàS√ æ°D—~S:8Ûy÷O∞FÌüHâ∫ˆË·°ÅE© ÊúS5‚öﬂ/ñ∑cö≥_d
-0=)‡Œ~y∆T¸.\>Pf¨ÅlüÔ©œ€©¬ü¬ï¬Á•ÌÒ±u˙|ª¢M8cL¯"K¯\~}Q$*cGTFå®à·â·sÖ∂†+‚?8£>xb=TDx∆u8t{£0»>Q†ÙΩç–TÿUè_âª2%∆rπOûÔ˙ñîÖlÙ¶nÆ-&–d]±Y˛1∏≤ÏFF ü•}^ÁŒAm∑¢SÜ]ÛNê∆¬:ö≤“ ∫ãIÆá˛‘ÒÕ<ªäFÁ¡0∆ò;Ú-∑tÓjMyBà!™)òå °5FóIîàµ_¡ÕuKåJs„)q…H´-†ÑH£§
-ÙîË±‹º2c®UF{ Â‘‚àòÃîDÜpî'˜ËÃ.ØBáôïÚ"ì QàßVbHyı®ó≤ÆQÆÀsíUäÕõÖb&	ÕvF$≤PsGGiÙ1éÆï@Í<eàL¿åŒ„!ªLÄ¨Û
-®ËFÁÒÄÖ¡`:ú>™•≤*∑jˆSU¬:	Qª;äFï¡Å∫
-≤ò≤ótŸA2 Æ;üé˚}tó Ç Û¯ 6åŸ$ 6D4íÁï®áÅV‡e\N®.ÃìîòGÍ˝ùL«fæé`m∆
-O‚!,&qW0\òLŒsµúC1å.3€ä◊Ápå≥}bË%@ÎIü±'xrÃ‹åxÑû‡<≈˚Éx<Õ#^°HßH&‚ºudÙÜ«1eM÷Û π∆2;qÄ∫@M`˜NHÍÊ¥+dtû‚Wnio`mû6uQw}‘ÿû‚˝fÜ¨\n√o∫'Áœ&úÍ!Äù7†[{*péÕ˚? <ÈÚ˝ŸµäzçR„ªNik=)%Ñ7≤\˚"auq$'Ωrøf≠æ,Sô[û#ñ∑ÈpùiHI~áUY˜-Ó≠F<kí∞[7z˘Vi]@È∫Ú7ŒT&V&)7ûøñÍÛ∫åËj™c{xZIüEˆpvÄÚ&+¸Pwbƒ}¡@M’Ì—~9‘TæÆO‘UWÖøÑ_ä≈j∑î·«[’'U•+◊SÿBMP-1Öáœ34ë≥+Ö&rí‹Ñ(RJ§ÜƒÀG-)H"å>æ*iR6DéX=åÚËä)¡7°U“éù»<.Yk^jS1´†bó◊)œ„/Ö‡πDt‰Î[Yg§îy}ª.aÃlÈÁı≈E÷^eGsJaÑBøXP µS1+Y¨L‘ªÙ≥ï°ó∑(GqÄQ≤gü⁄PNõKßl≤»›´LÍ∑Ÿ2ÿª,.6öê‚ZÁ≈BîÀP©«30£/ÒuêíıËdöNêQ'(J”på!(¢.z˜|ñTiç˝ƒ/ –Aﬂñ”î^ûÍıKïüLr_Ç‚o∞0øÙC Ÿà·tÑb√EÄ|“˚å∫Ïÿ•	√ºéc|äq÷f	{ÜH53iıL
-›6ÄtS±å‚÷I⁄≠À?	wA∏ÒﬁÍKQns{‚†„*‹îº80ú7]gJLÂ0-0å9Ãﬂ\¡Ñ(∆QYA?Ó _ê;®féË–6‰åÎI˜5Wô”]\¢˘hq˚ÏªE|XŒ‚´3	Ú‚=¢{ûKÒu0¸íÈª™KùX‹úôW§h‚kÇ$dC&å7"!r¢áLxy=÷CŸévÎ	U≈k+Ëõ~)«7/°)ÏvúÃ¡
-.ö¿(õÇè8´ òŒ	∫®7’;VvMÊêrq» ≤}ÍvªÈº6Ôi4∆[h°ß95)ã›ïf•‹º^.Ø†ﬁàó≥“Ó’ÁYo—¡Fj≠°Ç¯Òkù)9.ﬂΩ◊◊Nˆ_oÆ.,≤döŸòï∆¨Å}Ü.ëÉ≠uYhòÑ`©V?J$ m!&'*IM≥1]Æ∑ı@n†H2ëyãJhà»¨ıpC[M–∞Á‰÷ŸÏ`˘F ‘—ZöØÔÃ«/À˘
-%≤@O≤ò€Œ)ﬂèƒKG≤2ebÂA˛d[›ãÑ{A—|jˆ•D≠Ç	ÏªY≤§åfqì:ÍnûMìá†(G—f<-≥gleQ∑≥2	ï∆ùÌs˘g›;¶(µ∑Æ†%xuå‘cÄqJke_øsw£9ÕNQ5"∑ÛG[ƒSC!öb<è‘∏5ZÏN'E™Åü]¥4CË·ê]†CEh®ÜÚGªıÚËÑ!¥3	Ól∑»ßåtG|VÍû!&1Eytä¬@*»Âã3›UN;äP"≥≠∫õÆì¢nI[ˆÌöb Tã¢=òò&,gÎe–xD..ns©∫€“+	óÆr E!øb_öSõ€˚{\HÊaú' …õm∑û{ZÉ∏ey®ÕM≥(åÉY€[6-:ï÷π|7Œ„åui¨¨Äπƒ‡ó†bîÚ@7A∏∫©∑NÙK[6_‚]tQú◊Ìcå?ß6Â8@≥a5⁄GQ˘∆	ã°e±çÈt¥±ù&◊hZ…˜÷>ú^∑Õhº|TŒ¬≥®‡æºL“’W; ªì É∞]Âëk1ôn0d∏°ô≠¯à_˘[÷.Ú®<*+œi¢æj\ÑÚöù•›¢§.£˛¨îk Âê•yëåÛì¯ÔQ{È±ˆ)è>·-»˛ﬁ{πıÎ˚ÅÔæﬁ:⁄;}ªøu≤«év_æÇ?ˆ∑°·•‰»¸M/ŸMü‚•å’Ω^∏∂ì·i!wZwgº˘ÂEGøÁ œåAÏ√H¥F#tÀc4≤ÊhdwƒC£nÑÔå +é:;P†≤ÁQ\a#ö]:¬œê¨›Öyz+;{;≠9ŸÊÍäæh¡«®}v2å'øø>ƒø€v≠ä\µ÷\ÿœapµ˛-˚ÀB∂¯whº;	/œTê÷O
-∂œ07ﬁaqÇ`NMèà.78$< )¬π@◊O<3}4ˇ„¸%ôÎæù¬dpÎò∑≠£®ƒ˝§üx¥»Íq·Ç?W&yö¨Ò™vÍ:·«pzÁ”‚ı9π«–…Öà{Á.A†íªŒÒNJœÀo⁄>3◊*C‚fX®wjÕTC∑ŸjVg Òª»◊>S≈∑≈˝=ÀÅ˙ ™¥wx≠å·Úe{!p–Å¨X[áôZ©R‡-1ëR>ŒoXª«¬‡&ìƒr∞ﬁœ6FíÒçì)êZv1åÅÅ€ﬁz˛öùOÛØøL$Â
-«!uÔpÎ˘Èﬁ_˜Nˇı˜˝ΩÉΩSÄ÷˚âıVlÕ3éueM(¯Å©∫n\bä≠ä—÷∑ÔîXç]Q#Ì˙^πÜΩØ·zlzw™£¡°hC€dì ÿ≠=8º⁄¿ÉãËÌ®ﬁs»F±øÚ=Î®Ì?≥ñPuTT†;œ ˛Hÿ- 8àÉ´ALF5¿G	>"ÄÔ¿“·zôÚ ’ÍAÎi‹eÚ^â†Kö‡t]Rä–˘î∑o`…ı
-Õ4Uœ‰ Ê≈=G<!
-„„“Ä±?ÍïŸP≥°0¢Ê·?PK® 7u™Ï6([CúûZ[ﬁ@¢¬”º≤è@ˇ§SViª-«{,áØ»–|˝hI£Ä Hï#øzme¯Jö<jﬁµË<"´s›Ñ§Lg≠<ô^»Êâ8°Œ%‚ùñ0A∂*≥JD¯€eÚnôœS…yÁö …+ªÂ@*∞R}Lyë3G,HFÇÒÕı J£tÇRè>ápﬁ∂$2wPZïà>7‰‚1å˚∑8\ˆî˝¸x9ã8iáˇ∏éŒﬂú¸#>$„˛ÑO˛cxç+Ã”õÏÌÚˇÒf´«‚qºS,@)+ê˜I◊P’4c°ÄÚB—ﬁEg3Ndvád≠®Eì•‰¢ê 9ˇ¢®ºŸm´‚ô/Äl°H—ÚTj·ƒ“ª4t¢◊ﬁt’“AFVı∂X´Ç&îü]$Ÿv4q≥∞ÏIöß¿ù¥‘¿≥¶ø9dN¬Ë|
-\Êeÿ"ì≤ÛõIêeÇ∑2|Á$îjøUaS[ÿäà∏÷x Ìab√*bπÓ9§≠≤…Á¢9âU3‡zpHò
->¸´}¡◊&1·°ŸÍ˚Ëó◊áHb_7j™Û@“te≈æ⁄çî;ÕÁ^4eåD«Nœ¶ôhB•;S=aPWº /™—‚V7—|Öï5v∂4À2–©HˆÚä™≤ŒSOR‘Îìëıv¡SÔOÕ∂&ì°= ôøp~*î®h˘åWâ^Ê[,éê/∫ìi6¿Î*Ó"8O·éDëB«5H£K	+®ÍDv«vîÚ€áEr:J&‘¨Öî>≥ˇ2™-¢√D®D@jôé1Íß¸˛Lç‹[*êÅréNy%≤‚ìva∆¥>Up∫6Ì¬π‰fæni˙∏*ƒ|¸Å„V¬°6Aª˙|:a¿ Èı@˙¢NÖ≤∂±ÍdqQèA©8µ€#u_¢´’¨J&+†¢]AÈÛ”Êín]°Ø¡0Ë«"AﬁÎh8R8ìØ]~Í†™ñhfÕRc¬4I&h$Q¢)yBEC3ª∑÷5X‡;µu^≈¸¶¯9)0˝‘Ó¨ıÎa…ÀøâÚ¢Î ¯kôí”cu©d¶;ôûèbEq¶¡en2∂∆π∏È^go†˛S•E@iqÿz¶›c¯LlX±†~s+
-Lw™∆RJÒ∏>jI©UﬂÖ1¢	*ÏlÖÎå≠,ÓöÜUø∏ˆ⁄H+°révwˆîXEwÇ?$=P%Òì|719Ω»√@VdE
-ƒehå¬Nfj:3T—˙IíPg¿*©y$êc\*ìÙ¥éwèﬁü*À–z~ºªu∫´º9√Ñªqèäd∫®A√Zrö†Ï8^i¥v®Ö*I[›<œC¢D ®÷æËˇÔ;Hß 8≈˝⁄:;#-=_ÑÆUw<óêc6îàcª	≈4rNå†ÁÌh:j©±z
-”˛oîaÇç>∞Â»ïè0˘P^ﬁ/•YakkÁ`Ô˜7øÓ™iäHH.U¢∂ŸWÓ∆TÀkÅ+\äGØ¯íæH“—)LXª–∑//:n
-¡«{˜Wﬁ9´;Îƒ˛Ç‚M◊ºZıÕ¬}ü‡Fé∞°«Û]úÔÆ!†Ö&q˛;<[©Ó‚Én∞¬ÜØã^àüÌ®Ào{Eº:=ÿßñ¶÷W.bíπ>àŸ)~¥¨êñßŸ©∂Ò"q–õ_wüóò£v~œ3$Oºñ≈ ≈∆#‚ÁIñew≥ﬂ≤M&b°πæ*7b;t!÷öCıraSƒqEqd¥&NE∆‚k[Ó™“π⁄'|g¿ÛÁ†’üZﬁX‚Uwˇ$·dó«î1˚∏•s`)Ë©†/ëıº8πRXg˙p0Uπ:î¬Ã◊Gä&iú§Äﬂ◊Õâ…º5:k∏áQOGöu±Gé_p‚¡™ﬁwÔUƒåw0é^'å˚±öózDfºéOw≈¨„Qø‹&â|õéË¡—tŸV6`êÁìl}aÄ¨e›ÈòK›ãd¥0¡v;K´kKãOzKè/˛‹â¢^Ôqo)^]€ºﬁxº∏®6∏ﬁ¨¡ï•µµµ'+èWz´ùpmÈ¸|ÈIoeÒrU4XLYßÔêÚ…µÂ¶ÂˆfïÈˆf≠Ìˆ¶eûVAZD∫:Úùz9ê˚~Aˆœ‰πë˘æâãªxAÂ©hIë›¨ÄD|@kÀy≤ßx¢@Ó'Z0	t∞≈üw@OÖ1ê>∫"fM…<tœt´ÛúÉÉo®‰™6V1Ìv≤äâûŒ'Tâ˚yÑÚ*\9Ê¶ÈπÓ¡Õ	Huq;∆”`(ä&<jâó.n±y.≈(”?∞˝o™‚+_uAw¸ÌU—>?ú°ºj≠3-[a(s7aûEj±.!∑ÖÅVÄ∂‰d÷Œ˘ùD—∆{ 2ÚùD∑p^ë‡å√ ˝k]ƒBØ®Ñ˙W2∏Î|+Hë´‡A2Œ∞ÏaKs›Iû†.¥›6–∞RWz >mÏ7éÚgöÍ/#ﬁ°l¿:c&Pïé”È•õﬂüÑ4S,≤éAåæ6Éõ∏ÉÔÂEdqÂ'ÉG8|s∏k"ì¶¡\‹cÏ∫ 0Ø.ÈF§}Ù–'KqÅ™B£U]Xì@· Zr◊3Öªa÷‡ı∏∆*§8¨.˜	–∂\ïÕ&QäBi¨àgñ™Øû*√◊Ü5Û`Ú`tt+Ìª≥Ìer-í0æôD¶11⁄’WÕ ?œ Õ-ZzM“
-PD£<nﬁeﬁñ	KíB˙ºâ1Úõ»ı)Ù√nπíßt¥±4”ñ¬ÖBT¯ì∂^ìiVvƒ‚qºâÇéœ4¥.Øû
-±ÊÅ”`Î8ò¶:Ç/∞S"5¶úC≥ΩÍÙ%ÙÓUäâHSz˛:èb¿ã ‹ïTé\%Çﬂ&=3rl>„èÏ§öπ„ç÷%˙*`∂ÿ(Ô,≤øwVŸÂ0˙DiA≤ÜàÜM¯0¶ÈÚF˛útVÿyøì°+ZÁ…‚‚¬ "]€Öi2Èúßi'µ \%OG	]~Aœ
-ﬁ(œÅ)€∏Ωe…$∏ Ivqûe∏2W˜	ªSÌÇ1©¥‚KEÒ%Ω∞2?Áı FàB?ó(ÏºÎuW∫ﬁ≥Î^ç°Ò|Á∫3Ï≥lÑ…uß˜i\RDC5Îäµ|∏VryŒ£¸oµ¥µùw÷Zz‚lƒLÂÚt–S€EÉd % ¨)]ä‚ªb—Yd)GıñùÊ÷¶√≠∑Ä◊ZÒÑI3ßÑÈÂ3≥’”ÖAœËƒg6√LÜ°: Â(Ô,A«p„ha[˙:Ó«9ÍB'!NVïÌµù™ü0@ajË0ç/úAæGx‘÷ÒBRâÿß>7p`+€∏õ≥kblÛÇµœOπ]©Q3”e—∆≠À¥	üF4W+^I}ã9òSP6v“Y.œ¯ÇõæØÚ8!å–i{Ω(›„¿9ÊN$ùãdò -“∫≤ÄÍo,ãˇßª∑r«Ãe‰ã¶Cæ¥Ídq:ß†fw„÷úÓ‘ŸeÄB¢ŒMÁ±„d∫ ı,@}:Œ£°uﬁ--N>Ω˜úZ\7ÔQ`£ag…q~ùÜ”°8†ƒ— ¨°≈„…4∑ÛQíúb}DÇO¡˛rí≤¢lòHeS®c¨Z§∏ Fà“ç÷sXè‹Aƒ”øF/√xå~`'àú∑Ï^ïï•˘tËˆÃ.á6hqôÈ˜, ≤œ‚∑∑◊Øπˆ"n∏œúm4
-Ö˜^’∫=ó7oN_Ì[t√ª+ˆîür1ˆëzÌ=€‚Ò¯&`I«˛tÅó≠m‰hÎ_èﬂÏÔ∑û˝Ñ◊¿·!£ã.2¡ÿ◊ƒ”æñF†9äRäLAÆS˚I2¡6æ®Ñ#EY•†©Ï¢‘B<HQsœNÇ|
-Ák'¯∞ˆ)ylãµõk[øÌÓæﬁˇWhGè°O∏˝L˚∑(∫ﬁ4oh{O6µ3%ìkµ±Ì¯z∆Êﬁûæ‚;«)MëTQ—“üÙ_GhŸâ†ﬂ“±√ çÃÉ!a]U»Õ
-ƒJ›b@G! ‚Ò%&XA{∆5.2åÅì=ö}íÎl„vŸnﬁ}—Nò™Œ8[g˜Ÿ”π˜dZ9«¿-.Ã÷ïÒ)kr”Y’dFæ˜∫hÊîwF`!D6®∆}K÷IÏ<YU˘œ`8¨f>]r“	◊˛ n•}!aIºt
-Kn.ôRE^(%a˘VYoÀ¶K◊VÏ§:“Óg§õ÷B†
-^´FÉqS8›D¬@Zœ<iπG#R„£∆Ç_k¡@•Ñö∑¨#µîü∆Ø)ì˝SâÒJ˙0Ëº[[¸8xœ◊ˇAôÏı–O6 ±¸™≥¯«h:8ê˚òû?@á·8w∑-Ê‡jlï·¨⁄éoZó°i.J\$TˇïÙéÉPÉ#CÁJ‡ì0˘õ§ùû»ùŸ~!¡ò$)Û©#n‘ÃvEîπêGÌ2g†#&˛\E7òn∞ícòtó+Ω∫®‡¬0Áò“1ˇQˆ£Â&Äò1¶“Gõø∞˘’ÊòÖúZ±¨8Œñß%'ı⁄ÇÎ4ò8[±⁄π=ªÜJ¯ø\B≠ﬂﬂF]°ª34äñ2‰f‚wW´¯]œÄëU!—€ﬁO≈√]ı6R•¨~`⁄oü˛# I?íwúßskñìO Ã¿Ÿ-vâ∑É3˜!öß¯˘X9¨#ÅZﬂ=1∆≥©Éå„ﬁ∫dmîœ˛Û?˛∑ˇ±j= í˙  WÚ#Ã~>G.ó„Åˇ≥JéäûD¿
-LXO»rX„«m≈†ˆ]ıX™æZHíWpV˙–Ël¯÷÷"¶¸mÌ∆øLò$bõ&®ÆîKûJê˛*P´ÿ5'ŸQüZu∫˙NõB#äkSÌ~Ûÿë—H∆”≈ÂqË€’áÚâ€n¡Ê„P—€˛ªéJƒt¶⁄Â%Ç√≥…|‹ËF|´˙®QôûÜˇtªƒS +[C¬’«- /∏ŒÀÇº/=ˆ‚p*Î ıFâáÖ>óÌ@ªî›fﬁ/L¢ÔñxÛ%ˆÍ42d≥ûzÍŒÇP}Ø+µáUK0√(9[iÜíw˜m
-H1+Æ^UÌ‰C®ni«‡EhÏ#≤/FãÃ÷~bQ©ÛrH¯8dkçÁÊÓÙz∑AÚù˜ß|ˆ3:ÜvúdßﬁmEÚÓ=˘Ê]äBù•Ô2U≠˛ÑÛÿÜT&poxí∆£ Ω/©§|•´Á∏,—@Ñ8NÕ<Ô¥n\t[t¡†≤$‘Káè&≈<~x6’°–ü®≤≥±óó4e˙g„Ú5É2~w‡∑ËFá⁄i3NZsud}b‹”§ﬂjYn—ÏP5ˆo∑—$ô>?¢ø~±[·qsäòoäÅøs
-›Ωã"íº£Èºœc}I—çDÎÚƒ£·…sÕ˘á∑ÌL©1 l”1ÜZ∏:˚u∆?hì|Nq†ä‡*F¨§äh∏|f>FmmknµÎi°  Íí÷µ!‚πò3v,Ìú>#Áä>¯zVF˘®ï—tyk⁄iæ∆’Õ¥–Ç∏∫oç4?t~qP&Ú:fZ!«¡åä˜wK´ãÔõËﬁÎ∫˜«&›˚
-a¯IgM◊æO•hﬂ•b¨‘ ‚0å∆Õ‘Ó¡yñß–iÑŸF¯Ôugπá™s∞·4îŒ(Ì,=Üˇ‰¯ZJçò1o!)´—[w˙&}„◊òM]cÁÅÁí¬^,7a/JŸH¿1?64ëÙ∏˚ˆy≠ÉO—˘Igñ{ΩÆ©√E∆~Ÿ¢ËïW» ◊›OP\¬”("iœç1ñçQŸÃ˙ßlfùñ ÇnòOáqFŸ≥†è √Êr\x±âÂ^Ò#hm¸aö_YWÎ"Wd¿≥¢tçÈLÃµ É¿T*ºmØY°P0;0Ôm>V∑eí9oòà∞F¿≈Gí”P2≠IÓ.5ÊùFn€Ëuü\$È<;Äœ9ÀÛ,ù◊˙Næ]ΩùÑCÓ”¬´g æ«"T4	síê |ªòfÎx©(?cæ∞¥hÚÊF∂ÿu®ÏMÌßq»D2ú &\[ÏU∑ÿ˜LŒdx5"è<◊L´¶Hd`¡Í˚Õf1J¿«%l√…:D üÓ£¡äiIk]‹Üû7nïº¢]`~FÌ¶ZzÕ¨<jóRP÷ÚÜ[lo±fôãŸ¨K"∏ºÿlÈ_ì◊0•jºÆ{RÛ’Ω≈0ìπ€_&µ¨˙™å]6Zü U\π◊Äi”ã`‹≤™&¸àW∆Å&\lò\àZ¶µhg·≥Ÿ◊yozM§‰b©Œ‚ºÏrœ«ÀÏﬂπ}G¡Ÿ˛ì°5⁄F˙2C+˚[emmFRÑ#˘vv&›≥õùï)˘Bdk)ªO
-¸˝!πÏl,]ù”÷gó|Ò…˙‚¢P±uŸoA:6˘ÀQÏ≈ß˘äzÁâÂtn∏‰iÄ¡ÛŒ„ƒ|èÇqΩË?ìi∂•¶öQÕ™¿>S–Á%ƒ∫∂◊≈ØW!ÔoVtüi"÷HôJîE£7©ıŸ†åghá[ƒ~€€ˆiB]VgÕ˘ı‰Å?>M˚=,\Aºs=Ôª=4ø)ü6dØ^Öé·›0¡f#ÂÒó·\ lñÜE´mƒjEÕ/eäñˆueÅ„Æ–`t®-Ãú§9 7fÒ0∞π%í—9°Ä
-‡èB8XlP|PÙÃ‚}iÒjé°À;†(ßû"™ﬁ:Mäªﬁ&±P#)yÜÙ‹ø“LóåËjãè¥À#∆‡p¢2Vòı›·´ˆZg ÊqàX¶Œë– XïπÈâEczíbëùÜøŸïÕŸÎ≥Õn<æNÅ€oc˛‚9%ólÊ›‚{ÕnŸì°ÔÒ“b+äÂ©MM\÷ôwæØHHå´€y‹Ìıû¸ÏÕMåeñw◊ñkÖÏ<≈Â„lüG.úb≈`ä ñsh3ÕSzœ±gÏâ^ùGÑñô©X±ÈeŒa∫Èæ#˝"∑ˇ1µ,∏§jò(%c:-Ï< ë∞º˝É´2@|x?Õ‚1Ü¢Mß√Ho€€∞á´”.v“p-p+ãóO7Ä-^∫ßI8P∞fÃ W–L÷û´©+ƒF^7óñ„O–r‹Õ„ﬂ.¸ƒ^ªÀˆ”ÇvœhÏÖia*xåsõŸÔè∞≠·”›åOΩñ¯{îC‡ïRõdﬁ£Û/∏x?è˙÷K¿ÛÈ≈∆-«ÉÅ±Ikî*b¸?…9û\ÿ#ùKôÛ◊±±∫Œ^óÕÀ≤Õ@ﬂÀZMGpÓHàúñ.Àéﬁm9BËåÑí±˜+ì§åAQ,ùÉNç“¯íbÑK±√1dÀŒ•âhz'‘ƒàæÁ2éó0é:„¸§J#˘≈;[™+§Çá±üGïÑi</†5ÀÇﬁ¥õÃt2∆9CØäu∆S£≥ÚÙ≤™’N/±Q∏n*´Õê~˜HóªöÔ·È^1„xõ ≠CmìM◊dˇ>≈†’ö¢‹P!ypÂäW™∏◊Å˝\JF≥xõÅysõ
-{,>ÑdÕÜ|÷è˜∆∂¯∆Â+Ó.‚¥DƒH∂ûIπÂ1¢
-ÖñKÂƒwl=6 n›vá‘ÈÛ ~•íR¥ﬁÚIC¿÷˙‹{+ÿã$O|˝Uò«{-·›fû>µ$HÜàPVÄ6\Êú§S∏∞jÚ#Ö>°.Â¶≥‘]’ïï∫Ö@~°Á“ì–Xl$¿âs5˝.!¢Å#¶oë¥‘Ìé∆üﬂˆ∂=ãÌ¿≥œ6ª Ù9D…≤ŒQ<$REΩ£ÎBÆ%ÁÛ	i˙(O¥s]‹ÀÂr’¬GıEBA§ZøÃUz‰æø¢‚&k)™tU°\(Û§ö|ö°pÑÁ~*ÂÂõ¢ä|ÅµÓŒ\`„±.F•iëÅXx›?}é™ÑÁqz1åz⁄GèãìgÔÈõ”r¢⁄”œ¢ö„oo7∑ûoº˜y∂ﬂ3V’'
-±ßº·¯Ÿá?!Ö®OÈ≠L„‡?ñ®òπﬂo…˜AÓÄ¶”W“~"ü ìÔ◊~˚ïﬂ~bYΩ3£ö*á∂-n™S¿ﬂ˙√Ä◊Ë;ÔAÇ*ŒB∫‡”∫µˆÁŒ«0ÕjÓ¶$ﬂ }xx’3f˚úµπ‚kÓèßänÛ>®_åf‘eF:°çÕÎx2¿»&D54r·,ÔÁ∞=W©Um}3…–õ¬Fr)/
-e*ZÃ‹5åá–ÓX€‹wñ't?…ìU`æ/°Ôï	+˛@™Êú‰6¶hóÉlüN˚küÁ);ÚïÕ·LŒ~“Ä'ÛëZ„ME≠Ãìp#Õ{ÅÍ·ˆBHk≥ÖI¿ÑAä·wÚ»	∫ï≥üï≤U1«éWñz„ ò¿VEc†Ïu
-ç
-kÀ/¨àêq˛rˆÚËˆ	˛pŸSπh∆ùïµ{( ì“ÆÖ;πt∂ói0ä[yç	ñ7Z– sQ∂AÑá◊ˇùö›¶Òl¥6h"≤¸F´Tˆ1yMÈ*M
-é3ô≥dL≤n?I õQæ¸Ω˘Ôﬂ+d˘næ¸5Óﬂ˝˜ç•«?$”|2Õ7¢—y:¿˛Ÿ”æçU«’˙x3‚ÉGïª⁄Pïã!<2¢◊»TÇT˚òzEY±ÕU<û´·ï15ã≤¿ç*˚–É1NZΩƒÅ`ÎjöR>íˇÁˇ∫=ÚAóéà‰˘eºi[úªÕ4¢Üò…“‚Ê.§”ÿc&Ω˜◊7 ò1Óòã˘9•,§|n÷í=õåÁîI@\∆WdÿÂ<ë≈˛|~CÕodÔukôXzÓb≈UG˝ÌÎΩ"uYÒéFÅüãk{
-$û‡„ v^uò~F<l7,V≈>Xá°oëÌ	ÊJ»⁄ZZc•Ëat-sJ: )Tõÿ•™#l[ós*[É†2√}‹Õ÷ˆõõ=qáÖ∆à^ù=j6˛€8Ùtu4më˙‘Y5(Uèüû”„gFg{xNè¶#L=ÓOQ©Òk$Ï[ˇfV˛∂Cn{‡dkê·_LŸ~<æb/âÖF˘ 5‡ú<÷‹04)ã–´Ö]gX¡ˆsà¨*·ÖÀj»¸∆`cÂ-[&≠¯h0zd@miÎpœ¯N“Èˇ5éıqY{ù¶¯zÒœÆ°4äˆ√9-ÿ1d™<äÖP§ÔAs>ëkm˚f/ÙgÃ/Æ¯è¯Ã…\n{Å¢∑¢ãª;∫cqÒ2J.í0jCØÛ4yÙÑ*}À‚å∑ª^cˇT‹“r∑ë9ë,-ÙèÿA‡wC/ \W\{^¶ø6Hár+–ÿˆ⁄r1s†Â˜Ô∂ÑÌòº∫8~€ÀLÄá/tö©-,˙ZS˛°É.x›N6¡x:≥,úDAz1êvˇ>€ßNÒ9Í‹^ù8‰–˚ªÿ’ıÙ˙)‘W§Q &ˆáÏ`:\f<N¢TAk8˝†õx%x/z*~=Ú9∆çﬂËc>‘Ï∑§ùˇÓ6ÿıäVIÃK¯,J&
-oÛE®Ä±*ÒŸÚTE#xÕb7TÕL‰˜e'x}≠Up sÍ0¯„—dp=¥•§‡èGß!Î¥P˚–™â-&å‰≠ÀC◊¢††<kµz±ô…ü)ÿgg”WÙ}¨O]ÉÿÃ	î®Øﬂ¥@‰ﬁ≠°•7NçÙJº%ÁÚÛΩ"„Ωéö:z:æ∞1ÆW{ÓΩ:´∂Y«ò7ƒŸLŸ„*ÎV˘«f≥·ñ17À˝‡ö"Ñ¥Q§k Ó-¢Ï¢ŒU˜Üêhv%—8àá]U*IQãj0Ø%éÇIVg0§|∑÷êB{· !Œß°Î∞Í∏Ó _◊¶˙ç:'AöE/Ü	¿£F3Ê‘;•Y∆÷8bÙüaoíqˇ€€úqˇ°7«˜∫ﬁÃ¬¥‹1Õπ¸f&?±S`*Æÿïº∏&Éë˚z£ê;€ü˝ fÄX†@J&é¶Dà(v§7¡u`∏Ω{ñ√u≈üπôº6˛dﬁ≈H›Î*¿ìªM  hà÷GˇﬁoçôØêAú'Dœv÷z÷È∞£xäïÎt¸π“∏«wövûKô®p°v≈v◊‰â9ú99Ã¡S:tœæìÚ˝®0Ñä<Nr¢›ä	Û  vW≤∑?ó®|¥˜¸¡è…$æ¯/|Dp≈öèzxæ'4W¬r’ÿ>éˇ◊PGiú§@§õﬁ9U¶Ïú∆n˛»À«"æØØÄ%i={˙òús‹Ô«3$ø§ÿA≠g¸ø¨}Ö3%ı‹OÆ[œ‡÷>Fk£¡ü;Y¶ƒv¢Ï*ç'ñ+Ëó»ï˘/GÒ-e†¨WÕ}∂pÈûDWQ˙! NñÓœÆQ9õ‘ÚYŸ≤I^˙ΩÊıN%ÆlUÇ…LZ2îF¶˝µ‡¬≠›∑K8DBπc´∫Jœ∑Å(9
-¶e⁄”¬…ï5ØäG+9¥QFÜsiè <.ç¥¨ˆz6ŒNDÙ∂¡=öX∂BÔ2 oÔ›ÍŸƒˆ4ª¡KﬁÃ‡Ì.ﬂΩüÎ£q?∞gl—›ña:g>^ﬂ|à&„8˝^[∫…≤ÌBR∏ìn‘ºÍD7íb°∏âÉ—=˛3MM–‘æ∞w‚*ÜUüó>~∂¯aî√Õ[Û+∂¸≠T˙∑k˝ÏÂC¶ﬁYE¥˝—–Ô6Äˇ+ZÍ&.ÌÂCŒÌu≈*“ÙÁVúçäú_Â„ı“Ó–≈?„Ü–Gq„›Ô£s@@´Üù˚.‹sø≠>^˜1BøÓ]ùDÌﬁ7Ω•Ój-πµBK=?±V°·R ª*TÄﬂ1Him8^d¸Ïöá Tv)‡Ä|«í>Ø++®Ô9âœß∂ÏÈZêÍ¸ÉÚ©ÅµF–÷\+X…A÷πü…Äio˝¿k@¢vfıj≤5π+íœL…€∏U|IÎ≥˛IFal¬-Œ”f4x≤èÍ'§îq‘P_¢>nhl°6u‡ãÜ &ı”√ip2
-$–†Ï#ëGVÓ2NGMögÏÏ{â∂`⁄(≤0Ã>Ò∏ÀˆezÉÕ3üÕú˙∏ï≥ïê¨›}∑™~˘ô†öLêC—:À∫!àH7«ËsèéBıu]ÙFâ Ôï	~’x≥ŒíSéü≈“÷Û‚à◊.Ü~CªÃ≠gµ∏wµÀl±∫Æüá∆ßÏ<• VùTá—™nêÀïÿ[ÌªÜ!hh…A∫è3V˝≥éëﬂIÜ√ =Å√£ÿ`4wfµÁ3“RN°∆S‰ZÍ‡D”hº>ƒBÓ…-¢>BOÎìmŸ&@@Âñ„cfM˘ñ±Ÿ!≠®ô…•	N˚,î∆LP`íŒ$¿,îÓ OµÂS	u5ÁÆ¬∑ﬂ[œm·›$ôßSwÊ‰⁄¯)»»…úΩ”∑sµ÷∑Û]o≈%+4uÔ4¸≥÷ÕÙ8’Zä7ú±$.Ô,t∆*ﬂ‹œëÛÄÓ{Î9ÌrElm·Spö2ûê⁄/£ºD]FâŒñ‚L∆=¶“||≤»I\^¬†‘(÷ ›´òiT!Z#∆ãû/óEv9◊v*∫30Ÿ£ŸªWôŸ»RLÉìÀw√FabóÒ8_ƒ∞Q2<5F%Wf!Ú÷¢/ j˛WDa0s⁄wd›~±ÅMN©É`¯<…rG3âQ¬l(És3å£Ù’4" 	£ÛúG*ó™€bSSûCΩãgõ_®øz{∫u¯≤Eùå8‘éuïÌ•Q8Ωà⁄Ìl:ögºQ¯ì˝Öµ”n0¢,ë‰◊>ˇÁ„Uù'¿’àùCˆ,»_‘¢µg9¥s+MË”±:õÆEHﬂL‚88,+/hzﬂ˙Â˘≈úÂv<ƒ¿/{Y6%M∂—°æé≤+±íÿ#5b.•∫ä¡QaÿÓ(˛ËÍ¬Ñ u>"Q¡¡—∆sÓÔl„¢âÒ]êM‡£B_ú¨nÉåyhª+xÖ; ’/íÙHµW¡úG¥qêÖÑ
-åÌï@n[w!è"‘}E+ˇ4†Ä˛ˇ,
-Sl∑Î(}TÆ=ÁG_ÿÄ^GƒäÊÍÀóm;ª.“·6õ)èÓªø™0ƒú∂ypûa≤Uÿ≥w¢ª[á ’T≥≠yFwûB\	˛¿N„ºé°Åuˆ√ggZzv7Ø∑tù§Wxü•¥µ5ú¶Ï5^-B{<JdŸ‰∫ê≈˘Mu´¬fNmTX—â∏LE{œÉ!ﬁUßj,,O£√`í ◊“ÓJi{ü`Ø‰—ˆãxù¢é™≤Ÿ0πBóEu1ã735î]E¶Í¶¸Ñ◊p⁄∑.Ç4∞g\›‡¢∏EcßA? z¸Él.â«5{|MÅhKˆZºÇﬁŒï—ù¶\Ry;©n3ŒïÊéc§˝cvºµ≠Ø⁄…Û¸fÉ(r/ﬁ˚˚¶A¯√mîiVørÜﬁ’“ß≥.ÊÜaºË[e⁄ß@†|_ìÛ“.¿N~`∆0è≥›p‹HÙc{É⁄°”Îç,zÜëÖ?∑‘=Æ[q¢Kûâ∫“öQ'≥A¨˘ç Rè„≠ˇÌÈQgp(OŸ≤≠ÏR˜N nEíOGAÅò$Œ@Înz_qw·
-Ü‰Çáä<ßÜœ÷íyˇ√Ö[#Óß¢Vud é*K“ŒPgÓ÷Ty÷¯osÆ—√∫£8£ˆ7ÛNëg¡îı>[´U{é°ëΩjI…‰∆a ◊«cÙJ´¥è’¡ ëÜù xÖ(|XqÏ ®ºkVníXßŸr·ﬁœqæπ-9.4\b\Ñ¢ﬁ»òB¥'N>èFWƒ®XRîE|ã®)l)b3⁄c)€:C“Ä∆n<ﬂãò£"⁄ B]®9ŸØŸ2ÿ‚Ω°[6ﬂ5ÑÀ†AøªÏd∆@%⁄∂¥»c≥([ ¯¸3–êNhq“ÄeóGæ4@ÍÑ˙˘d\8¡Pç2ƒzYOe˛≥¸©â7–ΩÈº;[yıU·-0Ms|å¥ÖE>Ì~´˙ƒ^’5G,ôÜ+*Ô2?zÓJ”¨êòxè–tÍ(JßÁ¡¿2˚≠ﬁî¶!@]afàKH1H-r‹≤Á◊ıı:&éÎbøL–qÂsÎ“•˘|b\â–®ë80NJ•»TËÕUEP7-Í
-õ
-#ÆF‡≤‚∏=Ä{v°™≥∫÷˜1z¥fqç¡ïk~n¸©jê!é&S@µï˜ˆ[ØO˜^∞∂µYB}˝è∞÷Q4Æ2xå[ﬁ€‚*¿ ‡Ùïõd‰f.e7ü†ˇçÓM3ä√7á∂„0WÄbÓπÓx+.Pº©∏ÑÚ;Ω*ìï:´DÉ-‡¥Î4È7T}≤⁄ı‡R±ı•˜ÜA™ö(Ö¶ôÒ—*M™Í∞WEU”¿™†œÓZÜä^ù	ñï©h›õ£ƒâ*2ÙwSe©≈Éø7¡Ì≠◊√¯äM«˘Ù
-”––ø‚˛L®ãä«<ØÉ^Æ_ª¬û√X-~/å#º‡Q‘fá∏—¨ïâ¡'±eºÛØTô£˘é∏âS§Ô§∏´Fßƒ É^â©•È_AK¿Ù€Õ–rÚ}{¸r˜ÙOà´ÜSâ‰b§*-QΩ¬∫Ÿí¶IÑ≈H¥ÈëÁÚtZ5ú
-£WòÄGu˛3≤π™Õ-ı’&á`ÕÍ:ÉFd¿«e,¨5QÛG‰π E:È¡§ÚºR!Vçå4%>EÕ"E˝√!_æ©{»ŒLY4äK›ÏÃ$Ô,˙%Ò¯2yµû˝ñ§W$B…´ä◊dqï'©Å˛   ˇˇÏΩÎn„H∂.¯*Q:UŸró%KÚ%ùÆ¥r⁄ôÈÚ∂≤k7ÖJJ¢-ñ)QMRÈÙ6Ï˘=Áú>{–É˝cŒœ˘;œ”/0˝≥VDêíq£,ª≤´äçÆ¥$2ó+÷ı[Â7Ï¸˝ﬂ˛√xì±h:⁄a+º•k≠ƒç”≠àåFıcìÍë—^<™◊∞ ÷ JçF0X?ôI#jÖ"+÷œ—
--ŒtäUZöW~mI´ßïÛÆìk∫ó€ ©“‘$π]˚	Œöârè°KŸﬂÆMÇ`ÍNÄ`'ºŒÖC@≥üÖı˜&‘–®ñ!3û÷b÷ñ"ÀæJ≈-˛π¨ÅÚ:’Xõâ1Uû[_:v¶gû.í\`÷—(Ù&◊Ω>ƒ∂ÂÓÏ⁄¡ú¡ÇjJ7{πˇ÷a‚¯‘Ù ;‘Œ„˚õ;r≈YÄ>[Â“Ö3Ü‹9ó'aâUá–F++ØGdÄ8¶∆eUO⁄?˛ˆ◊ˇ¢aK(!Ï∫>t{Ë9§N+ä^z#w˘{•¥e%gôÏ“rAÜ>%è$÷<'}rûÍUS]q??#£o˚E…{ùm∑R§∆≈¥⁄∆öT’© Wù[Úä“Íı≥~£ÿ@<˙‰]1b”GòÑ&gå˚çÕ\,àò
-√b„ãa'IÏ√Mà˚R$ πQ¸Å∏/ (ªB¢°‘s˙u˙$"’;ì[m}ßªè  é3í|ho¶≈≈åıô/≥Ô>c1¬Ùúëö6¶ÖëP%âéF∫qD‹⁄/ìêÅ(»è(ﬁ¶ßÛMô˘°lvê†o`w≤3°éÿr≤áå‰ó,»ª◊›%Ì-≤∑ﬂÎaÂ¡qÅºÔ§SöƒoñOi8àU
-iKWÓÜMF	t»ˆ*t£®TwQ◊XâPv∑∆Y‚NT’wé §¥/ëì7^‰]ì≥FG·æ–9Ô•ÅÃ√¬wÜΩCe WÁ˛E∑™√´#ò2ƒ† ˘é{E≠GÇÇ
--)ˇ5…’SsıZri#+±Q6ﬁ9)ÚáK1*√Lí…~ìnámE∫ù 
-¬¨ﬁÔß√¨⁄T“ñ$√fY|ó≤M≈◊++§;ãÉF¥Ô]]Á$ó$ù“–u# o,‡πå_Oÿëñü]òOïõò`W$q˙π‰¡}§√êÃ—|,¿\ó4+ôDÕ›5^ €◊ j2ÙˆÑ\Rf√ÄFhe8Shß∞ôµÑ™ä?–»i>°ölUÂÚ i÷∂Õ£kFb¯íP	™πÎÑXkí≈…ƒEgÄÇF ê$ØîG´ÿ∞xy6®¿ØWE≥ñK3˝∞ı©_Ù∫'{ª^2ypµ‡˛˝£˝ãÓyspqp®y™¢j¬éLnUg˘ﬁeiV>WÜ√ÛâŒ=D#º¶âúråF6xÂi'% ]›Åª˙äH∏L`√eÓâ¯ec xóòx>’„ŒLTZü™FR/eÅ_≥uïÚÎ©∆[˘†3
-Ø¢.–h3©üÜÚC„tıû°uM5¢
-0\L⁄[Nœ\RV¢äˇeÁÍDUÇøüìò·ˆ§ïuåΩ‡∑YÙ£Ïv’∑lÂfÕöM_©ﬁ$ûß-ÅñJqn≤¬ˆ…π1	b§†‡∆R?Ê\PwÍÌi`,¬®ÑúÎ{ºN™∏ªO¨Û0Õ˛W{≤*ˆI2ﬁ[7∏Dá”‰ä‘aÜ‰!zHÀõ•ú7)ªß≤F¬)¡‡ﬁkJ∆k…v—Æi(œáóo¨§¡iXn°∂â“Û()≥'ﬂµJe—¶¨]ùRÈ4CèËãêÇ	ƒ•X`/s’{xÈÈ§XjØ\˘WhHµn∑ìÅH‘4(_A¬ö∏]€TÑ
-Öb¨¬˙ı09QÏN∑kŒD*°„ïVO º“J[ŒâYt¿7öm¶A˝P‡÷ãS´Èî¶∂úPL¯U!{¬«8Óêsœâ4ùÛÊÚ&JÏÁ˘zˆù‰–óv[UÃÎâ…>©†SïÓŸ"˛vË^±Òµ∞xU˜ oóÓïGàî·JLjæºh"oΩîΩ "*.Lq±+@B?jÂ¿dπ4QÄˇ˜ø*µ2òBXfìJ°«>ßÖ°“2PWLfv	Ú$SgËêÎTÒ&^3≈®'7Œœ^ü=â¶C,C@ÔPéJUÚK5\iMµƒ»-$œh-»≤ïÏQ]ùzˇì)>…∞Ñ©ÔÒZHÛË; 
-<x)éõ¥z’{Ëí⁄ø
-¿√π<œR[≥‘,X|â√S‚X<ãW≤Ia¢Ñ≤Ùeâ2TÓ¬À¶zRê[
-`VÁÿ‘ıWπ∂õ[›4=*SQ÷HbøUL#ˇÂy2ﬁ#ÓBz"ˆC´Ç=)Îë⁄ÿ^€∞óﬂ&©¢3±€ﬂÿ›…ﬁ&ı;∆w4ò≤¶n/pãÎ§ªu<ÛÉrX!Íƒ-¸õëzz@MWÈ<<"Ú
-nrï˛@∆2t/ùôœ ∑’.,IàBÔA∑4Ñ˝
-kú8'uÆÁ*€XZRÖcdM)6=∫Ö· Ô¥ËG3.N/bÑ≥®/5£©Ô≈ıZØ∂Ù°ı£.›Ω6≈∂áìIègø»èjÉX‘©Ú%ÿædÊîc ø)Ó‰NÜ‰MºÖ%º{ô1ôﬂçóô+•=¯'·I˚¨øã„HÈ‰◊&¸ŸÛ∆n˝q-•ø.•ì‰
-Ö<·/…ˇ≥ë‰¶çj¥*ÄHV˚œQµÔ±ë"U<ﬁºzÓ%m)√⁄)v%âT˚eÀÎrqvÚˆkﬂÉ^(xπARI≠%\”m{nyìÎ0ò ÂBØ]rÊQ tï˛Q9ò˙AŒaùÒZqKcå'0«≥√Ç^'A3]ƒ\F•ÅZsNc4;Î#q∑•(Ê(ÂØR(n∆[vïüUﬁ¨>‹ıg°1/©3êaæ„^ìZOÙÂgíb
-'¡VAÑ÷<¶+Ñ•…˜_`(§à"»“&;ÏúS#	vz»©IRä
-ÿjµW`ü¨tZù’£*π⁄wıÂ1D5`√ô;ˆ|OU3Ú◊¬`*ŒQë?ÿ<QCÎ?ß†}ˇùK,ñKúıödÔG£â7Xü–
-%’˚Gd'ö©$≤°s	¥EÍÁ”y¸Æ, Ûé“÷-UR+°ñªt—{4◊EUI8ıñTÁ"=íOËÒ6j9&wﬁmõ€¥ä ‹c˜ \ö>|pßÍ^˜MØ{NªÁÓ˛–=ë®µ*3ﬁÜtT⁄„*ÍÊùMÀ"§Q√Ö≤†aœOu∞Ó‰Í*àù,ÑfœÀcıª\!¥¶ÔNÆ‚—Ω6«KQ≤@e¬«çµ§àFßC–bâç)∆MóJk(“†d}&;§•â‹Œ?B]|ë…≈ó/ZRº®Á/ídWµ‚b¢]Ñû˙Ù‘y Ìj¶™£ÿx+ﬁXÆ¸gWpéúOûS(∆%òJ¿eÆ‹®9õD¿1¢≈LöéÇ8h¥◊W◊÷;õœ◊⁄œüØ7÷W_ºXs6^∑ˇ
-)eõöH‚gó^ºt2}ˆóÌÕ÷≥õmL‘©P{Û¶±IF!“.Ë„È— iöíì?ﬁ÷à§xô™øŒWπ]gœ™Ì$µ≠çÂ’Â!}≤™¶4˚Ï*ŒnëÛ)π´GâvÄE££WÕÂ˙G§äbiÈ%Z$!CπºÊXÓ~+UôFˆ¯µÂÁ?‰/Pe~Í4G˛®EY{º*¨«3÷«¡'òp %πJ—:t6œS‹üc±Å:ñ5V/<€Œù≤n@YL.Î2Ù“NFYΩD√kå˜Jñ„ïÉ„-,/¡kê„%_5ûôôàtB—p%^å]ﬁc:ZmyqvqD«3o2tFb6AómFÅ›ü]f∂Û≤Ü¡Õ9Ç´πóqÏﬁ»)Lu ˘}ÛÌ9¶Øúª∞:Ó>/zcNﬁîÓñe&ì*DTc4§FˇIìÉ323Ø,_µC◊ü9!Æ⁄¯._∑,Y/Ñ3ø≥¯•22nÕ‘jüU¯Öµ–vEøŸ-àtEƒ¿˝œ%Ä2QSäŸÖCòBwhWCç]èéF◊'∫¿-®†ﬁ≈≥+'‚õ3A„Pá‘´KÅ/"µ8œÀG©¢≤]4vò∑ïíL(&oc7l≥hÎœ5÷uÏj Sı¨ÁÜSœ˜F[
-ìé*°°*òÑ)Ù5~Oe-.D©R˘P∑åO-iOÎXo‚» $Y[%Á¿.∆õû·Ç%NÙ3DGÖ#∑Ÿlöc¥ªô:Ü]àbg†S<⁄ø“≈ñ∂bÅíCc[ßÊ»uí1v›&z]‹™o•øWÇ7∫ÄÑ] êR*ŒÀ…≤C|ôîˆç∆ñha›ˇ™¬>îT0ÍT©_T&•˙Óa<Oπ≤∫sæ™®|¿†ô09ÔRÆªÎÑ3i¯À|™û∆oDVCu$G2ˆƒ0àCWÃ∂2∂‰Èå}∞≥…?BäèY˝åf?K√_ŸÙGO0PÍ8“º±oE*Ìïl+œµjôŸ‰¥à8´*-Í%°%o|%1≤?k˜ULw‹8g÷)ÏåpÙæG4ƒ)⁄ó„2-a‡LΩÿÒAÅ¢/£i$V/3™Hˆ7)Ã⁄jËs≠~í\‹vhk4éEè~n9ﬁ9‰ÎÙQ}úFryp»#Nv#ƒ…b‹´Ò5„56¶ßmvÂ<uâÌ‰W[ÕÁ}ø¬ZU2]$lIeú*>Ãö)ÁÃ4
-≥Õ·ÒL≠#§j≤m∆ìkfc‡©ΩÔª¯ÁÓ-(SäYBP¿wΩ„£§?˛ê≈Àñ^1ÕÃ∆$ ‰.}qb„ §dïÖk9q∂√{ñ,LØïÃ™µ=ïÌüfÏ?{[ôôù%◊”X∏7(‡RÓ'⁄±`¶7∆,-kÏyCÁ:oé¿'Íóˆù+%¶É…Tß à¨¨:Ô+}ï◊7<ÛŒÈΩ?'á˚Áﬂw…3r—Îˆﬁ_ÿ¡ö'∏ƒ¿Êjtr3˙*= T∏ÊP˛qqÉêãŸòn(õlxº†ÅG0Ω∫0ôQoCj˝∞⁄¡ç´ë+$D„ÍzWà1ZÚ<º∫˛,LÊ´TT©¢ñ%˝í≠_¯7"Á¡çt)dSZ™_3H0w‘Ü+BcÀ∂H≠çpŒÿø!CfÌF[‰C-˚˛GrØŒﬁ…⁄Í4…°á’,*µuÏNf†±Œr7‘ˆº8ùk€ˆWõ4•bÖúùö«–„≥SÌQ„∂}Ü9Œ4+0h˘í5úê≈ª8%Ÿ/ñÌ≠7…;8f©rSËtò—∫CgÑfdÜÂ+6ö‰ıe’úCØÒgˆvßeÀœõ‰≠CΩö≈∂°πÙ'À∆6õ‰µDÓ∞–ˇR” è\˝á≥íˆgÉ§∆‰3/zÕå? •·ìÕ‰ùYÌ.9îªF§	›xN`ÅÄAÿ –—º*ıíÚÆ¢7™∫1^È‹Âüú^Ê·1+’9Ø-°VJ)F™ áh”ÎVyÃ‡#“ñìA’…ä’P1«≠Hﬁµô∑å„¥˙áM⁄çÒgfsB7ç¸åÓaÌ˛˛ÔeeØi‘ mìaˇ÷jeäIFU÷Œ)€I~ƒÊ≤"oÇp¨8GÁ˜Q4jWÙP~X•ÎónC%}ﬂÇ —∂Ïkcëﬁ˜·à·ÛGEûC<HΩGπH‰!å”t;•ï_%Û<9DﬁÄ…ÕÀüzåx~√VcnC>çhÜó˚|ì9”&—[]ºº·v™T4ÿi’`èÈô§>⁄ü5dm/Ê\/mË&Úºg7-øì¸Ö—Â¶Ω^Õ–mo„∆,µöI≈;Èü∞uúë3ÈÙ›“\çJƒ„ùÚw<ÛlÆ7$¢ˆˇÉ %©lı.» ”˘∫^Ωw=˝jŒi.àÔ;≈oH˝8Ë√ƒåÊ˘∫.JÛ;¬áL"üoFJr˝NÈ+VkkŒÊaG¸îNÃn˜¢˜@BÃtÜùÚw§Á\y£9ßá) ;ÙRœff‹wnq3ÕŸqQ!Ÿ°ü†IX4|=^I~ú´uÆ¢Ï∞1'úw˚¬OA#∞¢qS‹ÉN‚·øˇ”éØ8SË¥∫¿ò]vDgÚ–ì“Ïí±Iü≈+w†NÇÿç¥q˝S“‰∆Ω‡m¸dË]{∞ó©≠b»y‡2˙æ¡5ÛhG¨mÃ^∫≈Zêa-ÈVÈ1Â˝ÅÑÀDVv
-Ù{ïE%,•Œ÷DÁ ‡uÒêB®C∆Í•"AI˝9∫7b@ˇW‚8ó∏˘A˜êÊß’ú´
-Dr+dÇ)√+õZÓ¿2$ék4Mºhø¥…%°yﬁ:hÄµπR∂%€îÔ–y|UE’Mÿƒiîo∑1t¬kIíA©òRf≠ô#æÀ˚†ÀxâbÛåúª◊ŒòWqúêâ(Y¿\—_1ªiÆ@⁄ÏWDNg1n…1Z†ÆéÔR˚9pñŸ|wA_˘ÑUÈt≥^5ù3ÌZ›|xgë!ƒ…íH ˝ìﬂÏ¢øTO+â∂¡È·÷5∞œ°Cç¥∑∞¬ÿæUàØàÌ”Za¢CP"`›\¥¿§%Ö¸å≤√…√ C!µÔqÂî]Íì–ß˛¯O√w/Åm–RŸÀ6…U=∫í5¬ ¨∏G	öeY§DVåÉ2€2aÜÒ∏∫'œ˙–´ÔËHÈß†≈n—ØgëöÏöï„ÑÃpèZ$≤q‹h5Õ&[∆jŸ0ll1Û$·dë;ˆäÀÅ9Fh∂Zzò>∞èÛÖ:T…Ÿ)Ñ9¥;E«\q#K∫	ΩPOcZÂÇÒÂîﬂ≈∏¯∞lOìsc¸“.ÆaãºÎuèª'§ª{±rq@ŒŒOˇºhÿ¿ã0ÎπLf_Y!ohﬁq‚ÿù±¸.àØÅàDSw‡]z«˜oÅ"Cèº(·˙πfò‘ÕÈ¶-y
-‡Y”Ô‡ã ºMr-
-ìTwh#‹QÓ9/UC‚ë…$Ö'0tº9 ˝≥ÔAÊÜ3≠È@EC*∂EíˆÅy–8gï:\:˜ÏÑÙ=ﬂI⁄„æóﬁºMä— Õf3}mQ4áﬂXØèù8Ù>ÔßÍÚ	Ü)”)˛*m±c∑^Ô”Ø˚òÙÇS>∆?@ÆÔ” [z„ÜØ<ô˘Âäú†Ä$˙£l”zôé=7**a—Â_çº·–ù∞ÅÛ¡eÃ™ÅÏç˜·@ñLıŒı1dØêfö‘√2∆@8ÿ6˘‰π7í!ä	™?–ß0=ïı#÷ß-–ƒß>˜ÀKdç…WR]ßoz¢ ]z·∏˛ÒœjûÄˇÇ⁄z5r¶†§Å_µØÔ“∂Ôk,€îˆ˝:+ƒ≥ÜΩâ˜Í„í,#ìÕd$WØOAxcπSG©(Oßä≤îCÜ–ü}K°À$ "ºÒùdÖ~Ä}ÄñìÊÖI¸Qﬁb/p¢¯ÿç"‡(ıè‚ƒê°«ÊM6?Â≠]åÇ⁄b=gÆ‚çp≥ò≥·‹CóéπKÀ§”jµJÁèû˚2mRºv6›XXÛ¥MkT¶_Iàí˝Ê3^M∂Â¸;]H8§Ñ»ÑyåÄ»viÏ•f{¶7„!’=:™…Î‡ÖTZÃ≤f4„í/N∏0 :µÂ}•hlè«—„ÀáÙQıãÒ^˘õˇ"[
-Vw4œpõ@ö„zâ`Ñ˛Ûj•í¸≈4iØ
-ÔJ9Ê_§Ç…£ÁÅ?œ£Lúû„A*‚jû+NèJ…¯P∂“…6m˘GÔ%ß¬k«ÃPL%Ìµ∆–π%t—iÒm*/u?∏¿L˜?\üpéˇz‰Æ}ÿXjÒÇó`ÿŒ¿∫À‰êVW»˜O¡ûk+C˜ñÙ¸ù¿òË+€ÖñÔ%˝ço`Ñ†^D«á…¡ı|q+ûdÏãŸxã∞
-rˇ·Gy
-≤Œ]ıi~l}ˇºÑÜø˝∂‹}÷ï°8]πïH`òé±4GÙ€%Ú-Òªä≠ :y’√∑åx’›7Úú…˚∫Œ€.Ω97ÀM8ôFıt¶óìFó”ô
-)¬Á›óH¯Nà`»óá0ÿßX~fLÈ≠lÙpbÊ∫cnÚ.›ìheHäø∑W≥>Í‰+&.ëøÃ<P‡…fÅ_ÆÆ‡Î`õÍ7∫îÚVèﬁün6*Øc›Â:»‚[$ëZñã´9·‹œ–‹¬Y5«Âd(ëªCEt=œ8Ëóº√¸ÈÖ?PAxî§ï0;n¯Ää≤¯wE+-rä¸êd“^˘.Œ™Ÿ—˝ŒzaM\"ß4ﬂøp√Oﬁ¿m]ÿ—Ów∆‘kôVX[.LÆ
-*®$∑%·øæK&Ëû‘øæKm)ëÂdbõŒ®ÿıu∆ÿv]ÖáqÛü5πõ≠∏©µπ’jin:ù≈˛\uó9sûÑgÌ≤tã“™jVƒÀK2]ıí»Ê?µ)lY∫»¯]Ï¯*>Ç%{àÌÂ-æëUw∞6ì	W›Ö¢ªãCbE¯ªÔ\¡ÑQß[íW/]ú ≠Ùòêﬁ¿èÊ‰ëëãôd-÷Ü\—≈Å˜Ωf!ºPZ·ô z–
-sÏRı,cL»‚AH™^¿xê˝ßÇBBoô|ÑK•ÅIp#ØÖ¬(o¯'œÅÆÏˇÀÎ˝£üﬁûÏ˝Ù˙›˛Î√£ÉãûÙÌ¸©n,ºΩPÑ¶¸òlœ≥É©ŸìÌaRoì◊.NÏ¡6|zKÂ}]‹’fwnW¢–ûÌΩÅÖÙ(v˚˛ÁiÇæ:õh†äÜ|3
-vE•¿«∑â<f!±C¡Î~†Ê∏ì€UÇ©;©◊0„ßæÔLÆÀ0y‘˜/<+;	(ª^{Î`Qª±;ÓœÆÚ3t‹ı2pc,≥˜¶IéÉåœ˚WoÇ∏”`:õí~‹ 'h  ˙‰A%,>Òÿ« ñfÒ±l¥˛jÔÙuÔœg˚ÙNâQ[ıµÎ•ûMäm∂≥«∞≥Âqo†UCΩπ¬ì5≈∑Ú_@Å	Ü∑†|Pü…•3ˆ¸€-Úê(?π1ê>9qgÓñI7ÙôDŒ√KBÔÚ;,Ç=Ñ≠∑EA„;B˝Ù[‰?µ›Œã’˛w
-¿ò&éd’;Êóp|Ô
-ÿÛ_|bixÂM˝ é∆;kÿp‚^Næú~&Q‡É†˜üZóÌÁ'ÌIzKªÉœÈ;0Í@ÿ˚∂PKb>#Ô_›d<ÙãÒ[d≥∑–”»îÙ∑2èòÈ]S·U0$“¬ˇÂ^…zúL·∆⁄ÛµMıéÅÏ4Ê¸å©Ô¿ía¢˙wY·uF≠[<"üÉeî'8)ÔGª4tÙ°¡"8ÉÎ+Í<Ö˛]n^:óÅX˜˘BÖ¥t:ÃYˆ‹ë≠ö€q7/[™—≈à%ªÒÜÒûkµæI[Ü˘Òùi˝L˛ wûéÜ1¶…7äçñIåS(È‚†?\w€¬ 7‡7:ëj—Î¨n[N'≠ë,Ìe˚r˝Ú≈b®ãG{çË…tóm¿ççı’5È*ÍBÓ)¥≥πæ6lπs¥9◊ m
-r◊ZŒÂ9˛‘⁄yÒ¢›o˜´¥s1e6"Q¨Q¢®∏qJ{D’s†Ë{èü\éì6ÁVQ˜k~Î-aø1J∏bK±π^Æ(éÅó+ÚìË%û˙–õÌ„q îÊŒŒ˘˛a˜,ºœ˚a·≈∞·ŒYèº=:›ÌëÉìΩ˜ΩÛÚˆ¸Ù˝ÈÌûúùæ=P‰pY‘Ô⁄Æ•Ltûr]¯¡ñ‚4·Ù=n`fSΩ◊Gï‚oGßá›ãYs~ (Jo®µ4j∫∂Ê≠2D«≥~p∫∑O{êÿ™,˙˝˝˚„£Óª¥êÅ0Ä\?	–∞knÆw⁄ÉﬂÎˆ∫	©`ãeáK⁄.HÍŒ<3¢˛Åû@ä÷bï»∆~5q≈p"–Ì∑]„˚µU<P8É®ÌúúÇ07“6∂s“=Ó¶”næ˝˚Ó.L™≈çp”€∑›#ÛçÔ∫Á∆ªí1Ká…P&÷∆˜›cr‹Ωx¯fŒﬁ¡ÿ÷Œ—˛ÒÓ˚sÛ‰Ó˜ˆœ·m˙Åﬂ$ÖO)IÒe¨b‹xi∂è¿ê¸N„Cwêe¶ó’†Ïıö}Ä?µS¯5ÊçìoI5Âf„-ÌºÏ√9e &˚;6dOüsCQf≤Ík`»ΩóÏ’ˆO›&}ñöÙíñól⁄‘ÕjrÏq…ÍÎªzÊ8dU/ò1:Ôº«’(ﬁ˘ÆªwpNÔÃüpÍüf´0èñmûŒ‚≈6ö≥∏¡ñ)˜-©ëÔù1MIØD‘Pg◊[5 ‰„RÛÁ¿õ‘ˇ'|–n¸bÍL∂kÌVM37*ã¿ã5gµø	Só‚©ùFÕPÑÔ$æêÃ&ÒÏöªÀ\•i>`T…¯J	?©éQzdäÖFtL˜õ®®≥‚ß;{^£«Pﬂe6ÅºmTj;]Ãı'ß0uNÚ¢„œ/)Œ—˝»çg?œºçÄgÏ&˘ÜãïÎ¢AËMyââÕr‚z'ãi}âö"Ëè‘RY_˙çÆ≤˜™⁄áÉHJl†¸HÃÇãç“föåuz±[Ïí%ßÙ±fvc^ä6d¸Kïzd~˚nøª∑∫€õSrº⁄€Î"ûòº›òBõD„-[!
-∂¶ÅZ(6úó≤ó∞Zxäh—ŸÃ#Z§πi	ãà4n˝BäBà÷ä∆*MOXMëN⁄ÍÏÄRΩÓµMe
-›>±±ÀâçbuŸG'ÕÀVtPU@íäÑq%πﬁ%ùàiR≈èâCÿ†–_5,ò‘DÆËúCZ9yÙowú÷“9+‡€»QÜ’y/èùÈ0o^n§ÖK]CŒp\;©W@v£7êÿÌÂ&QeËf¯Hv{ƒ\uN[rÙi(úXó÷s&§Cé=ƒPjnÍPJ,K"J(lÉ]I>Æ”"Ã˜he≈ô4}g]•°EN?VwZçC¨K}ñÆh
-&¸õ˛7|ô#å√ÔÀ8‹t˚h≤â,Ç∞ª‹·ôsã	~lÌ*1Áf3`‹|ù]™.zteù¢¯≤ÊúÏ\ÑûÕ˝Œ-≥£—l∑˙'≤ê>1˙≠ÅmÄ¥≥≤B∫(ÊcxŸös´i
-]∫tf0æ©≠àm M ô28≥Æ‘éà«—‰z”1ˆF>ﬂíˆöˇ˜)á±:˜0:õ_–0÷Ê∆ZÁóÜÚ7ª<zIûµ	B,$ñ·˚ÏÁ´∞˝Ω—Ë–y ò6≈!¢ß]õ‘˘·q‹öBcù¨±éÿÿjc≠zc´Yc´bcÎççÍç≠eç≠âç=olVoÏı˚ãﬁÈqmÁê&ñì‚o±woP◊∑ïAÊ®n–C¡04™Å$>Â@—$cAá£ÚòK&Hª≈Ù[∑PîÎ°∏ÛÔ«ŒbˆcZ√êBäC≤√»R’Ñ^!úK#îßLw$*çm)V‰õdôîBﬂ_Âcﬂ©ÄZ∫≠Ω*‹ßØó!óØΩ…–ª
-®$ù-xmßŒ≈y˙VMMÒ/UózÂÁ˚Ÿÿ
-M‹"WÒ±|ê÷\£Ak*"ÚiTzSRök÷ùñ¶êß‹q-'ßrQÃt˜‘vNôØ[GKsö$Ø”Ù‹p»¬ßhwœTßÒ¬D1›=ÙKÄÀ«!sQ•üè–_;>ç!çﬁ.Ω3≥¥Ïà^[1È≥<é/ÑˆÈí“,^ÚÓQ∑öÁ ~≈◊R”˜Î”ìﬁ˘È—ŸÌûoëã˝Ó˘ÎwÀ‰Õ¡Qoˇ¸bô¸È`ˇr|∫∑w˜ˆ»3≥Ω˚æ◊;=±≥ëãr
-÷ïµ‹iyªÃxX¥À(Ãoˆ&ˆÏ7°3-Sı*·`bÓä∆§¬]BÏkñ~k[7"µ‘ÛíM—^±°A¢ÊÌÀ¨ıOhkV#ö–Já∞¿L:ë∑Ùã∆èMùh+)^Êòádƒéû`Ö\Éd¨+å•TË<T´ò[ñ“i#s’ÕMÂ¸∆ƒÊb•@´‘Ÿ*BA¶»?9ô¸2Ã¢-äı‘?$8r•ú>áêçÙÀqT“˙ùJB÷ö4U´ñ&‡´ÊÿjŸ“VlWNR√ÍAkUT7∞Dµ≈Sπ≈Ú:9b#Ï\∏„ôìÆÇIœÀÄ4Í…5Ä•Âjªb-b◊Tã¯ŒMRé‡Ø,7ÕMs÷j¥µ{5¢õi@™
-≈£É@¿âbz¡ç‘Ñ¨cpf#Öû“u6ä
-§.3$T°ıß¶Ù‘F¿!ÇE∏NVE˛îÇcÈÊV]"ÇT∂5Ã~MW”R“Éàô&`9¯ﬂôaF,¿ò¬ã“ª⁄ÛGœ]Ã·ÂÛ≠4·ÈPAu hê™:%©*·`ˆu÷çÉÙ'œΩ!«hn≤ïµÃ5ÓÖU@%®™;¸·áÉ¬1’Ö,S;¬ª˚(3π'≈<ÌKÁÎ)&A_«®¥cìq17ä06≠O$W‡H~±,f¥Ejõ`°:ªfgÈ´qˆvÃë¢ä)…ù≥b˘ârÓÌû`DÓ≈4tùa4ra_s¡}ïF\º≈ÿ#£g__s°¥€ÎÓÌˇ¥∑ﬂÎ˝˙®77∫n˙Ì—Í{nÏx‘zèµrÄRµß¥ñN•É<ÅäØôã>MJÀ^p√b ©IÇ6§>¥îû“y!ó‹N⁄≤◊"Uy]sQAé‡˚Aπ	T˝ BÊVÑÖø/÷ß¢ìŒfP(ïMhXÉVÃ\.0€zK\B)JrËáºNaËã¬±∏C9ºx{{Ÿ1÷çfà	ñ2:,LF7ÇÀ'•
-˛›Û|ËcR»xò¸ïıg•”öãlv3Fü!çªLXûã«âfì+PGIr®rÉvERDá ô?ã¨l[î æ%º_ô∂˝`Í07o	º G∂¡ˇΩè∏ì´“©^üÄå^Ÿ˝ç5ˇÍ˙Hô W@Á°fÍ[eÄX5Rre∏:•&INïEtß‘DbÕ(˝`«ì]òGìèÊ±)›a îJ.+`)ÒfbOv∞{j¶˚Ìmr¸™‰ ∏mâ‹ñ˚–¯ä¬).:æRvú|˘ãc°GÛ3dçáÃÛµ|◊ÜÖ&Lî≥PŒ≥°sõ_K›Y©øä¥∑’8…q∑w~/XoTO‘òNﬁæ}ﬂ=!ı»	t¥◊˚¯S◊∫ÁKR÷]6J)U\Ølû(¯À
-πï#ÿ—óì8ÂQ:%ú]Ù∫C•’÷mÕÅJ’_4UÊπ¢Îöæ^°Äoî›4vC[î£ ‰ÿÿX)XùM]]˚’è†®;°ùîCﬂª&◊¢Y≈‹⁄Œ“ «Óg÷°ÚM—u&MÓÿ·HÇ8;1å≠ß„ﬂ∂1{íÁö‰ &ÂggL|Dœ
-—Œﬁ‘á„vîﬁ¶ôu&É	ŒAüÊ¡<¬ïRÎ˘ß˘ïÌ| ∆Û|nEª%±$Î)ö⁄¨£Ô$‰‹°Í:¶ﬁf–qö˘’q¯™£¢fÓÁÇa|éÒ¸K˛–bCAfJÀy@F+]ÍÃ9&sZß◊Mπ6/nY“âpÑâ∫ 3eQ:E¬Ó•ëõyâgqªÄw+>Òm∆È%Í OH5†)a]ˆ5V◊;•ÁñC¥HÆÁˇJSM0%∫Æ`´Êé¥7J=·ùìu«e=£kU≥√U¡K˚#äYÌ5–in#Ú:g„Id,áïèêeæÍ·2ÒåµΩí¡SáµwüüÑN5JYœ/»+ÎÊíWÂÕ,‰¿	ÁÊj>∏Ïnò f4£YüaN◊[Àd’ ∞dx≠D˙a’¿íŒ∆vÌõâ`i©1Yh¬∞s≥É*ÕbNæËd´Úú—&S¢xÛoáÏÕ‹~ïæò.ø◊áhÅà‡Üıó"W
-]Üﬁÿ∏%¸SBvI">h9ìÈFo}·¯Ê„È9/¸d(b†!ÜuNr¿Ê¥?rhsˆ⁄hÙtWB0œ_X. F©í *îaÌ ªgNπÉ=¢}FÅ-Pº–§‹I9,GéW,˝Î≠r’PFÑ¯&j≤WUıSpFœ\<6Ÿ	œŒ(kl#eÔ‘˙Ï∫îùüYø≤|zn`æÀËJ¿îˆ≥rN∑> †–z)9Mˇ;jí§sMLæ˘´` ÷•™'$ª,ÏMçÁ6Â÷∫]<
-≈gr~ŒîñÑ¡à._+VÒ‚Ò≠„Ùµ8√Ú™NvÉ≥[Xô^ËD£NŒÔi∑§«|˛^;qaﬁMZp6KFÙGÕû5B\à_§ÃûŒ>áeD3À1o”Jü˙ì]Ï‹›ŸNOV$=≥¬IÚó!˘Wl€ãŒB7b†›¯ûgœÑjIb	õ&Ym ﬁ‡R·∞¸ˆ[€&Ñ~‰ˇKÖ£Ù€mrBã¸‘%∑¬äöZvY∑ÏB2ñ™mï¿$eÂ^§Öãêû9CZ2¨_Vï’„%e˜Öö8âêò¶-è«Kå◊πilí¸_/Wòà¢Ä99˘xù1∑ä‰Ω-}ºN˘JIæ“SI¿éêå$⁄)zb:2ﬂ–Ü.4G~m·´¯·(~"{8¯WoRı›¨%ΩÉ˚óÒr
-ñG?>œ©¥s¥ΩUÍÂ‚mœ”T“—æ?s≥~“OÓ&çπçêyÛ‰⁄fÌ¶Bø$‡ß 6)º@+ïËJVæ!*/>aÌÜîa‹#≤qvFΩ‚ßë‡Øh0« sPql©∆÷ˇï»…`©ˇ£V•óˆ,é˚\Gˇ˛ÔÂ…möÊ`‰Ñ›∏ﬁBƒ…⁄ﬂˇÌ?,ƒç‰2ÑÉ˙§	ÓêæÃZ],r.Ii÷(¶ga0uÆÜh•0	}—ßÖ…/ñM¡  V›Aco≤]´ÃR«ŒÁÌZg≠ÍcQÏN·m0uÃ•∫UÓ-œ%°;• ’
-‰[Å,Ÿï%ò$u¨≈‹¸5vîÆ≠’6Iëuj∞%[∞ˇ∏¯hÇóí_ïj∏!Pn”_ÖË:}¸ãÏ“áªHü®J9oQªUvÿ¿Á–…ÙªíŸ¥)"òOEsÍfüÄéªiƒ$Èå©áÃµºû%◊{ìIuF¡c—¸Ω3&GÃ\ﬂı"áΩÎ 
-&W◊ŒTi/R«‚À/Kù>πòyõ≤‹ >˙@mÁ˚qÛ´ùï π¨5Ä
-Ì⁄Y ®Å◊tÀΩ…˜@ﬂgc-£úËÎË‚bò*à&›ÂjˆÄ‡!„…∆wÿÆÙ√Ã;ä)"å≈ÕüNà÷ü\úê‘¿Ä˘±p¨¯ı=nÃèa|!√’;e“c§ÈiLÜ∞BO≠ñYÇ3‡î≥[2¨Úªˆf—å— ≠õSbNü;^¿yöóß ,COÄ_Q«€°◊ ¥Rn§¡?Á?kJ†TﬁñD>®∞≥Ez››˝#¬ÅxÑ·Ÿ˛9¬g\^êdÆ‡¡\Ü—ó>¯DÅ,4Æ·◊“"ÆÃòí:YD<I“`ßb¨à¶©wÌ€TÈ—7µ…Z2óÒQ4#ô˛§w¨∞9‹ß±	∆…∑ˇ"ôG´ö?sµkS»æ·Õ*⁄uÁ-Ÿ’b◊¸	1sÕ^˜¬Çê¥BÚ”ÖÑ®cuüõ‚EL’ìÙìjU[…:>Ç©ﬁ_\tƒ„≈9º†çÀÎ=-ƒW+¥>G=(˝h∆¡$(bÉÓTÆeò±¬jlX:Ê*ñ£z› ™„TQ¥“•Eßõ7°¶îæ }a|43≥¥í1oÌZì{°≠ÌyﬂZÍtq˚∂ ﬁ§™>/ΩØ´JKÒlÈ<Z’Z“˘ØÏZ≤s∆ÿÇÓäUÿ(Õÿ¥ˇÙ÷ê"ü€H˘\µ˙nãzcÖÍoˆØÃmñ◊mœiãı„>J  -ﬁ∫c´$F'çùœ(‡—J≈?ñÉ”juV.ØrqªçÈ·rÆnf*Es:ÌÉY™Ü≤TH\/^∫DvX»Jó9Û⁄ãóòÁû»hVÈÌ≈+Kw/Iís¥ƒ≤ﬁ’RcµYÜª(."€Ωx%ŸÔ“S•ZSIn|Åø€d Àö¢ôÛEŒmìH_º
-ÆE>keÊã—tK’öÊ9¯yÜV©{’<ñMÿ/Ω›ﬁ˚ô7°#$nﬁn.ƒ$'LûπÉíSo$2%=†I˘™+àÕwÏ“ıOVà>¶˜?åï≥òƒ=◊wcW †©G^‰nÀ§Çˆñ\Vˇ#“”≈g!Èè∑˙˘–Û«[~k∞ù d\PØû:~t±Œ9Ωƒˆä¥€J,Éò'¿|r¢“É'XΩÏ≤uÖâ#7ö9∑€%’âì~<„}πË~©û˜˝°◊Ø◊››"G›≥”ÛÓ	≈ÅŒŒOˇºXpÔ%é=V˘≤ÁÙÅ¯Œ4 “@ÏáÀˆ2Ÿñ≈FÒ6ˆœø=w#•Ü¬GERÀ?(ÕAÿ‰-Úººb}Njâ-=UO£BÊ≥gíIóU+ïﬂôk,_≠]⁄ßIÈ∂•‚öÂ>/™˙ØÎ†IlÖª∞°˙NhU◊`⁄ÿ»’`J≠´ù˘ÍË@U‡æäÇ]ôÉd*≈Õ˙B‡"Åhâ∆’!ZtZÎ€I˛aed∑™‘Õ’„§î‚w2#k+œ∑û{ﬁíƒ÷±A'‘@]‹J+¨4»Nüûr'aiîd¢éùh&Øn¨7±U+Œú/ÆíÊéç›°7SGRù9ìÿôÁ:ˆ>y±∆ó°-XDá\#ﬁÕ2q†—eÿå#¸	$E8ÕÜ≥Ö˙›hÏ!àL„:òíh:±¸h´\"à¢ä"Ä‰Qp ÓDJÍq5…°z‰Ü∫√=Ñﬂ'r†(]‚ê¢‹à˚∫›d:ÑÈa‚dVºGı∑Ô“äWÿµ√`™ÍêıVÅLcÅcU&çÖÇT¡&<ö§£	⁄∏√¬–˛åw,zn†ıã#˘i@G8Ä_Úaƒ5ö?¶}o˚	tπ+W{s0¢øM’9>_z„+çàÖÉÌ/bTç◊	”éo◊(›0R—È π∞údˇ˙»f8«õàäëÍhõ&‹2aÍ7*uΩ¯^§‡§ØbÁTÃz#9|+Ê™Õ¡£	y€”¬}J)@p“¨v∂ﬁv+;€…!ÿ±9ãŒId∏ŸåL Ï„©ZEms>±/_’ıN2f‘ñe#+…¨ï#>∏3#Òq¥WYã¶ì_ã“N¸+RÎπ·‘âPo≠”√ŒvCd˛©ÌπóŒÃèÖ5”0¡yÒ‡ÓÍz•&@qCpÉ…öÜ^Ë^É⁄”®uˆºÙ)|∫@-cÛâ3˜ø»k€‹Ëıú…K‡ÇrÉãµaÚÈ∫0≤(”¿c<SÅÒ¶ÙLË˝TDo¨ZÖÙ-Hî6\≈úº∆R’@œ÷T'∆À‹)úÆtC¨¸Q≥ËDÉnı∑W*aL€ßˆÏ¥ò®Öü£WÕ≠M¶vLı«ªMEŒ≥wÖLaﬁ¶ﬁƒ»<ß_‘-¨˙Ï—f@Å„Å”B#ˆ˛>ˆv,ä∏±Fqh[† C MÇ°lŸ∏rÏ+2p«e˛J+ßÖ∂eÅã.¢Që€VjöËNªQM÷kjı9ÛŸu√ëy>ŸÛ‡òÌ;·Ã˚J_[x∫ÉËÎl]?˜÷tÑˇt÷√y~ƒ®ÿÙ¨ﬁ˛¨ı6ÈêW(øÆ(◊ô*\t≈èÍõ+‰Onˇ4?‘CˇiUøè…Æ√1∆lã|]2Ìx√˚èf)Eh„±¥º«ÎnÖé“√oFüÀ2ı$Ÿt÷ËÑÿD=ÓÒ—ØP•SMm5•˘œ®’âLÛ◊©œ=3™¢∫—”«Fw´;∆^)‚Ç∫v∫ÚaøMùNÿ®ÇR'r¬ﬂµ:’ıªVg∏~’Zù=è\úû'Ú“E(f9ÒøŒ˝NøÎdx=ñNf˝É‚kTﬂJôóÑ˙jI’°Àóxu9ÊÄ\ô)%‹3Œ≈m"ÜN4qŒP¸E'aãaN”∆&I"TÕ≤–ﬂﬁ ©øΩëÈû¢¬iîj`üBØQá2 ”ÎAk¸†Íl**ù£\Wg§J∞ƒúÚØ IÂ√&ÙAöËìÁ-Ô˘ÁRÌxH∆±VAÈyc‚;pæ_9»›¢Ÿú@!}:Ü1–øz„k¯πÚ≥õ†Õ…„@öÈ344nË]c[ƒ¡÷“J4cƒg>¬]Dﬁ˛„ú–AFÊ70ËZ1ßîA+G™)‘cUè<ÊG¡?xÆ.~0ƒ≥Sò"∂Pƒ<¬Ÿ≥Mä
-à‚ÔáóÄªgW-„÷AäZ&}¸Iæ%uéÓ5ûç}g¥däbo©∂Ía}øqùx‰ÜxS1Çˆù˘äcıﬁlgrK;w”D / ]€ù•WMî©*ÚdÍQMâYkƒ©≈µ”X<öˆ.Ká∂≥Âò≥<ì4úqBaØÓ√n»*ŒÙÇÑÙ4®xZ≈#)É)9`Ó13dôtgÒ(·ﬂæƒT<Dè¿˚ê™d´d⁄«jh“hfê`À¢Q∆ê^…yÿ∆Û∞≠èe®tFñNò‚Èò≈5ÿXr≥Î˚ÎˇjüU9;åÛ™¡ÜÈ©{W£ÿ.Â1Ma‚õ ¢Òtâ∆¶"8ÒCE≈ùö7lÏ’lÅ0ØáŒÌ©˘¡‰ 2á=–i¿y±Â3còìQµ◊‹∫NOLfc7ÙV›[e◊Î*‘•w)≠Éè~E@ibÚ¿Ÿ·ë’íÉ∞R^rä).¬åÃ0'.˝
-ßà¸p∞K˛˛oˇAN}w§@ãÀ,75”¥`vœ˙c/é›·n
-zPªHÂ•ZRNÇ‘%§I~=ó"#¢íVª◊õ¯ÿ∫iÏ¢…-∆m´sq•˜ÿyß@<Û/h^ nNˇF*3µÃ^*d-]π†l#êh&RùÌΩ·bAˆÍÍ≤s’˙ñTRÜOpe˘w’DÁmÅÊ‰%ûÚîÑ«(›s•õó€M-Y∞	I—yãƒ'fR|üÑ€¡ÿÂI˜Äy†å¥⁄`µ‘»≈lL3_;·ê¶ÇRË˛^¯—2ﬁÏ¯UÖ¶´DM¸
-MQ£ç	Ÿ«U+I{…TSµ7mÕŸı÷ Ûñ—•L.yÍã¥ ^h,Èc'$ı‘y¨÷4ª∫ÿ≥r˙"±“L±g≤÷¿<hí®ßd-∏Ω%ÚÜ,W¢ú)ÎáÀ,}°Iñ® 8JâÒûú—˘Ú´åœZVï¶ÿPÀ«®—YÀ`o+¬$
-cî™ﬂ¨Ê(ÿñ[iáYç≤ÉÙV˛X)√ã1≤≠æ{ËkU•∞»4ƒMç—]‘¸ŸÈ;±# ≠T®å••^‰D)8Avªn ‘Jbà∏'Axeˇ:ÀDÿ%ã◊ÖHML≥åg¡Ô¸¯1¯ÒÖ#‡HTÅ#KÓBøò=rœªöM–˘dú9≥˝H]≈g âÚÑ4˘*Ò^†≠Ôûé˚ód—ÖÏ+æ“è√ØÈ¯s¸:¶V«e˜›"¨FE˜(6
-Í'Ÿ¶ﬁÏ‡íƒ,ÙÄ9G1=FSr¸ä•„2^jÂ¨Vwã“=J‚‚QíUÓ6Çc  Ç¿¨1á˛Ò∑ˇÒ?Q8†seáaœˇ-aÎMØ[Ô∑’~Áˇè¡ˇœ†1Á ≠¬˛ÅˇÔb>ÎØ˝ 'ÑY8Ë‡+ß@:	πì`ÃOÇÒ¸'4ú;∆≈É`å¡¯UÛgw‚—∑èüÓPëá¬_ˇor«¶Ìü¸L0ﬁ`02°«Ììﬂíg‰tä÷M/ò8~E[í)æC|Œ∏C+∆k9˙∏o…æ˛‘$ÔCá∏o ˛™'ìc≤å€ÿ≈U´Ó•<ƒa=Ú‹<ÅØóâ3ü¿)m–ƒ*]2)ùe ‰õ˘|Êke6‰™—7Öœ≤õ∆:5÷ùÍ-‘8¶dóò	0v•e)–5√â• ‚Ê0í©]gàT∫æÛŸ÷vÓÄ"*ÿMæDC∆,Ncô0ú√g‰ÑbVïlç(d'5ÇutmÉè´Aç°ß√ï^/¢L6˚^¨‘¢FÛû'ÑOq.8ÂÂBd˛Ôˇˆˇ˝øˇkdñnz7˚Ÿ°gµ¸Ì?ˇO~<ø‡ü˜‰ıÃ8[π∆Õ$c%›¶VZ>ıπiiÕ-ãàÜˇÌø”r‘næïJµ7AxMâìÜ_ìØ`~]óﬁƒ2P‰µ3?‹Ω‘ú:√déıŒ2©µjK˜[≠ÖKf–£XnUˆ¢v•µu/b∞§˜Èk`Ql≤ŒÎÂ}]¸ë¬:/—Áç»6KkÀ“wñ…π;8¬k'¶fbTk‚wız7ù€¶—ìπ
-˙pD|7Z¢≈`Ûﬂ% kªA ,vBcÛä˜¿cäﬂ˝7¬·º$ñ÷ê`´Â/yˇ&@¥g>æ;Ì^Úï¶w…-BÁíØŸ7‰»b«≥ÆWîÉ]¬œí˛ífÿUÕ°ŸòΩï¿ıÀã-Íw…å≥J2ËR¥‚‰èñ¥Äh‹©&ä“◊ZÀËi≈Ï™Fk1ÎÔˇ«ˇGO¬0∫ÄF[ \Fπùﬂ8Ûe.≤là/cXõL˝
-X©ï…äÎ≈œòY&A— `_w˙•Ô1Ö!(*RqÕ(6‡o“W˚ÇdŒÈ=wA"d7Á(êJ∏É	™‰b§èÆ¯ûÌ›f©9is¶ÃL…ﬂg'¨õﬂ™ Ω'9r∆·≤¬§%'ƒ≠>ó¬çœ˝„oˇıˇ!=öÛGVR!h◊çUGa4ã‡u|†ãÁv’HÆD_ú’M·Ôå◊M¿Î¶ø8ØÀ™a∑õ>ú€·˝ŒÓûBä} ãK≠o¶:ÆÓÜ0Â\^&ßüÃ>:ﬁùäÿç«Âz˝?S=Ôp4ãf—/ ‚eñÕs=K ÀSgv¯!cvì0ª…/ŒÏƒ:ÜìáÛ:ú¢ﬂ$Ø≥h«P…‘∆wt6
-‚ B\grk0¿$f§){XcÓãJlSÂKÈ†vü∏quG√"}O˚b/∏û!ñ¥y‰ÃB Ÿ≤§ç‹Ï‹”ª¡U0ùt0õ"˚∏ñ∑§l‡ﬂ≥´0&¢çò`fÔ®2*„ïIkV∑èB˜ÓŸ›Õ†6∂k?LÆÌ*∑ÑÆø]õ7m2&÷ƒâ¶Œ˝eÊÑπ¥èbΩvïx¿Iÿ^|"ªò¬ø%¨ÄË¥>≈;òb”SÀ#’_1‹4òhäUv˜Q§˘ØŸÇ}ºœ{ı(@˛à˝ìBî}BºÀz6EÚv˙Q‡œbóxì»çÅÓÂïµI&®≈¶°ëü∂vK:ovvÖ‰≠–#od2I'¿æ@èÛ¥^?Õ[t¯N:05yºÖ<∆‚±´√ê’-≤wz¯˛xˇÑúÌüÏΩ?|Ú÷Æ6ÃêmI¡G˚‚%¥XA0†å&E]·Xr6œSu“æﬁIKó~û"pX–_‰uK$©Ω˘t7;h,•£÷ﬂOÆÆúQr'àßdÖúπì·Ïz6π"ªN8ìì<ã’x∫™Kµhd5FI	BLºg3CœSÇw8…tm©˙§«Ÿ1 t1t.ÏØ˙,˙‰¯3w˚nN4%^$([pÏ±áÍ)ÜmL√Ä¶0ÅÓ¥7‹ÆΩÜ)F[)≈\úr¸’ervJN≤ππLvª=Ú∆õ8ö2qÂS/I]5«∆)AQô
-f1->	& Û|>õ/õ6{ﬁ‘}(mFÆ‹ŸÇz@¶vÑóAå0Í√'Ì©Ôq»ÑŒªù®g˚e0E©àOI6BmwC˝ =ÙF,lbÈÂ
-ª›∫Ω≥”⁄l®˙Ÿ,åêNql’€¡≠X€°≤æ}ä“•†>Bz.˛¨ﬁÏP)h7mï˛ôûæï[;rº…‰÷©Ì‡ÒxW»[gåµ«zÓıƒª65˘rÖQn≈m≠˛Aì$oYôø‚,∫√4◊ót‡ÉéÔÜqΩFQ©ìiÇ'óã¥8v,6Yıªjg±"§YU⁄dÌJ†§XãîèÇ˛Å€WŸ·|©©˙¨ÄØÀG7m§;<À^,‘¶›Ãcò4çíXî1ŸÊóRirÑÀìÄ©†$•.U¬ºîÓÚB5^9ë}"ËA§’≤H[!kq≤•Ù46sÌD»ZfLº¨ó…òxÓì¡R# Vπ∏Y¥ˆ@}¢´SB
-!ó«i=N…qƒﬂ“≠ÔL#Náæ{©B◊yè\GYWÙeTÑT√eÇóùdÿ√ß"0[„ó+ÒËi_é2Œ”øqj~Å±:∏}¸ßÒ+*ˇ'ê.=XfÔ©ª¿]FU˜Zﬂu^|Jπ◊^“˙ªb«Åô¿€∑Ñˇë¬¸´ﬁlfkhJ0ﬁ$öˇu5ÃQ#3ú—F˚2≤j4ÜõÎ7ﬂú?fif—ú.MXh¥b¥Ñ&t«Lmává¢UZ‘^VºÅQ›|—Íi@uƒ“4Tù~ÿ»√'H`ˇÕ]¨’õxﬂ¨"áÁù†By“|∏?Ç‹—~&ƒµ{˚ÄµP˛WX®åLÏV7Œ†» 0dCäGwÎ#X4Âæç)`ô¯ù1mûÅW&ºªèb0ø‹Bê1 \›ØÕYí8gcÁ‘¬Ÿù˘jõÖ}¸©	H˚ivÅP√¶ï-⁄
-Ç^]	)
-¸≥E˜Ô-∑ñtú8äP#«4ö∑qÏNP@ù°ÆäÀÏÁô3YPTˇº&¥ÇeG˚U~¥VQ7∂p%Uó+çÏmñä#¸k'êg≈´B˘á¨÷CN·+’ÇH´>XÏˇäÀ˚f∂q%]PÚ¡R»çôó¡
-OÕ"‡AC˝vÙ Ö(M{Iû´Ì¸˝ﬂˇJz˚Á⁄??xspÿΩ8∞ã7y ﬂUK|¥qUåÄ°ˆíÆMæcˇF∑}∑QH›ÃÅæé>irùaè3–rgòZÄ»4u»ƒâ^›$ûOÒªπû}qvàV¯e‚`EqjÛz¯!Rw”ëig[7◊ äT¥ñ€€®mië|Y˙JÓâ\€"ﬂw˜~Ëë√˝ÛÔªdÖ\º~∑ø˜˛hˇ¬Œ!]ª?œ¸˚#ª√!â#w8Û›g‰Í/Íå‹ù9q€ΩBæwÜ7éOzŒ»ôfyÈãsEÆ˛\ëÈº¸‚Œ»ÑÃ´{$/Ñ'Ëñ<&C8zóÉ}ﬂΩ·⁄Òó—%ÈE#ƒ˘›-˘tnIf∆"«3ﬂÒìLQÎ≥&Sö<ù≤|‚_ÿÉ˘;E˘ÑÎu_MÌOÜÛQ<¯k•ßG˜∞äÁw≥¢È´‹Fœ}≥m·à}Á böfØù)ñ¬œ‚Eí2Â	º≤	ÅHïkq‰Ÿ':ﬁÏ#V„≠ÕùΩJó-)≥?ª{ë∞Âûb§Bx˚Ù>_7Ï{1™Y\"UFƒ-¿€õL\ƒpnºxD0	Óì7ú¡´ÅÆB7äÿ¿H‰S~˘E{É±Prråµa~‹T∆¿¶JÆîÑ~‰¶≤øA.˛´{#sË§?⁄8r‘3(Î¡HÎº†´£¢Áf⁄X◊ü B9õhúsÜõ
-j…ÊTÖ-&LÈk†öÉ¶GÎïä√!í5Ã	¬øú0“h›}∆ã	ÂC7vÌÕú‹°Ω¢Ç^å{≠ŸwÓdHø1ÿ¬¥	-f <©m/øøUBhP13ÇõÃWtx	Ø∫ˇF€ΩΩ–0>dôhtcï<8Cƒ¡ÖSHºKoÄö"ßKmö÷º u÷w©ÀCoo{ìÌö¡%2v>o◊⁄&«I&ö¶A^Ω™}jËEhünKåR_eF)}#EI◊∞SòÃÛ~ä¢vAÏ9„=7õ∞%ÚëÒ∆AÕ˜Òz}›d‚÷˛Æü@YBP©vŒË¿ëÚÍd¿ÑwZ∫y"ûŸÖj÷…:oÒÔ'Aå•qÇΩgP[\VWÁS˝£‘ZØ∂‘7iñ‡MFù≤!^Qõ3eÓ¶dÛBÿòíÏÚù„>ö1f¢‚4ïpú©”Äˇ7…[ÜrÃ¨¡‹<œwé›	{œΩfYq Õ¯ Ÿï(ë∂≥Øo¡?oﬁuO–t|pBV»Ò¡—˛EÔÙdüÏÿ¶ ¡Ç•ˆnô⁄«–~©∏t⁄ˇôl*Ø›·û€èﬂ!g v]e⁄|Ó`1Î≤{ó¶-ìKoõ«s|vÑ8ÅçïW\rVVhÜ}ä0ÛÈÅmïò—Ä.‡ ˛2–!I<rAã ˙5ˇÖ∞üÍ{gg0É'ûÔx‰¬ee_œŒNñ$3·Eg”…˛Ñncòç‚;G˛Nôˆ•„GÓwí&Ü”){o˘Ò|óQÙñ50ùNír›yÖ`Ï£&›6ıÙ-$≠fªçS+må÷∞I&‰P|∞ˇ€Y'øM_W®E ˚‚x√7a0u˙ÌåR
-ƒ˛*˝•IﬂxœnŸ"¸ó[V4·Çp1‘CR1~Ïx–áÿ8t:CßÓzkY>ŒFæˇK“!‚âz¡ûÅHsãiãÀ6e]fsêGJî(.•ªë‰ã¸¯ïˆ±“Ã’ìŸ}’§›≈˜féﬂ‰µ§¸oG§0x¯∂Ω'.ìØòPNãâ1Â˙Ãõ≈?ﬂ£ÏG^å\¡i¨
-ê3ïﬁ;ÙDéÉFH.aôS˜:F∂Ú±Hgê|XóVø£˙”‚íZßi˝WPq≠Íø¬}%`í™Æ0µdY¿Pßk™O[•®êïN!4i5≠¿LïïHDNŒù˚bÀ´UÕZ¢i2˝ZÊXzÉß± u%â!ßè˝UÊ\XÅ∫¥ÉÅÕ1öı1¯‡⁄%6ïnõg©≈äÔ MÔ5%’µ¬£¥ﬁ∫RC_’ƒøˆqn±X¯ú‹e‹,∏ô â®÷œK`Á‹¿äèb=Ø2˚4Øˆ`2h‚yn~BÉk8öÛ)ØV85êK‘óÍ’⁄;Z,≠qÇœ,mˇxEn|±CâØ√q0t¸”©;©S°G[é`‚|ÚÆ0Æî)µç!¨®Œ¢Ø0W„•ÆmJÈh•-$/±o:RŒﬁyXaSU˘“><4É)F2áX“<œÔ“>⁄ï9’0†˝[7Wáî°6ês◊ÒA·åºÑm(	S˜€"1˛ÆÎ∏ñ∑‘ΩXo=6qâ#ú,¿&i%[≤;ªväGŒk7fz∂˜f.:™Í™T#L1X&ÏjIxã∆ô¶´eî÷î®JΩ¯MÌA Ã9¡‡‹Ωv∆¬2i≠8 =Òµ…∆ÚÔh7©aÖ¬P‘àsÂÑ‹≥À6Ã
-±ø~
-ºfº¬±sÂaù™1ÊÊ‚H}^≈˘–ù1»™d–ëKs´Ú@—PÜ]Œukô_ ˙úËv2 &»Ù…â{ÉbÃ⁄>ûıﬁ6ŒŒOøo|]Ú~ÅP˙QÕ‹X[©d[÷JâQÄúÙKﬂ˜ıUå/˝ Îhh˚ñú…0@G˛	(DKÊ∑Ûël¸/≥·@GtÄ7‹ ∆Ø≥'ùﬁJˇ“›Õáé∑W3I£ã`ã‘Œﬁ˜∫'ok⁄[±∫xπ}Ãõ“$Q%&**”Öa"2)ìMÃ˙®{Ö3ﬁoIM∫ÁÜ3=aÂnq*€∞Éì:∑≈+Ó[Zíò+í6Ëz≥L"S+ X\úr©z©M}/Æˇ°˜á%¨]!6§ΩS7b≠˛˛‰¨ãYK∫Ÿq£AËMô7Ò£úÀrñπV-§˚SΩê∆∑œ$©í÷•^=MéA#v∆”-:1ÕIpS_“>ÄÊûÚÇÁLRz”Ø%
-º:‘”ßC·éGõyÔ¸∏èá lz–Ñnó8ùãè|æÈ√°”–@nı‚¶õ{@√Èfk≤ø®ïVˇà˚aı‹a∑˙£(<"r›ùçÏì≈£¸,e;V ˚»K&pñ> ˇ¥zåìJÚ®ò≥Áıù['ƒ‹0ªùåŸb¶˜%;Z˘™⁄—˚ìÓÕ<€›?zLvªÓûZ•†∑ÙÌö€Óó(NÓèj˝„;5ö©s„x1ˆ/‹,KìAx∞îÆ⁄0=N£⁄≤p^&jtl'{x≠˚	7È˛‰2i6õ¯Âè˙6zÅ≈«n≠’kúÀÛÅ:I≈5ÖaäÌ&mà∆©çÇ˙ÜzŒt:ˆX\0ãπs*˜0”ó…j§eÃüJ	Ã´ÄÎïëOÊU¸“⁄nñ†çÜßÈwCœΩ§Ω»©wôX~Ë÷N! ´U;5æ°‘êyÔ.fcYà^Åàº≈P1ô¿Xs'€!˛UGV≠¥iÎøê/∂¥’NTre`Œ±}5vofÏdﬁÀƒ‰YOlûÚÄµ&TÓq…ñ]0îf&e+[R‹ÈR≈÷¸,´Áˆ U7aÍHª-è°RtD`m®|≠≤Y¨l∂‰Ñ˜ãí[…MN˝ÁèDgB}O+*K‹÷OMYBïmU˜æMhjãˆ4Ò™/§ßïI/≥"ÆlÈ/˘ÌQ)PÄ3òõÂenGÅÔqô›Ü5Ê¢
-ûöE§%Üé4ÇGP◊ÛA+R√Zâ⁄ w¡Ëﬁxü›aùÖò‹3◊bT&‡§¨iô|”R¶èGºY’Í§{õä\+‹†ª˚xƒÀ˙jO∫ähöß&‚tä’$¨ä˚aT,‚å¯≥âa	YPÈéo8æ∆”Y8q1µz*U|-w1ﬁ CïA‘éAÆüÅ–Õm=n‡ÊÍï4fé,ue8Lä,%låù5U™:ﬂBY∂z˝¢B°2«ü=*”~V;£_~˚Üzı+•œº–Ê∆œ&sÊœ¢◊^8SΩj˝æ‘A&@ù´œ¬2¨∞L{Z~¬Ëa◊ç4›`^!ò‰„'0l"`W%'ñL:õ'lÇ6ØúPáUËä∆ÃS¨Uùà3_ûÇ*GwÓ‚V¶$]"êÿ
-+‡î&ßë–≤⁄G4ÁÑhÛz-22l`“
-¥TÎA‰…Ω=˛ú}fØ
-k˝å¨∂æÅm9ÓœÆùîM/'Ûyp@÷[ﬂËF¢N√T§ºw’î4\‡nb1‹5òE[˘“îÃwãﬂ„Ê‚>∑d,^9.e6ÇæÄ”?Õ˛°∞dX,&â≠#ıoñû`˜»Os’#Î4(V¶Õ*{	∑ﬁYÍj®ñuîl¡Ï˘*Q±WYWøŒç¶M¸1áe·≈ñû›®ü¬
-A\xQÄÑEã˘ˇy⁄—%¸'W.Òﬂe>=¿Vƒ„kHE§dkj=…•H.Ã[‡,sÜ>NÇ\aZ≠3Â
-SoxÃ8‚Y™Å(‹.Ï{„Cö¯<º$öéòég	NoÈñô@ﬁ1ìZ˘3◊ç¢ƒ(Bµä«√Àê$]V1òÎÜa·Î¯Çﬂpﬁ§A›_84P3˝*;R†Œ%F‚B
-pñπ‘ä
-häæ´û,i»x>>+Q≠=´˜·›c4Wûc¨“CÍ≈£ˆ`s°óWøñT@;©	ÚpwiÒB‚Üè?πP…íÕãö…Âƒj6%ÛÄu˘Æ’*≥IM9¸ ⁄ı|ê Æxaè•Â°≤’De}y\@ºŒ=Ù‹N≤‰ìgbê9(Jh∆ÃlLaR∞ï1Cûˆ•cl¢%?Á!)¯m>√[È—ÏäŒöFH!@¬µkå¡W∂év-Ë)°æ’Róˇ   ˇˇÏ}Îr€X∂ﬁ´ÏÊÒtS3&uw´…m´€j…∂é$œÃ)WWº%B$ö ¡@Àç™Ú'˘ù ˘ì©JU#ïßô'»#d≠}6Ä}IŸn∑—’ñD˚≤ˆ⁄Î˙-~›VÚa™Àü¯ÂWû·Qb´C≈¢≈J•¢]A≤a µ˚¨·RpèË¡0ÆÍW2Ó«∏äÚh,˘Ç""ã˝YŸô∏∆F©í’U±¯]ÜΩõ« ±_’–›–Ug∂	$ZWX”Ê6¶ÀÃmîZÈîﬁX´ø, 'ôÕ
-|nÃœ¥…"Ô £ËÄ;ë≤˝¢Ú+v
-kR&«%m‘ÊQØ€2%âÌ]|¿ F:*W˛|óºCpÅŒÉ[q<ã …ïÓîˆ9Ÿ∆CÚ›⁄w+wÔ‹H„æ—›óKÅÆ”qø&‰òÑ∆9U§µÂç∫	Ë3yg&~àK.€\yÑj¨¨êπ9UtÙ√Ÿ∏íD"{ØºËŒ£Ç∏N.ÛÓH’ñcã‘(.)®Où1ÅTÁp™∫DÚ#gŒ¸—|ê8SÛ∞4KﬁËf}/Èí|∑}a∏$)©A«íÒ®üIﬁ„EfÇ9<>‰ò›RÍÜW˘∞íıÇï»Z2 :’:]¯¶|w≤G—¡Gä@È|j‘œÊôc1Å¢å¡g¢’nΩ#ûË1JˇÍ‹çNw7KÕ|aÚ˙Õ .K÷#èÚ0B∏ıXVG1òù⁄ô¶™(ÌÛ21<ÿ"oùˇYo;è¨YNÒ)‚√Qe“«È˚ÜqÆ∂Ω¬ÆºÑDÈ⁄|›R#"702¨„ï'◊ù°zRvü∏≠ﬁ•ÁQ5B⁄Ì)‘%Q««Bë‡ìÕ,Tı=Y‹ß7pîÒWÿ“:ZÁ-LÎ∞(R≈µ∫J86]’ÑÓ›Ø{úYÌ%8ë∏t¨∑ø¨ÕU™≠ûJ´z°o§-59dÌ¯Á]|∆%!˚ÑÂP˘µökôæ∑Lı»‹ﬁy…Lö2›$RˇVJ˘?:íÀ…≈ï^£^w>‰ËvÂKÃcÊ”Ê]IU≥y8Ì	=Ú¨ıPÁ"∑D%ƒ›:ÈﬁyxªòFÿÀäƒ¸…Hz ˛í§XÔ,Õ-KzËÏ,›t•aè‰õJÀﬂ	ø˚ΩnÙ[ëÇhÌâ´D…±ÚguåcS& <ÿŸJ√›´ëÿp∏}VÇêÔômÃdª~7O^6≠6*Œï0Ó∑.»¢ä¡¯≤†_≈sæZ¥% ≈ñ≈KÔèõŒ¡Oõr‘
-OmÃKÔãõzÛS_é⁄åßzsU7_-'J*T»πjVb%≈˙±Sc2eŒS≈Œñ©æ^≤6Ëá±∞h}ø˝Í¥|àﬁñ”6EAaÆQdoˆ√)FË'≥–+ä¢Y∆fπ;Ên*‡&Ds%CkûUì †ùj êø∑/;`ÃÕn\)ièï?ˆV˘}ç‰|„1˚·€hXLwr[WˇHû%ûπ¬DCû≤H+˛∑xVuÂ|SJ·ñ∆ıK¡ˇ0»@5Ÿp/Ù≤´q˙QÒK[ΩìOn|17⁄⁄"äˇG≈JX∞ígaÀ√eîx	/πÆàMÛàW™Ûz√Ì‰W#tÔ«0Çyˇê…0öF#V¡√ÇÔ]-‘c{<áùîÒ∏RˇΩ·K©ÕËî¡ŸÏ∑^–)l*Ó∞w?‘0J/îﬂ@pº
-ìq˚]oJGtHzì>%7Ñ ç¿øpöÜ¨'‚∞˙ÓÅ‚‡¯Ó	àµûrﬂmß¡∏(ï´ÏY6ÛQÛø<œdÁÕ≠éÄQO‚î1Áªï}R;øÿß’çYﬁhK?üŒö7JiŒ„√gπjÿo0√?Ë„ mEik—g·>œ≥≤&M5j≈V¡µÙ*cÅ7”"ác€®k]´áMõó∑éÏΩö3§“gïo≥xá∆S∏ù\S¯7áÿgaã¯ Ô∂≠;Kä„Ú›/—Œ›J[èπˇhóºµΩ˜ä|Ké{O{~ ˚#V◊†®ÌNΩ®≠õØ’UrÅÉŸ√ˇX¨ä± ,Ã⁄:´»í√Tö6¬«‹I˝APO<–Ó¸ë∞5˝*b˜*å`Au[©Õı¸§õW÷nåé⁄”:˝êwäÚprè ˝¢èöé»>Ê*,1áØZ:˛ ]Óœ@Dkß≥ÒC¬É_…ü`P*vË/kÆÆ|Äö.°ØØﬂú∑DXÌié/ÄµxÆΩN∏é*l‰}ÈU Dû‡πΩ_^èNyÃ∆f˛˝üCä˝ÒÑÅı/izín ¥ÄÁXÍå}szpt
-búú>Ì=?¸‰≥XˇY<û“…Õ=ç˛õœrÙb§Ã¥{f@ävòëÎ,√Ñy˝	_ö‚s»,ç◊™Mne&u¢% ≠≈s?≤˚¶!^f¢ìBÃ·¢i[¬/ö5%◊ÿúÁ÷–ΩU⁄ˆù˜Qk +-4R.BŸ.Ó<5úVq6†bê/∏MΩ¡Q"⁄T–Óøó“ÙÔ’MKXÈû!ñ∑∞≈RI–≥XW≠R<2¬ ÎÉâ9áÿ‹0A†<¶:◊EÕ´‚ÚÚ˛ßë#íÈDòI+ÿZﬂÇ˛:0!õÕu
-smÓØ%kﬂô¢Ó I◊5·[?œú[{_ı£˘UûKÈ7küŒ¶!Zr]¯d:íhŸMÓåÿ&9±ÜîT–ª˘ÂzZDî8+=µú1%µT[M	ø“Ÿ©µvËÀÍ9-å˜S˛ö—óO˝k~9åµIÆV„Ú±7ÜYz$Ç"?©fï`Bâà`væÒãC>≤ ¢Cº∂æ˛á'÷÷
-O$ÎX˚´y¢ïòWPÆµ∑MÁ7∆∫ûÜÙÜícDkAÙy 2‘∑€Ø°QöÜ®∆¨>•∞);\l{1&„»36Úgqö-èçΩ.7¸˚bdé}„¯⁄¯ Ü»4ÑG0ãêıöîÊ’ªm6âÄdÛõ∫K1OˆR_@ãÀap9∫à?ÿg:ÏÔÀË´ùÈ‘·Ê`Õb)^◊a“CCÂ–w—kÈ;'l—#eóËzã·MxE°ñπ1˘√∏ÏÕπı0G?∆I}=¸˙ÔÎ5uπsöÔ9;K=
-∏Â˙Ñ˛JsÄWa†láì–∫1].éêvùlÒÉ¢vç∞ñ∂+èÌè†´Ã.!&`ãÍµyM4¡ﬂÈåÜ#•¥äp!‹ !«se¥û0√ªÑW›TN≈*ÿm¯FÂı,`Ük≤é“·Eå#ô6ÈáÏ‘=&óhøxü*π«Ωdñí#jÆ4ﬁ,%õ=—§hÇ2
-=Û4D$ÓÜv,Í€„bÉ‰„ï:ßqæÕz¶ß˛ÓÉè¶´Ú)/\øßÒáº«Ì≥ì£’ß≥>∞ïFÁå4Ú#Æ;è√‹G>√π¶OmÁúß–%¨jSsÊIÕOZè{]rzÍYÔU¡Cﬂ<ˇÈ‡‹'i«7U`>VXÆ^∏VÂ[èŒŒ_ˆŒ›ΩqÍñnÉ	±÷Í Ô±≥ÍFP⁄$
-(r/qHΩ:<Óí£◊ØŒO{Gló¨xd?6GÃÊôz®ÍtCK¢£/>π]üvÜO{O…ÎìÉS «◊Øz«gv+:À=ŒÔ27»Ôj…Ãùíécbæ[…∆3?≥=ÿz|r˙˙ﬂéŒπÔ^0—˘HC zﬁ´b€˜ú8X]<≥e¶CÙdc∂’,e_˙ExˆÚ“róJº·Ë·P”=`Áéh«º,x"πƒ˙Bër[˚%FW≥Ë
-“c˛À¥±§`Ù◊!5#ÙSÀA˛ˆKoÚSÛ[Õ≤–SîÖz«ág¿ÁI˚¯ Ñ°SÚÊº˜≤∑≤ôHUí´∞rq;÷âË‡˜&)ˆÑiÛ=≤œ_ü˜é…QÔåÄ˘ƒ¢√WÀîä‘r≈…≠Ø¸v‰!:ÁÙøÈùíˆÎ7ÁÀú`÷)›Ïä∏ç˚áÊzÃè¬Ÿêˇˆdû£É7ØŒﬂ∞òE\˚≥^ÔúæfâΩ:hN∑Ô4Ü.Ìê∑’∞«˚ºCï1∞tÛR¨sÀ2††™¸˜Ê⁄öCöìS>œÓ{VJL,ª™Ô\-Íô≈©czA—êˆQ™∆_ZHÎ·V$Œh}&îu∞N™«'W1˘ñ¸{ûú≈≥‰2 œ√®Áb∆ˆ5!⁄ÕeõÀ	8€÷À>	◊;—U◊F˜:3Ä≠wçhÙYÇ¡EXøO…0†ÒlÛ2∂Ê<XüÖ◊=?dπq‰œá®›…∏∂s{ÿªÉNÎ=ä∂∫Ì»†j—ùÛ}ˆŸ–°3ïŒÇ÷„óVø·.è3`113êø…Ëò∫ÌˆÕ®6/∆T”S
-dôèFªy¡#Ì∆·$µê≠”=S-àe<ß†äyˇt´îX*”≠ æ¬Õ'Y%‹¢)çxúW=˛Ì≤)∑ÄîÆëÆR˙ﬁi◊”Ï≤wûÃˆf˙0ﬁ≤a≠wÙ‚tiƒ+D™2ıÊ»µÚíhU‰¥V$´Ô›í+‚ß…<®’K⁄.J˝eøXÜ!juûëébù*«1-ŸªÎ+£mÓÇ$ 3ïﬁÁ¬Ÿ9∆a7˜‚íi÷@÷*„€¶„ﬂ~∑¬≈ª¨).ØôSŸj¸≤JË?cmª§‹ó¿K±§ú¸"ƒ°}[œÜ‡ œw‰Õ‡øâ≠tÑ=ûYKŒR2»,é°ú„%c>éi¿™Û¬°-Ê=Çh∆‚∞Y C?Êe≠GÅí˙»Aı•w˝H$‰qQ»‹‡⁄∑Ña1˛!2VJûg»ö£ÿ˚ÏPà<ÅæÑ+<U¿ÃAW∑Ì∑≠ﬁÒqÎ!Àby»SFi%ø vÀöò>„∏œ√öÏ·¥~©Î˙[ÙT”œt©<ÜwÃ?∞å˙®ÑË6:k ê⁄<ÏΩÛIâ
-©£Üëã'ûËè˝ÅßúWP¶-π‡üù5O:Aƒ Ì€ıŒPRÂI [ˆ‡K‰Mî…Q≠#∆Lö<™f‘µrqUH™éÜ|“‚m¡¨>&√∑∑∆T9âÙè£≥a˝ÎƒÈJäº.h”‡RFfU>ìµá∞gqNË‹_E·}Ω Mπÿº˘»Å``CînhãÂâ˚Ω>ï«,9gô⁄£‘¶’:·(Ì)í™E\9˚tƒb˛∆ÏT«Ï∏=;R/„Àæas≤˘§Á™∂AÎC-¯màåÔ*÷9˚0`Öë6q°Ê≠|Ë–YfÆ¥,ûŒò∏[IÁJOpï…~¬¶àË4ÕKZπ·ç≥a@˚nì˙^ñBÔä ⁄’ê7_¿|ËCG›.,‹æyéFÎÒ9≈»ho5~Ç∑€ˇTØPO¬Ωı©: ∑‚$¸DØ?„∞^h˙$=Œp06˛Ûl—°_?‡ÆƒπQWΩvÍ^v˜o‘1ÁÅŒunà¯E9KußÇ_πãl¿‰˛$∏Ù˚eó.⁄√CàM™væR∑oõ≈î)B4ª8qs9˘¢~u±˘R3ÓœçìòWnaùÈs¨˚ÃÉ?6køZEM”’Ú^oeÓ/K%ÄƒD˙uzÒ·q!qéíŸ‰zﬂ®a|ïÍçF§>¯ëÜ‚=Âñò†ävm—ã∞@sx∆ú$!âÇ3‰_xVﬂ∫¸ﬁè6€l,n∏õ"RÎSu√	À…3AV÷W:$*íEW€‡k∞ÏUè’öÙözU’Sˇ	m@:.Ω÷ˆbãuÕÇ|≠ÿK_*÷jÛï™˘≈õ.Wug`fÌi0
-&h.<9˜®?ëw¶Ÿ˙›/Gæ}Wú.ÖP•ädı#U…=lj¸¬©+°Úx€x5ÔßƒØ[mG˛‘‚X›wÃ«Ñ∑P{U®•.àèDj7<ÂÌ†<Í
-°b˙Ì}
-:ÈÎÄ⁄⁄Õ—G8Dù`¥P‘~:ÕàFãÚùÊ Óy≤ÈvÏ~+Ê*@#@
-¨i7Ô	∑øò}MÄÍûô∑≠hmI•hs°Ì¶ëÊ◊0ÂC¯ø\›5áVuπ»	hüà±YYÑˆÙ<
-ÉdUûØ˘Œt¬ßé.a`À∑>—Ë÷ëIá €π/êÉ`YG„(>Ì ö–º÷√Ú¨≥=?röû7ÃñøUm%…∆~JnJE\÷QpM!kBÜúXò)z6b≈∏1Ufùü=∫§-ßA‘2-sDΩåö
-æÏG0d.›äπ¡MIõs∆d£ˇhï!`——¸ˆ¨;±ì‚"=(ô‘DïÕOŸøœÒ8~{÷=ør¶eñÀz˝ÊÊºæ€ò∑È´0’Mr-˝M6%ÔX’ ˜É√Ü†ö’ÿÄ<2!Ùo¨Ê3£ú%‹Ú'-gÏù∏Â/3|ÃˇuãòcÚ}!;µQÓî4ÁıªÏÕF>ÒFP’µ©∑;u‘æ˙U˜rèœ+ãHiNW¬t£RﬂV9{ﬂÓ¯Ü≥xÎ⁄6è(Ã¬C"z0oÏÂ˙¶€ïÚ¶¡'Íµ[ÎÃÈ˘aÔ∏I≤G;`≥¶xqU≠‘Ó]¯–ﬂ‹¿∂%˛ß4ˇ∆,∆~8bh@5?e‹àÎÊ¬<U9_™rÆ‰_˚ÍÁïÖhã Ì‰¥Ù{UŒ-<ly*∫bû˙¯äz˝Â_Ñ∫>√kò¿hŸ´’ ®|’÷ÌÕ}’÷øjÎ˜›ìﬂó∂ÆÚ›Ø:˚Wù˝´Œ˛Ugˇ™≥◊{ÙUgØﬂ˚ª‘Ÿ-_9£∂w…_h¬Vá9√Òp¸0<ﬁnÆ˘!µ-K_GA“8•'÷a–åº§)%?QäK⁄r.V»∑‰ùÙQj0NæYÅˆÉ)+J50Ü¯ç¯%#D∆ByNüü√ƒV$¬£DÑ7N>;€Yó°∫√µX˚ÉIˇ9ıˆ®Ó`EΩó¥ÑçŸÔy)áx˜ı:ﬁ•W+Â`1JπBõÃFΩ`“∑gÎV'O=@UZcôâÆeu÷ƒ—†ßÈ£/w÷t¶ôä‘b[Ûµºù◊DKDï°≠ê=íﬂk≥˝Ò§à˛œÁõu 6+Øµs!∂lWö/B∏ßf≥l6%ÌgH˝ïÆ[@ È‚üˇ„ˇî_1¶i8$tîÖW]g“®_`¡Ñ—F_ÌihøVÜôó”µ∂ß/∑˚˝.y÷;Ôùì”√Wœ>Ù*∏*FÉZªu@{ÏÅ¿„‡ıÑ·8%a
-‚¡%∆Ù÷Âs}^^jP`⁄û“ãC‹·§^*0ë_ó}˚KΩŒ"o'ã3=£—Â˘Xˇ«\mº\•9äZ®ˇÓ≤f‘Rù˙∑ÖÈ¡áÀ ¿J ˚∫W?&µ®©§-⁄º¥·<kfâ¿ ‘§`∑µL∑=a∑Y˙[Õú¥œ{ß?úâ∏oq‘e0G^∏Ê~ã;Hîù˝ÜñÜ√™™,Í¸‡îÒ-ˇ5ë®ë•EaÂ‹*;I5\=`W£⁄=`çÍy©àF˜Ω∂Ø£ø˜”âœ≥TÍ8:xsFzØ~˙©w⁄{Â ÚØYÜD6”4DâA	V¢≥yÉïTÈJ<÷◊™aQ—∆k∆ßπ£Ú∂óA\Ñ√ê¿™°√ﬁ“SD)=c%äƒ¡kïÜ<Ωöçøt
-z˝>€Ëx÷í„d¸	*Î6µ-≈⁄¡ófgpW÷e|
-OÇ1h∫![˝“	Á¯)Mfñ^†≤nE\ÿZ¨–.6Ìtê"ÿ$˜fàx§£$ú¢ÅÁo ”˘3®ªÀÆ6â›Ú,	2-ÙÍ≤qA»4@a≠Vwt5U*r˘î¥hƒÇ	9îú∆}˙>∏¶‰%l«…CÚf
-Í›9bü\ÉrÊ,âﬁêèS7r~”ŸΩ—Ï—¥ı0£)iˇkv≥≤tZı´åZP+tbNbÖ'¢’ıµád˛≤ÀØthyÚ~Ëåf@âüòUæôÑŸú‘áè.D~ß£ád4xHf–“C•…ê&·óNäM¥>)ùsÀüÜÚ_ …P¬Èü¥Og”ê?=>I¬K0H›^`œ.¥dqÏG€ï±Î[‡3§…èéyE€ˆÎ)/Øæ| l∆¢_≈Y‡t‘Ëí=ª]QÄ$ãG1¯£ ˛©£¢ıoüH]_;Qf+¿±ˆHôä¥ø∫K7K¬1<Ùèêo∏Ä(e|f≈—!4
-í¨›>Kß£¶GtíæT÷‡‘ï2C“«îa∆êS∆êøiiLÛÂã€—ÌwŸâå{h{}â¯%‹ÆËBçˇ÷’U>£Æ€^±≥¢Õ'{≈£Q~òoeóñÛ|=^¿vÆı6«2)˙lÀµ§Ö:·y+ì˝¯ÿΩÓÁÁ£g„úi9næ≥X9a‚Q≈?ˇ√öﬁòµìCÁ∑ÊŒeµü≈œ\µI©l¨÷,BÂ«}¬±ËwS¥Öw~ÿ634∑mk`aÔÀê[≤,úÕ<gu£_1+≥ïﬂseÙ˚1äúe"…yêÙ˘ßÌ€™„Sdƒò<˝MîöÜqÕì~aLΩ–bæb*Ü]∑à]∑†ΩÓX2/LªÕ?É¡¡e´I(úDËõ/¨öGÏîŸ–/B”^)X77<-“ò»áPU®%4wéÓπ˘⁄iö(‚vPÿÁÑ \£C∞Ü◊πÇWÏA¶…{·•Æ +„π$Â √,ﬂ"è°pß\‰	,Œ¢ís°ﬂ_2Ñ™$WóÅ[´g!/WT>∆<≥£˙∫}f+i∆G¢bvzG◊_÷<bûø˛oŸÕù°zp¡~jLJëÉ@!ÈŒ?~z—q*ôò‹¬É*XG¶(ÉY'ñ˙^su•G,(‡ﬁzT¨ÔU–gc5ØP&ªl¨Èì]X'L˚~¨¸¡ƒ˛NÀªÛ{d˝∆Ybã^-˘(ØÂ´¢ rıÌ4á®hp∫[¡ñ<≥d*y(à‹,Wë°)ªíy*&gôky˜ÉS(“”Y ÜÅ‚†Ô„˛˘{Á	Má∑sªnßOIın?öıX*üÙç{¸´nÎûOí€qt<vﬂ±›ûêG÷Ìª
-âïÎàË¯G^H™åÓµÂxÃ˚N≠B‘è∫d™[ìîo1hèµt/íu•ù©5é¥öO·[|7éqÔwï[î˚YÎw,^îá†bù√ )¨SΩ,ÉOË‰2x˜iDˆâj—cñªt_õ@Î]Ö1Æ»h‘	(_"Vïø»2LÇ˛YFØÆ‡]¡xUió√‰∑πÖWå#Ë ˚≈ª˚Èì.PY4ÒI√éÖÒIL)•∏Kæ±‘É≤([Ó‹n—91ÑJàm-ﬂ ?yßA÷Y#ggÔ/ñ‡:y∂©°H C∞*! ZÙìxä!¸IYÁ›+ñ[!ÿTYH£˝€[OÈeò›ÏíµáÑŸ]‡∑Ó€e£ùÑcx_È˛ı¸˛ıÚÕ6Ö∑õ(_ Ú™–µπ‡Áí–ÿYâœ<6<oV%gmÊÜ≠,<ô^†—À◊@£∏7‹Ùè‚˝AõCqãê‘ ’’ˆ∆‰¿wò&AIÔ"&"&è;`‰G"˜°î∑∑:‹¨ıW[6I«ÀÁ‰5ùÊØ‹≠gºL0ª÷ëJ|•Ü±È•-ß{ 6…ôç≠¥Øhî+)<x`ò˜6≤õ:;≠é™t8nTÁ∞VØMc9UÕUk¶ÙÜ⁄“˝U»>uÃrùÑSèó‹ª¬®»xr6ªáŸ˛-Qœh.†spÁcy‘nà¶êHd|°55ö|òÛG˝jRhòí#ö‹–k:©Á˝ùöf›Ä{/˘◊:!∏L—⁄cø®ûX¨∆≥∂M.≠n∑;’=`r°Ñ)l÷çpZwÛS∑¸lWΩ…‘ê<Ÿ˚ªƒ›
-Ú3d_Ô^ˆ^ΩÈw‹b˛(å◊ ®º3Ωc2*ÔhÀËC¬{Nc<rZr1Û*∫Üá¥∆hùúg#¿
-nBQ$ZÏt‹⁄	∫aMà\u
-—ëƒ≠ﬂ‹˛Ûø˛7rF·å$6zv^¸âY8"¸~Fıönìö§ºæı†≠]o/"xL3Œr∫k•›Ç÷t´TÛÌÎ˜
- °eOø»Õd˘ü^üúæ~’2;èoÕÊõ≥∫=≥df‹Âÿl_˘Ì¨πˆÓ.ì_“Ê◊´Y\¸ÜÅV‰¸I§¸Òî≠6¸±ù≠e%êCˇ¶èÃbô‚√DÀùw≥Dúï'lÙ(w?Y<tA®hÉÍÖ1; Ó‰:3ﬁëˇa‚£∫÷zûì‡o≥0	tàxã‰å7
-ÖÅè/gÈ.ZQAfS˛ò&†…$7´ö¿2≠
-3õª‡YpÆı√’¸˛„NGp·|ªÆ—Ngoï?h„Û\ßd[-gŸÊ÷òOCpPˆá…‡p+Ñt“Üﬂ
-(÷üΩøep◊⁄†"©LUô◊÷‡¶¥«)–Ä¯k€dM“úq≈
-ÚUÃcŸ[ÂßTıΩ9ŒàZÍ8∫Ü¶¨‹°7P‹l ∂7ß…5
-˘o±bàä‰6ΩpŒ/>·öœ¶%8–Ë‘Fàû–9õ¡û&´ò”O~éG±©´‘!Y≠…Xï;å«Ëí√<≤CÈp:LrÀÒ≈»!öJ∆»”¥Zé
-ºÃ«≈«|’Öà¢_ŒqëoÍ5ÌâÅó÷=a6È~V;˚gz¡"}1Û/Qæœd{øD¿£z«ƒ4ò£πw8 Eø≠.$9œﬁxˇ}qL˚±ﬁ=R3qπÒ±j˚Høõóm“rÌdÅr’ƒÆe⁄¨vƒ*Îc5}}TvÛ2oÇ≠W7–˚Á™‘gØF≈ZR˝<ä√˙≥“~ò4≥òŒgı1C0.á|x˚5¢Xt∆@GüêX<4—∏4¸?l∫ZÂ±√øáì÷c¸∑¡Cgtfò•	?<÷ã¶¥ıˇm–kPI√?pÿá3ÀÿL∫õŒÎ‘úÂs £:¢ÚÁ±C¶cTxf£Â1}ìtVíÃ÷vvı)y÷›ùÖ„‡P[k|9ªõ∑Ôy<h∑ı¶"ÛÃΩ±ï`ø/Î<@j;ôa}ÕèLnÎﬂœKnØg⁄\ÓÂ—º‡+¡›¡c`˝§Ñ∑≤<í3gAè√	6›7iL·´Æ6…JÖËDByœí{îlJØ˘‰π$:4ù◊µG?*]…Uö4P§Åm∞lâÿYûàÀDl à˙√VzúËsßóCÖ¨q/Íª/©:èIµQ_-ú∆-N34X†[ﬂ BDÏ"˘–sá<ÕÙ§ı‰U¢{˝Æ¥HÎıHßôRdŒÿaûçQ<ïﬁ‘7„SÿQm"¨kî≤0©˙ô«Ø >3P´7Vé|l6~%'V¸¶ºSc)´œœY8∆lå)Ùö•ﬁ[≈02%ítﬁ»aÓ©˚KúåÇƒ4\ªW‹(∞÷+€(Úˆ”÷0öœ≥e]n)‰H+è Öc?	∆ø®1∏g,˝õ€Àä√5'∏bÑn5ÏPs{Å[≈ukø™ÓaFƒI4Kk/(ú—-ôÇ≤£IAëπ%«3¶úø§Yé“ Œ™∆ÁÍ˘ëÌƒ®ú≈ŸP€0‚X∞D±^wv»˛WO[Kƒ™ÒUõ$‚ﬂ∫˛hë¯÷“sE¨´!,, ¡%xù}\—YîµkG „Bce6π–3& HV1Mú€MÇÎ∫T? √1[Ê—µu£˛L¬|Dµgc=≈#™ÎÆ:4 3N_å¨?»®¨vgìMÙ[&Ôä¯•6±y#Eﬂ@îú»Ä4—}M˜41Gn∫◊<q”4{§)Ìwg≥Q§dLÿ¡‹Úæãxÿ∆cæç	Âë˜ÔLaM∑1tO˚bPÀ@móˆ,Ñwˆ!Åìß
-ˇ^ëƒ¥ÒŸ °⁄UI*‰†cVËWzì—›≥@ƒàP§¥˚–OÖ“ê<ÏîjÉ≈>¯Ñz”í\µûö’ß•Mﬂpá˚RÁõÜ5ò»0—∆1,BÜâ&Œ‡K%Cã•W5cæaÒ}E‘_Iüô¡*]rw)ÉEí\ÒVòÉ*jR^…)Ω…¢·v±-ôÖÙ∂Ö“õÑÒ-§_ô∞Ê!⁄-¶bæç‚A8y¶Yú‹<Dz?V>¯§±Y†3;ÿ£ìõ∑ø<nøÂÚâ™°û]&®ßîuRå~u∞π-Ó˘FI©FºÇîÛf∞ﬁ¥™ü¶¿“aÌ„$@7É§%cvû»ƒﬂª‚v°Ù¶◊av9$ÌJüäF8<µª”á7^ƒ4È∑vÅTïy}=	í?á¡5ŸWF}Æxå7∑PÇ4‹–á√wÇqK©2£À9¯0Z∞‰ŒU8°òÚÒäÈ™ñîÁÛ&lí.ÓGﬁ˛Î7Á-5Æ©\^'QjÎ$]^ôÀÏ¿Ô8?ÅZfG◊¡√…e<ÊÓﬁ·´ÜΩ”ˆDòUOí¯*Ãd±—≥Ny"kœblNØ≤∞Jáûê∑ïù\◊Pÿi2¯¡Eòı©Ã3≠kÏXÿ%∏iiv¯¸Ù/a6dw•ÓkTîKv0ÅÙ‡xƒ∞Àxaª¸Émuÿ∞lÎ†t˝ëÄ2∫r˜`.	ÏçŒ¬4Ïís‹Õ¿2ﬂL5Øè£8—Uk©ﬂz1ÿ≠TW≠´I’Ã ∞§»ÎÒﬂÉå¥'+MÊTôÀå∂^¬Y2ån4-Ûy˘A∂·òV˚Õ>#¢‹‹"”!ä∑ı∞‘öy*U‰9˛a*≠ÿåÔ≠à,|ÀúúŒ& „ú<M¬‡
-˘•cVx	[˚¥»¢∑ãìâR|£1ùHÊ`£îßh4=≈–>”º<G¿ª‰,Lì◊@2œã@ûqMÀ/ _ªXUÆa:à©»$sQÕª?=∏-ÓN#DÈÏlHj”k¯§·yò~V˚Î)*‹ëçäﬁb8Y’F⁄<GoZ™Ü˘f
-˜¢{"}wÂ«d‡y$yÅπ∂áì–<©4w≤	4üò°!†<L?jèœ„>ΩiY L‚x™ŸŒkS>d›ÚËÑ|%û–’˝T=¶≠€‰w≈nOup?+v[ìô|ﬂcµ∑QàT9pyÂÏ”iÃç'îúŒ’¡«vœÜ4… ﬂ…QŸJö’«…ı†]©‹–	çn≤2-›V®æÁG¡å£∑ü…,•CZ[yUd2ˆ\÷…%6Œ^È3◊-Ç¶=Æ<HÇ4’ã‰V∂©tók†tY¸ÌÏ¥dM{˝<Õ∞‰”q0†ë∂œ?ÜQp]1vπ»è¨Êà⁄ª¸∑lOFÀM;ÕqÌ~~• †Œ˙5$sﬁqik0ıªÇÿÀˇtStÌ}>≥åhAÜ¨mÀUz iﬁSÔÕ{⁄á◊uF∫◊˘–1ΩIÄŸë◊ÔÉ‰=Ëß⁄Óöÿ·Rò∆î˜†i«ä„Aê≥aÄé}v3π4“ÛŸ4	h?≈;ç˝œL»;œ˛rˆúµh$Á:Cˇ€,º›dP˘˛ú2∏sr<'hûIÚõ® d9DM[™ãœ±›åV5É——k√—ÄÄ„–ã766\á7+÷å¬¿é§7ù&]"OÔE◊ESi’k,zøØhså≥o»≥Y¶”%¯Pû—%rã¿Ïœ¡5Câ˙>XŒÄZùô¬@“H¶I8±Ÿ¸cëÆíEF! 0Xg˜Ù÷Oõ[ö±hÆÜc9õ%4#?Ùi+ù]éÓeì§¯ˆéﬁ˙–HÌvÏuùà^ÇóòÆÇNToÿ}°"ô)â&L9⁄º«DØ%5»„CA≤£Z‰I/áA-¥Ω$ß‰<á—K.á·{˚∆ûüEQﬁzs›¸âÑ…˘†ò∑^Ü@Q∞¡Ò#¬ßÙ—1˛¯y∆~ú¡á™aïcıÈÕCj¬„ƒÀòÎlü$Øb’K¥u¸Ã ∆Gò±Ñ Ipç«AõÇ(:˘Gµ)∆ãmtåÛ=∞˚ ≤V¢§˝©¸±x\Üí±—	´J)ú≠ç–MaÑÌ6}H.å”Ì1{àÔ|√\†_¥ùƒ∆∫@ˆ¡á◊Wm ¬àVHß¸Òˇ∏‹È:Ip',Û˙0ËΩ}6√áì,Í‚4cÃŸèÃh%´<,oåÓ¢´πrdﬁ	}ö{™Ç<L?∑Çµã•¨˜+	0òÄôè√,dÓ^¶’«iL_{HvV8)FÒÄ^©]Cºã]_Âh<jˇ(SUòuo«»Óv	ˇ≥d4å“≤q9∑`ÚVÛ?’±’G¬ãÛÿƒËÚœR†bñ:V#A*!Éä.";—eõ˛á⁄}¿p^òqˆ*ä„§Õû\%¿E*aÄç nﬂ#Îy|ãEßÙW⁄2‹˚h-øÊ	?º:àﬂ’;3ƒ|±roX#ÿõZW¯Õ{dcKmü}z7¨Ω@FÏKr…“ïº≤~P©nQ<zß,F%»ØΩ≤”czW¢∞®±Àπo9t)ûº¢Ô√µüàﬂ w Õï ÛÀ_cºC∫À~®ﬂ‘√/µ•<Î0_X%ÏË√A¢©¶ç¨gI(p a’[ˆ{_„ÔV‘]åÌ—’¬0·Ì◊k—xõ6§Î"V)„ıì4çb%ÍÒÆ?ó3\4‡\){é09\Ñ≠Ü"-–‹Íp]€˜:ËµåG+>gFL$`Û∂?ûJö7
-∆4
-ﬁ∂à∂+’í&ûÒˇ–ﬁIHª2Øylä(HŸa
-sô≈IÀPà‡Ì\L5ãk «qb6ÎS‹tœÊ9%*`êÔÆ 4§h™õK0π*∫ÌIYT…€0÷*jô™ä‘j]“iò	¸=h=æ≠ûæñbFf0KΩôJöá‰TÌB?©,0—ány*õ’¥*≤4duÎ´í/Éq%kµ≤<JŒ„,»0ã1µ•‚´ `XLQDr>√vô¯êm6g1Uê—'ÀÎìÅ≥ˇ+a…À`2Û‡Ó5∞©RYÛ-î?ø7V9øU-ø\Œ‚Bìî˙u¢2çÕBîºúöû‰Ä»¢‡.8&¶›ÏíŒvëΩ÷]€0’&eœù”)>U§∞Ìòn˜,å¢
-rWÑZÂnr-ÃV2XÊó[˚E¬ã6≈£∏äçZvìπ#AîñûÜRiﬁZ˝ÿ8s‚∞Ëú{úÂÆ—îp·Î∞o±ˆs√zk‡Pï2"¶⁄†ïN5fµ€.ûMp§r∫ßæœ∑ÔÆ;Î[dàˇ<∏S≈,	w%ÊÍÃ∆Œu8?Â—›ÎÎUnZˆù~.MHÜ{¢chë'Ã¸’VæH[∞Ii‡ä®¶€YVÖ_rñô…«Pg◊rTóò`˝ñ:ﬁ±ôÛü±h‹üê•7Ê¸ÎeŒøQÊ¸[Fa˛ñÖ sñèø˙0|!€∏Ω!ª˛›X3meCÜ3>iz§ p|™9‹í?¬±~ÔCÏ6˛7lRAÜÿ%v˜MÁmgã◊H,m√9âgÓ4¨híaJìπ¶°Ö-’”2¶`LH)›ã¡ù¸ı^8˚M*Ód+∏«∫•Úß-K5@á< kÜ4  o†pºÆñQîì∆¬Ω∫lçRk∑˛ÁÚìJb›ÄOJq[?À›≥•ˆ«Ù¥≠ˆ™ç√õÎºÍk)çÀÃË≠`ƒ| VÆ—uŸ§ÄçÜÂπ‘>03≤©ıb[¸ÛzÍRq59@òg™ÄùhÛ"•SÉ„ÓL@j;<—A
-zW∏ËN¡E∑÷º∏®ó	¡‰¢Î8k¨º‰’ï∆:ßsò©'èÖ…IÁ»ìDëÉa¥z4
-Î#&Sâ©ZıñÖ∫ÎØ∏F}ùØ∂®åQÆTf+æ xÍc9Mç“^€yæò uu$C8‚yÒbû£i¢õ” ùÇ~¶„“p”
-‹)Ó∑ÄÑˇ–"√ 	D˛ö„_ÿ∑∑k∆J{Ω$†l€2≥·˛mÓ∑3>Ç˝ÆRÛ◊ò}£…O	Ìá∞˙ñ;bbø≈éÔ?#Á≤Â˝∞nÄ∫+Æ˜-6‹≠¿-ö W≈e=;˝„©ıB‚´+–r˜[€p"∆∆û·Ì∑˛eÎ«≠GZ@øÍØπƒ
-ãﬂ]∑óv)n2òÓ4åeoµLó
-_µì¯ﬁ3ÿ%A“	jK6CFñƒ£ ù4IËÕ~kìl⁄∆À/QOañ€`y”0ã?Æˇ∏˝„ÊVm|ØΩajy	2Ö#P´ZË∞uúB;«0ªáé‹
-äîu…Ø¬#%˛Âá≠ﬁÊ”Kô0v30Œ3»Aë”‰=UÔ¸„ßªË‰¥›l–Î¯’¢]∑P≠mu˛Õ±:_']{Ÿ¶Ù<é£,¥Ò3–Ÿ2`gŸM∏¶Åãëß¿N°Ωµá∏c.¯≠ÄèÆ{?ú1±n_#ÿ8ŸÿÜ:¯O2∏hØ¸oç∫¸\ıö“>¶CKÎéNZ…e:95•Â⁄ÅÂ cé$güwïP*±Q(Cº@·Lã”Z\9ˇzÔí.rvÍ>î¯≠B∂⁄≤Õnì¸Ë≤√xÁ~kñDÌ)§°ï9ò˙ﬁj.“ô‰UçŸ@~’´Z7k°¬h41∞/	‡FÙ®£1Ê*ÇOáaø*U…Ó•ô—ã4éfË=åßù5í q¬œÎŒ#¥j√?j!Ωí∆@¨‚€u.äw∆Igs~d√†Lxjr¬ùY“‚ä1ˇÙOõ∫x0Jß@4Ø¢≠]*‘Â<WP≥Û*Âïn‰Û”°≥,&”¨K–s„q'Ωƒ®˛™/S\î∆‹©Õí+ªf$oõ)/cÄ	‡∂=8K„§3çC‘@M{…_„tj˝ÌUoâ™≈pR©y§Ç´X'óH≠oƒ51‡~)›2Y¶åΩ6©Ô€Vı]tg*“Ô˛0oü¨∆RùrΩﬁ›ñ°9O⁄©‘5Ør˚J:¸ÚR|LM∑¯‰•∏ƒ#ÔîfÌù´Ö“–Â†˝ÿ5€ql5Oõø4‘⁄4úãÜóÙw|	0ÙRÄamÂÊ¬’uã≤°Ö¡“ŸgÌ8XiV1<Ê/¨∏b*xX˛Nô≥ çGt:π—INKã9e¡≤DDÀﬁÄŸπ8È¬ˆﬁo{ÔÔ’¬;…@∂cI‡iêÕ~ù57ÌZ∂òsìÂYWÜMVØD_?*‰IV©>ØÁL¶y8á4íœÙZÇô⁄Xe»RÉº√R—NÉøÕ`{õ¥Ù<!b3ï FN8ÏSÀT˙∞>ﬂ4ﬁ¬c“]≤ñC⁄rÀ[uâÀ∫;Âl5è¢sEWÆÎKÂÀz{˘LKhjÂe·!˛ì3ö∆ê“¬;Í˛T∫Q	›X≥¯å≈#vaHŒ˘fŸ4óúú¡Õ·<y˜≠¬ß°k‚¨5GI˚u≠w§ÉøWMcmïØFΩuÆÜ˚Œ∏JU<dî2)G∆Äf%Éu°ò¬!î;e¶\÷YÀ˙ÜY¿qÃ˘sñÂbù3œˆò<Ω¨YÂ“ã±cÑ7Ø!&¶M≥≠≠¨ƒ†Õ®Pûu∆+»çÈAÍÁaüéÌS–+∏‰0-$áÆe¢çtnìˆ-¬æ·„Ørû~ñè„Å‚Õ?íöÃöJzÔE9KÙÑµiL)h,*ô¢ºn´)vr+=ÜçÙƒ∏èjO…<?qG
-5˘Ä«¶π≈çp–›&‹¨`à=¿,ù ƒ$úå:ÊÑç¢}«±¢=ùÀgr£„ØˆZPnÎÒ≠Lcî"Ê¢‚bÒ@V˚≠Ó3‘í[·áŒ∏-ªEéuºî3Ÿ.%[’9[ƒø√n™≤hz.Kv?ˇsÁiÕ∆¸‹…πX∆πÿgpÍh?‘ò:XÆ)-qm∑uÄÈojê7‰‘zy¬rÆØ)‚é_Ä0&Íâ¿?k”Ë[…ËdAﬂ,r“Dz6ÊÁ8]ã/√Òä/6G¨	ı^‘
-Á+n§A”IkŸ<˛z	´ó'Vﬁ†92D‡ŒpíŸ$õç‡$üåíx¶ËÍ◊´£W‹êÚrã¶géH5o∂€6ï—@∂«ÁY|õé nÓﬂ)ì∫Ç62_¸`—±äW@ò„;”YîÓàB≥˝ÀûEbe¶gàµ?&Ø'h'#ﬂ¢8ZZxéh•NAyÁglj≥oòb≤‚≈BàYîCì-^Ë¥>ﬁæ3*ÑZ∂π?∏Sˆ⁄†Ô≠ÜøØÊAÚ7ä¯J—≈úeäÉ_,ÇvÀûL·¥ÛÈ3ΩÂMÿß´‰0…ã»È™%ˆnï6sÓÄ√
-®`uπÛ¡ÿn'bCØËºu\©¸:„vä:0oy∑/w∏e;P´©¸ wÏ*´ÿ9X;8‹ZÃœh¯∂v2ôµ Êñ~˝Sı∏◊"˙f˙éSπ˘àﬂ3.Á,®…hI~æ<yUóåÈ])ènÎjµ@≤Í˝}dsS®ÄfM∞'îw?ó£garé©…S∆˜UDa√ˆ†jóW¡?Ë„{èï.I,§÷óX]ÿv∞ê∂mQ´]^SºÃûS‹|ù1fòò›¶xi+umój Îbﬁnliπ«ÿrﬁ¢À(øeâg∑≠÷1a	9Œùx
-∆}Çäy î7/òÀi`òq€YR°ØgŸßëBÒ≈O‘KEeü|@M3ıiƒœ„xÄ=˘í%œ≥8	>O…g~ïúÃ¢œDÙ‰4˘U˙¸mIü∞jüµ ö£/A˙T 	™ì*Ÿ®√guœ"¢s3ﬂª,X6q|Æí°]¯ÇCN
-˜ ⁄~?∏¡Í®á˘Ú`.œ˚&jgÏÂª“≤)›–¢)ˇ(ÆmirW|ÑéMzé°#˝ê"8W—!wQå·Wæ^åû	£Áy˚∂¥ Úﬁ_h?Æ¥]ªgoU¡o-æ»√‰„j!€<$Ω(—˝E√ÓêÈ¶F’™K»ö˘»Ø/ÈÑ˛`›'[Ü’B¿≠Ü7?ù1¿÷		(£3ÿ[—,ôI≥Ép ´":‹y©ö±=4éÌóê9≠Û¨/%§«ËÙ?ßÈÕ‰íÿ9Œ†Ö”\á8Ã∫óÒ‰*L∆∂;	y«Khùº|”#m•>§(¸∏¬á9"7x—>}¢)X\¶B<vl	≈WqB⁄¢™2âØÚπµ?º‚öÜ@Fgà<|t˚A<˙y|âµÃ≤v´(ŒA¶›–tàór »Œcöf/É4•êaXæú~*Ù√!Œ•?R4Ñ¯é¨1@•©C∆<®≤”Yg@±[µπG¸&¬†Bÿ⁄∂C42…<YòE–!Agl⁄DÕñfFös`√7®òM˛—û§Óùæ–ñÊõ÷˝0}ñ¿ E’÷ó†ÜEØß¡ÑìÅﬂöÊÈêñTI˙]∆äË$ö•5ân9ã‘0~ÈGÎLŒA0ÁZ#∏ˆÎÑNÌY‹®ƒ$m˙$zXt=q§Ù1L˛ÈÉ@áÇ˛∏yãOUª’;>vgﬁæ+BÚï¥M¿GEk*Á#ì&¶>≠wçÔEÏûëO>!-ì≥@Ã¯∏Ä¿ñw¡v0∑X±0óÀBV±≤ç)<z´™~Cp∆ÿÆüøZ©«í‰µRxv~¯ÁÉ{§=icTÒ‚t¬˚Ó 5¸ F, }‰b
-Ú˙^%5bka¢©6edW‹°x+ö5˝"ªXÖvïÌE«?ùæ˙-Sjﬁ{/∂Ê¢‘¸.o∂V/w[ÂkïD›¶ûW†2™\e9ﬂ)5Ù)ÍŸS°”vQΩ!©zjì.xGÜG´W4C–SnJ˜ÀÀ˝‘'AØlX-∂ôlV3π˙v≈˝(ﬂÍn»kÑ›I)ÌyàŸa4“§w7êõÜf~àjÿ´ZƒnπRö±¸O7n /(s‘’…?˛A¸X4ÅØ¿ãW°ó‹Ÿ¬ÜÅ!î√[$ëe6õΩBir	G‹0À¶ÈÓÍ*úÓÉ ÌŒ&È^9Ï^∆„’È0Œ‚Œ˙ˆ÷˙ŒŒŒ[è∂6∂;˝ùıããı6∂÷Æ∂ü\ÔÉŒˇÌﬂˆw÷æM√¡˛É€–P˜À˚|ÅÑ˚¶4w<≤úH4 ˆ[ÇMwôø Ûz˚ÆÅµ% ∞@OÉìΩü¿GÊ
-M‡≈õelp÷˚∆%Ã‚Å†!£X@4€€b5*ã≠?lØ≠ÓTÑÃÕµZ∞6Zq6≠·pªe≈)o4Oè,oÇÔÕ¡u@-˛,˛%œ$,-F∏TÁ•2zç´écã Ÿ¸E¿^Dˆ3∞ò™D+^»‰_÷≤;ÃÆJ{Ö	¶Ì"Œ\lãD¡Uf,™[⁄9#”•›ñÅ¢Äˆ˝ÇJúÄYvˇï°ãË⁄/âFi0ôxdÿ;dL?tÆ—áÀ”ìŸ‰ñ’ÓH|Iß'°¨7∞^Œ˜ïπ® v8a6dd&3 ñ™ œÖ£»Hπ!ú\F3‡ÌúÜ©ÂÎAwQke≈Íhg#¥aB‚5LÇ´}•”Æ¯Y√ aãˇPœƒ`â-.8ûˆ[ì8ûº=â·eAíòÅÂ‰•ûye‘+‡j^˘¬ª¬≠ÀOg#JNÇå⁄Ôw∆∆úÿc1ãœC<Coî’w&∆R€+ÏÆw÷@-TIŒÉ©∫∆Œ—¯“É;…2Ó˘≤Wm_’BÖWûΩŸYkÀÉÙrÿ÷4;;/“∆ö-Tv¬qlov'ek˚&Úó–ˆ\≠5∆"‹®!ÆE"¨\"zÓ<äÃr◊lbÄ¨-.”ÌÆ®Ï£Ê1ûûŒs+◊ùê1wHπö}c<+ÒlnÇ´k˛@W'/å¯æ@≠ﬁÓÃ)-EHÑÌˆ	õ∆√J0‹—ÎÍÌ\PX&[õ'J◊¥;Ê}ƒ&πÑ&>¿?Zo&∂p0	˙N ê{«∆j»j=0Í£Ehv©‚d≠n;¬ˆÓ{ØR¨⁄>ﬂVÂè.gß>˚]lUÁgΩMß·•‹¢øù]Ÿ»"`<®eüˆ€≠—)–Y°âL±–|(ô»ÏL¢Z◊{£‹[*¨gÔußIºúE4‹u6q€+ÙdÀÍ¡Î	⁄Ü^—WÌW3d+mÂIDQıyˇw·µK&¡5fí⁄7v≥ı“(¿?œ≤6z˚ª∞ﬂ9|˛›CrK˙XoÛªç»*aüå±‹9|í„ˇæ	hNf0Î·Âw‰Œ9Ü]“ÍXgs…:¬gDöû… t)<ï~î	›öã.≈sﬁTÈ˜ºt4ôøÌ£»fZ¢<ÍŒë)cy-¬!Œc.g]xıG¯ÁÙ¢›Í3\R{¥*·qã¸)}‹¢5¢∂¨rgùÉ π“æ!–ø]În„_ä|ÿ9cXÌñCG È“:
-¢8¢Ãùp¬¬›-TÏ˚yÂ®büE1RB7?=‘ÄØZ(÷˜K 4πhÒ:BÀÊ&À≤¸çËX&êÂUs–6'∆∏<*Y•</mıúŸSåã>∏9≤ã⁄ÁœÌ;˜Jm∑È§ÁÒ`U◊†Ø›Ôˆ]NÅ˜JP†8+Åjn«4øπß˘UÇ#(∂Yûø[HVè÷Í®ŒÊkAñ∫ò z‰•¡Ã˙*[‹^¬£˜K_1fNãÕá}Ô…œG¡¯ÇF°˙ΩÌç-ˆ$ærIv”çöœqmùΩ/uπuÁ¯Í⁄«ñΩÛ∑∏_Çø0≤™íK%“•DﬁOÎÅÙö∑ûº[qÂ*·ï%7w9Ûö<Z DI~Ú∫ÉÆ|ÓtúÔ¸™&Lyı‡›Im^ÀπU÷‹≥¶˝ÛŒ√*=Öx…Ò,kÁ±…E3¨æË C≤π∂∂Ê—®ù4ªívê$q‚C=ö<¥üËÄFàb0T(”%ÉÕ?.ªõ˝{øŸug„Ñ◊7àr¶îÀã4±kN£ZÅ=ÏÑ˝¥(%∑Ÿ“⁄¯Â`Œ•∑u;öŒÇ,WSn£4Â⁄ ÒπgΩ(¬—¨éﬂﬁY@ÿ"^3‚öè˘*Ÿ~Ê˙˜ı“öÜ§‘ãﬂKπÙÙãOv`Øf ~π9ı~ŸÙ=ÃãIZ§&_4èí|h›ØÏíÌ“[Vï<Ñ¡yüƒì„‡*≥¡l827≠)=ÊÌu?‡Ñ°X6ò±±?—_C¨Gû“Ah.ß≈2XÕÄêlFP‰@VAÏrêÛ€Ä˝Å¿ﬂÅäG˙¡î&‚-Ë¡…^´≈Q˝çp˙MKÀ‘¢Â˝ ÚC^( Ω$°7›´$6¿†˙,0
-æ¡xÅ6eâè‚ô	€ÆA˜ÇëàY•ïŸOc‡fp#°)÷æÇ|˚ã^]—}º¬ﬂ
-´û·4Xî} ò<ŸÑÇ≤˛ô`¸–•Iﬂ4˛v •QLõ@ÕIæ—–Wk¬«¸UãÂ[Ω0™O«Û6-˘”Ê⁄’˙∫ÑÌGK™É‹∞»û¶äN!f…‹¸ıµfHê•Çg˙\Ê3÷ó/Æ|Õût/Åoı≤ˆãWn=u¯Y<‡ﬁ¬ÆΩ∆Eqò√$ŒìW§ÉuÚëôã]à;| ÚjÙ8{yñQÊö|É«Û¸¥pt˘ﬁ ·ú¡
-Õ…_Mÿjö@P¥∫Ü…ﬁq˙xóW„E`/¯±ﬂﬁ!?”±›ZÍNi”ÂseåN/ 'I»È‘ßNÏ¿∂8ﬂût˚4ånN·»k÷AƒZ[+º…¬ìÏa¿h1g≥áyÀa∑˜	ûfwyXÒj‰~„ úí}4‚åßûVæwåU‚{Jìô(ôÛ†`xª^f3î"Î#VF+ÎT//ZXqÃ>ÅD8fﬁL˚ƒÛ\@¬n˙M…Â¢BûÛõB‡mip8…xw}ü '•fY-Õ©_+>F9˜Ê3D˝◊*°Ænìi%¡€âóõ]ÏÙ√lSöt9]>Ü.~◊b}ø££Íòk§®,√Yı?™‘0¬eV~tÀˆvüJ’#Oúg_¸i%ËoYßïvˆÁÁïÌ(øœ3ÔÎiıqN´y√œµÎsß«EÃ≠j› ¶˝Föœæ…Ìglƒj¥‰MgcMÖ\÷⁄~ G^(D¸“ßÈ0Ë◊Î|á8πäÕ5ü…¯CáŒ≤òß∏â•›≤Åj;Àoïçƒp˛Q`©ñ„®®ã’,Ö…6|0∫¶◊÷*ÂâçOÉæDykX|Ëe0ô±Je‰»ÒéÊ%2m‘H^—å«{ªÍü≥+ıä
-◊:{≥∆"'™±»˜™…G˛ˆ8ˆË#&
-ÃÅB ‘Ùy√@¬{ÁI0¡<û7S{a4ï∂]{)÷'M-Yâ,a©){`h8˝pî∆Àvj›˙B$öÌ≈:Û˝⁄⁄Í˜⁄Ãy¶Á|L)Ÿ'¡d0ª†psYˆ@äEe)∆a¡Y¸+4bµ¬ôA/«1pÏÙÁ¡ùE95Ö€;+ç„>Ü”—!’Ω,∂wÜ–Ùpﬁt…œ·®∏C€“8áQ8
--k=~ú>UÇıÿŸ9–BRƒÊ&Ì~H—Ü3Öh¸Î˜%Ü˝çVí1L:ôÑ’óqÃ[í#Ä”#6‹¡lÇø-~_æ˘ﬂπK~Y ˜πZÓÕ√ÃéÀo'Aöj<≤Ì1ãÉπZ¥Òh[Ω‰r¥”?êZ˚õT˜±IMqcMﬂæsÇa@¥ƒAW´Ò¶Ì†àÊiªE)7˛˜Ü> ≥z[5ÀjÚrE(k\
-Œ‹Õ„pH3R¿Bâøì4úöŒ[¨Ñ1‡h±8gÇM∫lÃJ›R‹rÇ<d8•pUny{M’5∞†‡bndC¥P•?—èà‹&Ñµõ‰ÊÊ‹ïx√€b8wÎ´§√∂‚˚†≤-Áau⁄ÔM–Ì·dZ9 ä+ªô
-≤5Ωs
-l$Ç¨'WÎi!÷¿.Uè&xÊOËòäÖAüwª]Skö
-Q∫÷ß¿/Ú|2NÑ:™€®»˘:QÛ*æú•ªh{Å	W˛P\˜f'= Ü,_ﬂqClUì£—V˚¨QeCZqËSöÄUTZpæ-∞p∫ πz$i#Nø'k|ÇKy⁄ƒ3m&îuõ÷nösuPÆÓ†“|A¨	ïÕ÷°»§¨ÍØﬂs}âÁ@ï49ˇ%˚	ÎPı;°78ÅÛÆö=œy:ÂÁ∑<ÈOêå^DAù£ôˆx6ÿ8˙,1@>!$®≈¨ò+T¥√kÓq+ èﬁgÒL´lÕ˙∑ö?eÔ2ÜÕâ◊)h`_⁄òŒ√i¿Çnø¥Å1g…sDæ»ë	Á[˚ÖŸâµ»TÉËG`oîŒGé]b:,åv/ªà˚7Íl0ãH·D¸"ŸÆ±€∑m≠ i≈8T/·Ë.ÍX˝LÌô’† oÍÜÈsñb»`◊gôeaÜ~å∑–ﬂ„hi∆≥7ø)≤7Á´∑ÎÈ±’Åƒö7ª≠π≥:L_"˛HtCˆI–M)à7Á†≠1^`±U:iôΩóéËhv‰ZÜ §pˆ¢õäÒ•&ÌÆÍ^O´
-û¯h±òø {÷◊n¯ÜoÛ’ovûÀ´Ç.æÜ˛úR"M5o°06XfqêÄÿà¬´{˘Â·P∂!˘√Ù∫Ù=Ë¿â€aÓâ…ÔŒ≤ê¸Ó=¸‡>w˜ò¸Ø˙c≈XΩ€ºÛbN‹;m%^õ0#T,2>]¸è–G¥≥~˙Ö-±q	ﬂê#m^È|’4é:Î∫¯±z˝Û?ˇÔ¢/>˜k¬À!ÂπlÜùÔ9sFªÃ:g^‡ã¨m†[-∞íŸQ ]÷ÌÁe3˙:/>ƒ‡ï÷»4£5≤~1+˜íópﬁÅ "E^∏>s{—QK8å%‹ã/zÖ¨ªsl‹AFô—Ñ¿æüÛ‰«πptøÊk*·[÷ùK—¿!Óh}@€:ßQπÏôÛTwfLË]bˇﬁ÷‰˙KìΩ^^Ôi4P‡PcL„^$Á¡OûÈd -¥É˜ €yír…|\sAú∞gªº6Eóu…MX`§Ãx†e^˚èN,¸ Æâ∫F>¯]Ÿ+w‘„ùG»c“Nò›xÂµúÙ˛ÌÙıÒ±pKÎÕ…Ûﬁ˘Å◊ΩÔ^äàí°ıÜEi» \!…∏¯$_UC¬›ˆT˛;ÎÖ†êwnéÊûß*º…ª‹»§tiêiF‰yàC˘Êù_√°NúQ™˝0EÉm_œï\è ˘ÎµeçéîBÉ)ÒO¯=°åâ*⁄è‰ß%ÁîÍŒ⁄–˘∂6JÃ·¥*pbM¬mù∫@<eıv8/í¨ÁÒˇ˚_ˇ˛_D~”ﬁ*ø•aKít°©ˇ˛â ^ø∂Äm3ˆ˘)wÛƒ
-,K∑ö∏ %ó.q	iœG¨Òe•ÕrúkNääÁV≈·Tö¢Ô'ƒ∞≤sLﬂF x…òˇ ZgQÚ˙ïèÄÁõbÇ∂øºC^BÊ8ÀDØeDˇãËwÁö‡µèk“|Ù≠y3UÊWüK∂„z=U?ø¥ﬁ'ß‰Èõ„ﬁ+é√
-ΩËùz,Tyˇ  ˇˇ Ë:7TxúÏΩÎr€Hö(¯û"ãS]MMâI]JVIv–í VY∂¥í‹=}«I"aÅ  -´Ÿäÿwÿ'‚ƒFlƒæ¡æ¬> yÇ}Ñ˝æL\@ﬁ@IÆ™Ó¡LóE2ë◊/ø˚Ö…≥ø·xüüˇõÏß‚Y~O√€a4ûzü]Áx6˜√;◊ç…wﬂë∂·Ua¥Hí00∂#$}o|s∞lØëÉÁdiÒ
-!ﬁ5i{Ò€0H¶˛›öÂKÑå√ NHDóêyŒÊây)ŸÛÒèº¢ü<Úr·”Ä‰à∆4"ã Y‹êoón7†3˜~Ô„∫ußm∑;„´∏¿Y˝„dkªáœZ7	/ì»&Ì5€Ó÷~¥là€áª`øsŸﬁÓÌE∫}4ä›ì ·Ÿéúı˙N⁄èjÏ{tFónÙŸª›≈‹ÅNé¬ÒbÊ¬ÃZãÿç‚÷:å·9Î÷Jà0ßΩl—ˆßzﬂ`?¸p2'ﬁg/π≥áEBZÁ√ø]úùû∂Ïg/Ω??^7zÁ„[7ò,FtJs¯œ(Ö|G˘m‰ëã9|ì0@Òi8¶æõ¬rÀs:'G≠µ{'Ùâ:iÎtáï≠‹®[ª…UH„‰≠«t‚∂[•ªÌxs7—h·µöıy	hìı€N¢Ö˝’∏∑jwO\?vø>∆{'˚Hœ°^q€˚€ˇbÿN≤˙ﬂ’Â˙/D'"∫)¯^<˜;≈o≠Ómç}«Ô‡¥Zâ˚%ÈÃ#oF£;2Ô»4¸ÏF{£IˆÂ∆6â¬E‡∏N«üê$¢AÏ%^t®Ô∑åcôi|ˆè/Ÿ$±˜w˜`Ÿﬂ∫'Ê∑ˆ78mjπ¶ﬂ#≥øøë8⁄ﬂG‹Õ˘óŒ.ôﬂu∂[˙â-Â‚√£Ù∞?Øﬁá~o˛Âr\YgÊ:ﬁbFÿ˜±∑©≥’ÎÊÇœï—õ©zìx◊{Àiô·nº„RD[0ê3L,é˙¢Q îâkãÊ*cÿ·Äµâ‡PÒ¥xuè¥ﬁmçkﬂﬂòÎ˜tz2%Äûxò◊æ˚Öxâ;ã;c [nD>-b8çªŒ»Mn]7 ∏àÛºüâ7s-éU:˛ß3}ã˜ﬁ¨6ºc˘ëﬂå‰»ß„w{Ωè6( frá®‚≥ˆ*€ªè±V%9ñ†ôR&Kê¥ô§Æ“fz$0∫[A@∂Å†çil5¯ú¯˝Lgè5g+• ìkF¿ãÏ˛©;-"2Á[¥:√ØÉ«fø%ü—úŸVøŒËK◊m€›„3˙‚ts˙ˆ|˛J\˛
-<~sø¬ﬂ˚Ñ™C¯oœ·[Ô∏úªOó∑
-ìø*ãˇ_¨{Òé%ÎnA3¥DıâXw)Oïqj)„6°pFJª≤∞°§Ò]0&M	ñ◊‚÷ú∂à˛⁄ãf¥hCî7nh@n‡NRﬂ#7 ∑Ùæ»—Õ{¥`G,≠	C˜ ûà¿¨ΩDMúöhhR:÷‡FÒ¥o¢¨ó–dÉpƒ$1∑—Ã é‚#◊wA|€#◊‘è®–â‹8	#î˝ˆò‡ÿ¬[{E(>˜_Eq‘DõVê“ón4•±Áì#oæΩ)\ÖoûL—µ™räåi2ûøEMÙƒ@·£IÓÑ˙¿Ã“ıÂWºkOv;˝êÖ-$t’ùπıùŒHTå˙ﬁNA`œâÏü‘Ö1& Á‚R·Òp=ù[œ»&u©üèîñ«»&u˙Ωm¬o^˙≈≥Ì
-5'ÒîF2ü˛ïMu–Î=©HÈpÍ¬jë{x3û”‡˘yz¸˚Ï„„i¯,T-–õ’D≠©Íä(ªÖÒ\ óìå‡ü”ª(Ù˝∂˝}ËgoÇ*¥VÏ{ÛŒXZ€õd˝e¯˘ ®∂SÔÉx	rö¯$^‚√pánBo»%¨ã…⁄6Ô⁄)4ˆè¬€¿©ìAÔÆ-ÙZ¬!k˚U Ë®È»ÈeBØØWÉ|≥„¿^{˛WÆädà≥–L=‹úG·5RQæ§«É@xü£0∏&”‰È gﬂÿﬂ”⁄1‡◊HıÎ⁄Ωblxi:w≤˜‡':Ú›˙O“yJæ¨}µø1tf^pJÔ¬ER¸ ∞õ˛Õàkãb£ùœ£3ı[{í}ó~vÎM2-ïübÉ≥¿ø#$G®x?88Pº˛cÌıüºÄcu¬´ïwÁn‡ a∏p] g√€ÑËvªmqr/õJﬁzè|¯•ƒÛƒÈº ‡À»ıP˝ª(ñƒÎÿˆg:t>c√¯yOﬂàc˜˘¶‘uÈ¯0•Ÿ±QLó:©L‚ó.\o‡éDJﬂésñﬁ˙&ÍrYïäÌ¸√7∏˝C∂ÒÆ”¬Èó∫p?1å⁄F\Sùœ! ¨u°Â„ÇìdZ{+	Í¬:ﬂπ.‡9r L∏º#•ïdÎÂã,Ê{PZJY‚Övc∑›¶„Ò:/"˛.|"ﬂì6~Ó“õ=ÏNom˛GæzOC>ô1Îp¸Dì©Ìù„≈süﬁYﬁ<r=òÆU‡¥£›ù∑€>õeªNé§ÎÇYr7wA.>\$Ÿ '˜âpÏ¡jˆ»!pÓÅC£˙Ô„–#ËÖQF:πpX=IG£	¥böµë4A±rè¯]ú?üìˇvÚÆãm·ÏH˚$Ò`BßÃki≠EäŸüz®Ω¢”lò§k∂[Wl¡ºˇjì˚µ5›ñ°§ÊgˆAv2ÂãƒO2Rù$C&dßßy!ˆ&Uv=æùFóﬁ$êµ)ùj¡9À≠8Ÿ¢ù¥?›®¢„8ÚÊ»*…ö9Ãéu—¶Wu6ó5‚∑õÒøÍm‡<Î_V∞6ﬂÎ±vØ«öΩ>ß¡'ÙΩ°1¸/H¬H≥„/#œΩFjn‹ëøpçªù6“lı∏;_DÛP> ﬂÊ±›6èõl≥ûä7*£pÏ:Ò#uù‘¶»ΩC⁄T¯,^•Çæ∏øJêçÚSë„/ÓxÅäáuÇ jí˘óÑd
-1âº¯ÜåÓà„^”Öü†∆òwtX°TiQÍX¢TFZ ı/∫ ßx‰57j¡ÃÌö;^‰ﬁ$ã®Ã¸◊ıUe>Õ£~â"ÛˆD@†etPüPµΩ§´2w“/ÊÄÅÿãH…>È˜∏√;å K∏˛¥‹◊˝ø’ˆ7c1bgëNÍ¯›—…ªW≠™é<Ì∏ÆA˘ßì3Sµü€¬œˆ™Úc¡`U:™ü™ŸùΩ;VM]´Ãè‡.VÃ'R7Ì
-’¢?"ÏOOÖﬂÔEŒD≤a˚ÇlRÍñ√ˇ%ìñ\(Sa.ï ñô|^nÅ,Ÿ?‚/Å©bïäÁtÏvÓ:˝ôè@ÏÆ£¥ÆAdÊÏ±ø#ºÛŒ◊O˜RwI¢ÛŒéƒ“µØêG˜ß˝ö	sDπ≥–3Td
-”Ñ…‡p”ﬁÿËœ≤x
-Ö`—π∑:Y|Z–ÄÒn‰;ÇºêJ∞G‘Bè¶Á7.¸w,ïÚ§Éãò&DxMÍ’¥ø1ÌK∑µÓƒw(`…3pFøtn;3ÁA€ˆ8á∆ä@ ÷HG±¨7—ÅœH5Eˇ√7¥4¶Î/hD˘H%÷èÑ –*®ØïÌ∑¨?>ˇu÷≠–˙NbwM`4ÍwêﬁwÁ#qÜR(g§7Ô”ñÙp™ÕÅ}·÷áyß0ÛDÓÏ2
-#P'ˇ'Ö %ôm ùÛ§f˘»ı±o;˝ô‚a$üƒ Ô≥“ô1˝XëuT⁄ß˝C?Ã-µ≈A£ S°"ˆõ¡ìÆäêJÆtU[é∆‡Œu™Y®]Ë$‘aKÕñ¢˙B•MTŒDπøÍ~Ø*1öC¨(«)œÏØ‘˜›‰¥W®π"GßHﬁo
-º◊a4£……—≈_Ωd˙>ívEØ¶Tê?HÎt◊Ê*á˝Ó∑ÿyô·Õ'◊>¸=ı«úVŸÍ≤õu8*˜ oˆ1œM5€ΩçM˘ëH	ópΩ˚•{%[„@\£ä©+z“àÁ ¢K$ÒÈ»ı·”•;[Pr…8˝ñ⁄„#}7Üä˜_0C'åd}ãò@"‹9ıîÔ˝¬’$	M•t¨Ïá7Ó›¡:Èzé⁄T1,¬Ìñ$™6ÔÄÄpJÉ;çaItÍüÈÏ07àÓˆÉ‹*nﬂÍÃûAêO]Û„s~Vˆ”HAÓã¡@ò©ê
-Ï…≠òl•Ï„^‡†Ap∏2Mj<¶≥&ÆIœ—ö8sÏíâ}2´ê¢˝Ù®RCÈéöÚ°à9à°9’J'pJÉOãÑ oí⁄Eè˘ç®>¬Ï:w$˝#C§“Ÿ.+∆çTiÌ˛
-Rà∆# ça‡/·≠ nÊ9⁄ΩˆGÖZ⁄.Î˝ŸMB≈∫û8®&qŸﬂ®Ú¨¸(Gg
-ó•.©ÿ.=jÛlê£pø V€Ω*r±Pi®≠(é¡¬≠T◊\cL7∆u©î&ñ[UﬁéÂG‡nwêª›tä'7ö‹ß1ç¯}é∞7mÿ‹xy¡Mß«óﬂ©˙°	{Ã˛D∆¨†Â⁄–.É_5Nµ¸)ˆÿ‹,Ã>*ùXw%Ô⁄n=ºö3¥ëœ}xV°ß@}ë˝Ì	Ù˜z@Æ&µ)„•%±Ÿ£Sx[ºûQ]ïj°R0˚™o„óàœ^er¢©’™Élrπû¢¨z»&∆ø∞ûc
-)ùr?[u©Ê≤«ÏE¥Ã6 æj„ÇiI£«/õÑ „í2VÔoip∞iÂlÁ–;8·`Íç≠<ﬁY^x«Éâ’w.çç°r≈*õ£µ¨Ÿünñ_Edœ8ïñﬁ˙ÇÁ ÿ8WTñœº ° nW4òSÚÛ¬Y¯Ü∞ﬁ˝çÈÊc`qsúN]õ¥‰∂Çá+Ç∫JÏµ	⁄ˆf*E°¯ƒ—¯¿Œi4g_tÈgö–Hfœì=≠iíÃ„ΩçØ;è¯´›Òx⁄ò„A`É*˙€ﬂÚÌú¶ª:Bso∞ª6ÉQ?9hô›-≠‚ïeÍ≠ò®ç/g‰—Oåë}wj⁄.G”≈Õ,ÓÆUË˜RÄñ¸Çæ…Ç≤éoóÄö.'õòï1Öè´ÑØÍ§,ÇMJæÍü%ùM2Ôlâ÷çç≠^ÂNÁ√FEìúÒôÉ‘⁄ÊOî™·6¢sÜ©0ˇñH†Ì+ÏínVÓÀUˆ≥ãb≤
-¶»e€V…[$SÍ!ﬂ—z§b2°˛^
-gˆâ §cÂçeÇ˛,s˛D»lí}g‡A8áÒÁî˙ˇy=„˛O√(Åœú=» ıGû≥”dïñ±6YÎ«ı§G˚3ù=˛±.S_ê(πÚ0Ù.ﬁp¯˘πÅ√æy≤›2ª˜„c»ƒ˙krNÕvX1/t\Ê± ®@ªê.Â∏5≈†(„V%\+Ãô=≈˘I.d˛√ì› @…¶ê~˝[£Ö&`n‰Èmls¿TaFÈ ⁄<§É}ªFÕ.¿B˚Ú∆ùªëø†¡û˝Ü’à∏<'◊.fîÿÿ›fπ£äŸ*‘M˘ù»ıÈ◊ñd1ÿå\á„ÍÆ<áﬁÍP`õ”Eﬂ∏¿ﬁqg%ª|EvGj≈M?8›Éˆ}i',Ój∑z)xpŸN)úGV“Û£: êŸ»Í&ΩAFß˛CŸyÈÏ˝â∆0ˆ l≤W]Ã…≤ÊJ´L9ÛH“â∫¡⁄ΩNt©Ÿ·–GÂ∂3ˇRÿ·ÒÊÊπ∫CµPÄm–ÎjÍÎ•Œ√W˚¶“˚◊&¡° +Œ¨ßY)-JªC¶z¶4p¸,ZÛ8ÖÅm“f⁄∞Œœë	≥∂Ìã˝µÃˆ¯ZõÃ=`≥Q˘}p<∆\=RÚ¿™†Äß©1WnLªÀæ‡C≤/˚ΩöY∞öI°pD1ÆŸPÆBüﬁXêDÎÿ‡MòŒëÕÔ¶•˛$è ºM||…ˇ*nîJØ˝(‡º_J˘°ˆË(?óZóA°˜GÃfôrµë9∂ÄΩ´(˜ëIQ^cP∞6—J√\~s˚lK¿¿eÏ^¡ƒ_—*≤Sprê?Ù¢±ÔöAæ≠gˇ?y˜{∑»…¸0 …Ω}m⁄£§ó Ω≥»òl#›È˘QE‡K´êGù=¿
-`Ih+˛ïúÑÚgßB<yõHã3+π6m
-Wh'w=4Ú8enã—é9≈›*!ÆÇ¶gQF\‰DÂT•RÇñb“\-ØÈ†Û<ã2Ωg¡"]E4û6∫™vÑÁçî˙÷…ˇ5BûÇÇÅOÚuèÒÕ‘øìü∂:∞°flë)˛G É¬«}ì≈vÿ≈U∑7g_:tëÑ®ñÿÕx/4”bQBﬁ|“»πï-]¢˝ÒÃBº]ª‡pë®∞\ípN«^r∑GzÎ˛€ÔÈí%—¿õ±pO·Ω>{OÛöfÈ”≠ö:E∆èö«’*˘√›Ï_∫ë£Å¸Èñf¬™P≈≠^%T1…-®Ò,Åãx+˚†–
-µgêD.0œqÊrGÉ	&-^ì…»¬15Ë+¶4AòËj∂E(≥Q \√`	b¯:Iñ~]Ñ	£ ±êCÈkG£ìÚÅ»<fÏÙnÊÖ¢/õ†Múyó`FM-¢yRlê\Sá˝˚˚£sÖ≥éÔ^'1WÖ•=4ÏZq°.q\§‰Ù„ge?4`Ÿj/0áeˆÅ≈ò^>#¨T4°•`ﬁÛ´.y5º8J{:ywˆó·Â	yuzˆrxzu|¯Zv°Ö˘*ŸJ´ÄE¬»ˇ-ªpÌ ÄR·ÇÕO‚ºÂ€–°˛ÏÜ:·´î‰îC◊≤„ÇÊùcJÓo)°˙â,˘VØ¨ÍË◊ô»™ÇÆÄ˘øá ‚^P⁄Ñ• vÓìôÜ` h”7â<á‡)ƒù>jÁãè‚OÑèõ‹Áøº„‘l>Ó]‘ÀªfL›s‡‰Ú´–ñ≈ê`âÛEhffoX4∆Øö035˜3–∞1+Ò>t‡{éÎ£}H˛ÉÙ∫}ı{Úÿ„Å?ÿ≈`÷-œ[HP_ÅaMÏà-w≠°#ÃôA«◊„üëQÔóı
-∆o≠⁄51hD@‚◊ëÎ8ï!°È‚~Ú|˜
-:—ﬂÓºπALSöa+Á^‰@aæÜÁ˘fVZn¯3XÏ∏ﬂô^h5˘2(f^I)ü(ïúê;ÚT &k‘¿re¡ΩÖ∫6ñ:W;‘gÍ/\D~E"…÷QDØÉé®˘Ñx5µ„ä°˜¨
-@NëyÑrõôNà€Ö{<qì.”†)*∏Ö,í/N¬˘yàt¬ŸCÊ0#ÙE˘ëˆ%
-Ãw¬ÅÜC◊·xÔØÔ{ÅÀlˆçb~Ò)+0Ø‹Ë∆h1´ó^îrƒú‹Ó»>Ì0ßâæ yÛ {ï©5Pñ÷ÙÔu{>C1•∂0I±]∆Õ>àÎ+Ãö´l-ÁúÈEçcŸé[ôj÷¢˘Ã~∆JA —wÆıÏ0;ü/Œ/˝"üa˙ygª4«¢ïÕ,[%gåäE{[ƒ·ï≠(¬>¥£Ë≠îêeÅL—Vä©û≥ˆ7¯oç:»Ø€ÛÏØï∫)Æ∆Û¸O“Æ≠ÿáŸÁÈp!0"+ı%BŸÛÀ≈MÏ∆D¯Œ¶O†4åê<P˚€Ä‘õ©%t~;&œ`ô∂√ncû‰CØ;@›ÆÖÎÿπ∏HÎµZÇbctöCcXZ≈H4*Û„™NFí‡˝ôŸõhâûícoéP¶Á9tQhyO•]Y`⁄Á[¥Ç7Fóó≈TuÌñ|PMn<M‘˙Ê∏–˝<±´mqë∆—ﬂÈ-B’Â≠TıVzY‚aŸ¸öX(£Ò·E‡Ç‹∏—'j7{$6tÂ&ÅE0Fèıb≥xs ÁØ›O·Ë®HGl
-⁄‘Œ˛Å>º0ö$t<≈∏u\ø…ÏªB	ﬁÏBzÅ„MB‡•d·˘_¥w3}√$˘8õNåOƒöQFÒ`±¨Jzø˜50…ó‘+4‘ñ‘∆a‚;ƒŸƒãWOık≈@[˘†ø¡Aã75ÒíUŒÏˆ#ÚÃ’Zxä v7‰Ä8i˝πÓ8raøè}óóJ•6u_∞èÓ4rØ°£è «“=:ü√ÿT6¬q‚¬ô¢mˆ„ê∆Œ÷˙∑•”z…æºˇh9íìïË9 µõåb8Rn8àZ6Â˙ì/Kîta÷n‡N=ﬂi„H∂K„qŸlyy∏»ùÖü›√kÎî›”\ ˝*<E
-DCƒ{-i¬r†ÕT Çœ≤ ƒé–Œ›tøﬂŒbj∏™fW√u÷hF4òVñÔxûXGslﬁcÚv¡<ë„;œßûn√eH±~ã¢÷üÉ?…Òkwsuÿ
-V‚∞–
-6d%ó+[ç÷ Jé™äCThHaÂgeuï—Y‘<rKahÿ“ø|ˇÒﬁ w´¯f>î≠‹¯rÇL∑[4‡éìˆ»a`Òp,â áäq‰?6‘πl´Œ)úR÷+k.óU7¿πÒ‚ÑW∫«y≈›8úπÌ9v°›„y7OWÂÓqí⁄w€s±6	N∫ÙE◊∆˛æhg
-˝5ùÁæòwø˛“ÕÒGö€AÃ˜CŸÚÖÚµ ∏U7Zy˛F<å'™ÌlÕO‚≥Oâ7h§ ü[4Æ¬Ó€øZı”¥ Î≠‡É£”7§V9Ó≠œ™∂¬)ÒpPÖ”I¬NDò√Ãg/ÙÅmeBH(ÚFú€¸P§˛Ã[˛H•_£Ã⁄9s ∆‰Z•ˆ¶˙~´®éˇFsIp≥.	ﬁπ>:)†;ÊµÁ˚ù‘¡*ü…V=v-ÑC6£øß∆"¬‘6%]ÎoR∂©‘ˇÄ8sÅ¡Üè-d·Ã0¡c¡"/Ú˜jÛ)onRÙœˇ˙?ˇrπpËT‹~ry˛∆feˆÒÔ+’?mÇºÄæƒ®‹Ö1#åOWUÆ∑ÈÛ”MO⁄.b2œÒSO}*ëÕÏÂºG¨ï †‰˜¿kvøŸÎ√(
-oKÖV{OPh’"¡Ck≠j†È~Mm•◊≥°5ß˝)\Ó°`UÃöLù)…xóU06˜<r?{ÓmŒ9—ÑôÊ–òæâûå√˘‹\Ω^{QÎ6+ﬁb@≤Rv°çS£◊ú¶î†ˇIı÷
-EÁ˜ÿ∞¢ÿU˛â’a ÁG?ôÓ∂˘RÆÍoCdÏµ≤M…–
-‰GÊ¬kÊï{ÚèÅNI£ò=˛‰}5à_%;U®÷„≈ÂßAe«éßMUlP+\∫Iî{õHèïRÚè®b(£ ™ÃW-ó◊–ì«´/å,«O>:ÿ±X∆¿])rÒ†n’®CSíDM£∂™hX“í
-.«cëûmXR∆à·Ébâú<∏æ„¿~πé≠øÉ6b±RíáªÉ7Òkî√wüÒ¶nUßfMÏ¢Ó%Ó=Jù¸ñ}⁄f^gËòºx‘˛;⁄®?˛qVã˛SŒÁà^c„jòﬁc—x#¢®mò°ﬁ¡' Û∆ Ë<uâ(-∑Ê∆§Ø4ß˛6°∞Ø;»…Ó6I◊#»3Û5‚neRkŸ˘_∫%h‚I_∫7Ú¥Ÿ:§©∏K5Ì—£'Í˘wù»ùáQÚ«†d3<¬%]ÒIU61S∑,≥ø™€Ï],≈O’ñp?éJç+_T€+‘,WΩ`ª›D˚ÀH›∞]◊Ä–a®“Ázèx©ôgü8 ìtsNV¡…B⁄ÅÕ∏d™Æì)Áã7Íÿ£é6
-MôOaZ@º·_û≤ˆ~Îlÿ›âtªÑ+ë–¯Fº
-‹î‹√bƒ‰Äàı‡“*lW°
-UÿÆŒ»—|Œ
-¡Áÿf(oπ4[⁄¡IÄö™I‰∆±–œ…;r~qˆÍ‚¯Ú≤‹[^T^’Ÿ”Sîª∫8˛À…Ò_ÀÒÃ∑[™ûé0’a—IZlNx_¥≈ä=¸Ú™~“XÏ’:÷¿o-&,9Îï7ì∞ß-}‰≈I‰ç±áÃTÇ)◊¿d}ækƒ"Æ+$tA"/ôπÑ9∞bπdi_
-˘Ì#™Ø ’\Ö®20∆Rc”«	£ñj3N¨ßNK‚÷ìàıIƒ2g|!Uë≥aŒπÊÅ÷}ï‘¬ïáú–ëwÓ-¡mUiü6.˚ã/|‹Rfı]¶ÑááTÛJ†IÆ…#g›k^rS
-_ÌÑuòàNºEbE)‰iΩ ÿÊ∞`Óº„{5∂‘◊•kÓ,çÆQ ´§©mX(Ìm”RS¶î¯6€^0Oé•W–»‚k¯ÕïSÜmmÄç)H%ùµ∂n(õñ>#è¡=jµPÊí™Wn‘÷'”ÆSöA„≈©5F4≥¨e,«ÛÆüv>¿¡Ru’©≈©¶Ö~„K_≠¨|ßu%O˛p-∞QúV˚ƒ˘taÖﬁ$pù´–\ ™R¥Úæ.'´VAÃóú "¢kö≈ÇÁlCÁ•%ÂRÕg‰∏‘¡Ë0V∂·†(€¿…~¥Ë«ãœÄ¬:ËDªò“x˚≈xÃÕè*Êœf‚¿#∏¬Yd5„èœ$ÑãM√\t’¶˘ì¶∂jåèÔæFN‰`iv˙∏€#ù-s`Œ¸Äp‘#∏≠d∞ˇÈ‡¢…®›#¯ò/dÕòPÿËÂ—»ÓÕ&W‚8n0;ú4·>Mﬂò05cAÕôQ*±ˇ,ÀG9AeñÁaP’˜=,j†iÆTœoŸ$ê∑*ÿ⁄¨dkøÃk<00…üÇÃu«=ÖﬂGÎJ≠’∏~Y∆ﬁÊâ{˘≥'õ‹kêwm;∞´’∫r…Võ¢≠Õk∑⁄§-∂s¢Zñ∂Ô±JÏ’ØK≈ÜUÀŒ#Ò@·éevûê\¡‘,∑qì1¶V”ÌQ‚∏Vâd1(o
-Ó{›Öd%∞m‚Ÿ·2ª±9Çq∫m‹eúØ,ß&Û;’Üm5ä…L/°F‰ª< ¬"Ù‹|àÕ•Õ§≥≠à€∂™ª˙HÂbe}…"Ï+ÜmNà´edãÚ§…bÿ$Ï
-…‚c_LüLNiZOüèÍö≤ãÉoóA„˛£e«∂≈œ≠“¨EY|¨®≠ e?≥ˆ˛^'Ü˜ıE7û˚¿â∂HkÌCÔªJ_∂û˙÷Eﬁ≤Y
-WÍÓv≥HV∆gb∞e®lÅ¸B%zÌ±h˝˛!Ê=¬ÒSÿ∫(d>∏:>ÕK¢„ìïEgı-ﬂ2:«ÁQÅ“&#Ä1M3¥‡öÿ¿∫∆Àî =ùóÈ65îX≠-$•WVêVÌΩπœñÖ/òËAñ	≤FüÆä[í`Wò7¨ôΩíƒÏ¥Ωz V·0ˆ†»VS¨A£üdéOÔ(ì!o¡1`cÉRº¿="‹¿P0Ò√ı	M7ph0vI‰é·cB«Ä›c2<=Õıçy_\móuÚäı1,∫8˙{Ì≈I›e&ù6t_ªMº;  „ÈyÙ©¢úTzOŸÂüXiµñ””VïõÇq
-='k¶ÌËG˘tégs√t†ÖÕTP/¨òG—É‚Ωwô>Y˘¶bˆ\/[ÍÛõjÿ&û…
-sÀÜ+ö÷«˚ï‘€_∫4OΩu£C œˆZàË¨ÏS-LòøQùÚØ∫çyQÈøï^”Äƒ
-o‚Ä°ﬂÙµ L‹XÛé∏©>:ø@¿r(Ã˛fgö}‡˚Utq/Ü~ó.¸´ÛKÇ`äõêg¢©^g˛Ûiˆ´hYÊ»-5ãÑ&ä˝»ê@ÎÂ8a 3øäó@ìÄdÌÎÃƒRı≠Ó1J⁄m∫NF¨øQ7Òf0
-ª◊!¥¯Ñ‹˚èïÉbøƒ˛◊≥‹ãmÓ≈—Úâ#udc·]˛ûx©Öõ;˜\•8≠‹Èü«ô÷YŸ~6«JG<“‡¯∫ºUëÓ˘—O–qùS…lG@£ˇÍ C´[ˆG7D~£úlÎøÛ‹îù‘–aÓ·Ω™œp≈∞›≠WtÙcÊŒFãJ>¡l\üí±õ–åwÍí∑·4à˜w/@_òy8_Ã…(
-o·ªU∑8~•}ˇ∑⁄Z¶…Ã?ÓC´HY‘›ˇÊËÏÍoÁ«¨UÖ¢ æføÊ0¡îMœ/‹:'óÆøàS2≈.∞1yÑ&oS}3NÓÍﬂÇÈç ∏òòuMgûè• _ª˛g7Ò∆îºsÓü◊…0Ú®øNb`ó:∞9ﬁıèdNT∞Ì1ÎÃèô+€ø˜›¡≥Õ—èÒΩãTæLU¿æ7	ˆÁ◊~úMÄ9ÖIŒ≤N3≈mˆÂ¸âCÓﬁø˜Æ˚?h>ãºIÄÔ©ü`|>÷È˝ò÷
-Æ-í}qÎ¢÷pèÏˆ†	õmÆ‹+ƒP›8saò-ò6≥WïÜ„3Õ∂mgÎá≠]˘∂Õ ^;ÃfI“ÚP{å˛±`z9»Ì•ES˝ôbS≈9ÙkKFµ"l<‡Ä	„∫an◊ª◊Ùz,ú8üzfQ†é∑àaØäÔ†EqRÓ¿›ΩÓ…Vñ–ëÔ¬¢@àGqx„?ÂΩ¬æ¯t√≥ø g+IóóÑÛÏ… ”uí‡÷I¶69€n_Xÿ¸∆÷!B(÷cë˜åΩÊ’…éÚ∫Ω}˝Ï·êƒÌ≈ù)Ï/^ö¸ÇÌÏlonIOM›	¢8°è›Ì-ßÁ6Ï#¶7^"Nƒ›Í—ÎÜùPNÖ>û=Îè˙#€>Æ√0aD<¯-v/FÌ»fßsé09∆÷JAw–S@ü–	Ím*Sﬂëáb√ı$ófCÇ∆˜7Í§bÒ∫⁄≥ƒoÜßd˛±”¡Ûã„7√Ûì´˜ßX8ÁÚ¯Ù˝≈˚◊d¯ÚÚ¯|>ø8˚€Òt yy˛¸¸*-µCNﬁΩøº∫8!Ø.Œﬁüì´„7ÔŒNœ^ùH<CÂÆÑÈÊH∞âG/~5|˜ÍLÊ¯j¯fè|ª,<3Ù¥™n,◊z˘!»ÆÎ‰¯[·wîúïÇ6ü…ŸÃ„‚¯Ï‚'¢Q3◊(ú%U9Ã*æ÷çœœç¸trzu|Å∞ï^_ê÷ÂÒ€˜√Ù‰QÖ⁄.ª˘ÃûÁ^<⁄^◊
-Ûíæùa/ﬂ/˛6¸Îùf52·7_Iˆ>ÆE˘¢j∂’ÿê]C'È!ë1w¸óH°ƒr√Ó˛A+E:õΩ*•J±RÎ˘ª3‡ß éûøæ-ˆ@ﬂ4ªÌ∫6?_ØL•QﬂËı‚D€"€È≤/ØÜWÔ/WˇÁ·[Úvx˘^ø\cÁÄ7ﬂΩZΩè”„∑/ﬂ_Ë7ÍÕ1Ä=å¢ﬁu¯^JÿZ
-z˚âåb‡cƒTi!+e+&ïGÓ∏(b%∑*ar¥[ˆÌÀG}O˙pgÈ≈J{yæ?Ç∆%Ìö∫;-xqÙ‹Ù2S–”‡ÀU\XÚi,©˙RÏ∑∆Ü|ÖiÙ©ﬂ2Œ∏ò.™xÿªohtGoi`˚2SõÂÎ¥{„.[ﬂƒMN@»‹ÿ£¡ˇæùı∫fÍOwlqOy√oó¨[°J„}[ke’=wµÂÎ·—…k˘ôÍ¥ÂÊñÓ*fNÀΩ≥ÏÔlë<^áhÿ¿N_áã(Ü[XˇÓ{“"?”≥|Zü?Sög)G2Ñ|\Î~
-Ω†˝Á?cNÅïÆ;àós¥˙˝ñfTzàg[ts¥€Tá≈t◊Ñ¶ YªÒÇz)ÊÍÆ∞LY©V)"ÖØe¨Ä»‚rÈF[AÆä(î»ÉŒüy,Z˛ÃwßÎäHxyü(£¥û3[9+*l6gBN7+'≥Íåèº»ΩÅœ‰}Bgçxf˘ó<ªiΩãL9ôÂ4ø^cûàÖ©1ÿèL-Ÿ^˚±¨£Âc…˙∫SÉÆ*˙¿R¬uAÛŸÕÛîﬂF5ÇrÕ¯ ÿM
-:˙ﬂ0ÿÙa—§;vï}1ÒÔ˘’1y}<<:æ ﬂë´≥sÚn¯óìW√´ì≥w‰Ú˝ÀŒH∫íîø˙∏‘xVƒ•Í‹ñ°]ÕÂeÀT?Xzû¶ p¶L˛éôe2ªÄîø|Xú™b|¶⁄ˆít·~ÊÓiœyíK•ÍŒXú*¸Èá7ÿ8r©ﬂA≤◊4µˆ=B…ÂbDÆËàºdÅã±4t" RÃìI_ÇìßéT$Íê£KM˛íäO ’*+j∑òrGïcΩî=Õé7®ÂƒµJUÛÅ®Jû(Ω‰´í9ûÊ˘oeÁ“Ë‹<EØ˙Ì≤ÉÿN=”ô≤˙õ‹ëL¡R`z†À9 ≠O]7˜≠ﬁF∑1R6p√é™5âP)Ä˛ÿpÇ¯cC…[:?«
-Ò"p b˛é¿/zÙ¨$!ó@Iè∞+ß–KêcMWπªr85uÁy=•(ëcÎoxÎ&ë7&áΩÑ‰Y˚ç—Â@°ïUøytπ*ÓHB≤`¨m¡ám◊™Hµ:jªa9∞UKôÒ#©ÀU ®Ê§Æ."†h˘îY"Õ‡jLo{H}∂àî®çôF¿¥Ï2ÛôµÛäz)±2Xƒ¶–◊«5´√∫W¡ù‘Ïÿ%oPrà<ö ¡Ñﬁ ˜⁄Ù†uÅ<ˇå˜"Õ∑>\eØæÊ•( 0™ã√Ÿﬁâ\—˘Ä;`ìF¸ÎﬁÇ+7rxˆAñR0ÜÌ˝/‡Wn˛üÈåú¢[UÙt†/‘ÒXô ∞xåá√Ωí¿wã±€n«ãŸ:â8/ΩòëÔI˚K≠€é ∫X¶˘Ô≠≠√ˇV∫<∞Ôø≥õ3íñ†ñí)·>H· π¸◊˝QmŸÂ—€·<›ÂkŒØz{0·[\≠îßŒÓ˙IP@7Œ0ËÔ	¯3àbó	Ω^ïaR˛†êt∏√y9DÂÂÒûü]\Y
-:Âö”[∂wGù~œXå¬VN*Ü∏ç@™ï§9K#;aÙ[ûúY#f;ï:Ï´k∑Ußπ∞h^N(,˝a`J¥üé$tEGqË/ó9v61§1úw˙“)"œÔÿï`DªjŸ˚^0ØË‡ÀœBè}ÎBöÊÄ1‹) ª¥@hY ÖÍıT◊∫NÜßA∑€’ıÙô˙ò∂<ÃBáS∏Ÿnû_¢å‚Ω¥›.‡ÃâõtŸ`⁄x¬zP‹Ô<É5•ö*õ"=*eVÏŒ<Ü ¬E¬Íœa 0éÒ˙êu‚á"]äz˚î≠œé¿–ŸRiDÎ1À´úÇ‚¸JNYÍ∑9ƒRWˆgYÆìª˘‡”´ñÆ∆˙K•É‰È3”[_dPPLPsEC^0ëÔ,Û?{~ÈŒE%%ﬁ¿Fﬁb4<™E5ö…r7ÕYf¿Ù\ŸıH|4Êú¢O:göÚö&>ëC†4Á§ı—·πÌ{,Á›¸˛·∏ø˚dpúì$, —j Æ Æ(ªøPæ¬¸∫ 1k YO 9!w4Gßˆ"&Úa–^ÙÛ0p:`Wmçí∞jˆJöﬂ∏Üö~?[˙Z◊ñ"iëÎ´HÜŸ j%'k•sV+4v·¬™2–Voï°¥çbÂZ]Ä]ıC,¢EMÿΩmEjÿäëoWY;∂zF  J˚ß ‡Y‘ì’ßu.‹G§+SróG·-˜d≤ê9xöí˜Å≥ò¶÷iC≈8ã"
-7·«´·À”c{	◊ø§"Ø25ì•‹öøüV¶?	gùxÖæ?¢2_æ¥#˙VóR*—otPÜÃÄH'Ü*É
-äëT!PÅ‚Üeèã–€]ºY@ƒZQ©êΩ≈el]‡Ç¶√¥ì˛N⁄ã]xÉ}á¶ ãû˙º'c®ÑEW©>¬PaÓjó˜§è∫–t#9»lv¶XåfΩ>Àvœ†±rø¶®çfß;k
-Â–töÌg⁄ì9‡c≈µüûΩ^è_Âùˇ™«=<∫Dú†R@ù;í˛!(KJñ2◊ßœ/nß¢O©‹ ä≈ît)Ko©ñªö˘∫%b Ãdïƒ˜LÄ¬˛y∆
-ò{)7ëEÈiªÙàË±Ø9)èÍŒÁVÅ;Üë4…Ù°>´eõß±jﬂ&´®<@+€ìπ™ÿV2Ú7L>áè,¶	ÄVHöá*Ÿ-ﬁæ∏¸ÍG^ˆ+ŒπaåîaÓØ°8‡n>†m\ïÕ(’€±cü≤Y¿÷W8‹M.ã%¨änßÈù1#øºESV÷6a7>B OäÕb’¨_œ¸O3{j?„¡≥/~hí˝Q´:˘ªg(@,üQûÉ[L’›p6≤˘\b˛àfùdS 2wÈΩO(À^TŒU'˙≤…äO#‰+∆12(˙Ω!ZëäW±·NéÌc%wLÀx ¶ÉπpEjÇë´ëô%õ˜ËJı1çÃ¸ö≥TÇLaÚJ+bÒ†µ{iı• “ﬂ…Y"SníÑ1- æãO„r"≈ªIj(Ω
-ﬂ“ÄN‹6Ã’¢∏à¨ﬁÂH#®Íµ>=ùƒºì¨«fïKä«X√§xJß€∞•ÍÔYE°»AY	õëˇ"B£Œ∞+ﬁ†äâ¯§ı‚_bnπr
-6€>lâ÷Dæ°Í0 Ÿc.,/>™ Ô“û•Œ[ï⁄ﬂR}W«ûHií€ñÜ∑Bz}E:ú!ïq5âcÈ]„Üi¬€ã&Eò;ìŸ †?(—$•üö ºoXU‡µﬂµÒïê yëua!∆31ùáÊËı¬œÚ$;¸GΩìù’◊k˜™∏®¡èíΩæ9y˜
-£≤ÜÁç¢°0BÕ.*uJ´Ö+I‚ìv≥:w;j◊µj˜–Ù–¡À*ëœ-&LAor∞˝‚◊l*πS]˙NûÛªi7¯Rè’N∑Æö°TM∂˜u˛r◊,SÄ,©“AìÍ–˜îÂ®3∑c√Ωd+=hi•û⁄bY$(ÏÈâ%+Ïë◊‹ò—y‹ùÑ·ƒwª„p∆>ø¯ı‡€Í∂•	`Òü˚uıØ¡‰˛ªøÙwø…|ë∏ ¸9ZëHfx˚”¬˜•‚ãÁ˘˛?MùÓµâÆË˙q\á´:¯ÙN„?QÂ‹˘}.w∏ÊsyÕ¿z„Yèent"h‚dÑ6÷‘1à^®º´ıãïÑÚgÂ&ºÄ\Sá˝˚˚£sÖ3LÙÕúEƒíÈrıïNÛn™˘¬ ¢z†òåò◊b±N»ãgäˇÉ÷”ù fJZﬁFœÍPÆJ6']S}J|sâ[|<{@ëÈ~ö|äÙË≈Z,J°ÛyØªmúßU’ïr¡‹>+ò€ØÃm+ê√t|á¬ ˛Ÿ'õΩäˆäEÏï
-ΩŸ‘U1Í®Maù©¢ˆÆ1*#{Ü7Ãy≥G˛ﬂˇ«ÿv˘ñ&”.€CõùÎY0∑™∏≥|7‘Å!YÛUëÏËÆeç1CDﬁœôV¸
- „fÍE{À1* ä§úf`ñouû@›Tç¶»˙yØî≥~é»∞˝¶¢À∫ü˜7A'f‘+íâ’Ø a∫R)%„_tAl
-iR$◊‹Ú¥µ[íb*µót%∏¨ﬁÓY≠‰SïZÄ¨à:»¨O1Ã¡TëÏ˙+ı÷ÖÑÙs¬ìrcïV‰(”Â Ìjsc™ëíìÔúyØÑK»z3ß8\Û¬}“˙Ωm’LÕmçMBëhj≠ªöA˝a⁄@iZê∏ª V4QöÕxKÁ'„«ÿâ¢–î^wÕdE‰œJ_ë-}ê√œ Xóà‹ünZ÷-•Ã2’äÇ1‰ßÑËâ“¶	L‚¶rbäê4sÙô	™„“¨£“tÚhÊ;™lÛ[ƒ±ØN!kv1b9iTÅ≥ gùg9C¡∂dqa};OvsêX”ü‰Í•¸ﬁqóVñú.Õ¬≥iÔ‡∫¨Tå·ﬁSà◊âg˛0»4Ã°…3ÑV<Ø*5mxq;œ{îô8t1≥õ⁄∑J^µïVRØî•3∏Tx››¥ÚjYU˛Ÿ¿ÒrI-É∑º†ÆP«ΩêÒ+y€d…@ëØR´ØÓQ&)æg®¬≠ìMöiDØ&ø¢Ó}`	z»înySØq°{õÚΩLùìüÆçüG©Çk«m§K≥>BºY99JK‘ Ípv∏On·“L;ıëe^#’]˜ß-T¡ík4,LOuùá≈KU≠à·ì“‰!≈#Î ^ƒT°⁄`üvß Ùë=‚aK2Vÿ´öÎiÓã`sƒèÉ-Ò…Jg~òvß\Ò|‡95î˘íl‘í&Ω—#k%%:¶g+÷±oR¬^º„Â˙ö-‡≠:<£´Úˇ˝_ˇÛêKêªbÚ∆ı=’”ı≤&U7miˇBIì¸H“/øÆ‘Öñ\¢Œ‹®
-4ò®2gU‘ÏN‹ÑπÙ¸¿∏wœLâ”â…köÔ6àJÃ˝3≠|uNáW«ÊYY˘µ{&‹Ÿπ6œπ√z±r6*x\◊“«»ÌÔ>?è¬9Âjî∂Ö˚Œ‹ Á:ÖÒößÑ‰<¥U'±¸Í&‘k‡Bdt*Èå!ı2â≠@HÇ¬™¨√™Ãõ=Ö*+ûUB5çt ı":ı¶4!|s2o"˝´F$ÃÏßVŸdXs+°˝aÖ∑H≠√õ’¸)q5˙ˇ«"˚b ‰ºNêå¸@˘Õ\Û	9BÌœÍ5Òﬁæ∂Ωu".π?ÆöQ@◊Ω|WT2©Õr™•¿˙∏uÎTÆF⁄6ç
-≠{¡gÿæ`Ø®¥^Æé>å;c5e ˛»k”M¡äªy•∫jæﬂZÀB“£WÎÙJﬂzÖ7n–*{ÿ•ù–R‘@⁄ô®Úo)ÍP§)-I°ÍR„ E©˘ﬁ‰më{√Ω˘ t^FG>π>† ûs[ÿ*õYñåΩlw˘%)∑`–=r†L'n˘ß¥íM´ày@Ò±‹Üÿ?áØAlsønú˛õ0pºÿ#/©w£]@< «1¸îÒZköÖ≤‘Ãá^4ˆ›Åfµ¢à≠Zp>ﬁ™À>Ú&ãÄﬁ–`Â5ü‰}¨_0K¢®YÈ|Õ}Ì…¶É¨∫ ãELo6.›Ë≥€,¥Çê§Î∂∫ìÂ±t{Ùü 4ªîâ™= &dÿ#°≤˙´∫ÕnçÆIey›edƒ◊Æ,ÉIcæ#'ø“»ã•¥ÚIä `√'@*@paQ⁄ä’íÒÚ)@Ä˚õVê©}≠î·¨BC`éå2_Ö«éó¥ÉÖÔ+‰$&\ùdÀ":C*Nïçπô‰#æE””∏˛æ5~Ÿ™›Ôr◊‘˘bÈ˘ü˚ÄcRk˜ÆTòQ	0rC∂°
-ƒ Sç⁄î}XñŸnÁBî®≥sÈD|ùy´nÿ:)36l‰ì[nëßRﬁ÷{ô/d≈#◊+bp°O˛v)c¸Ñ˘1mzI¨&©ï¥d›.`≠U37ï›	R¿Àk∑4*¥¢6\T‹'SÉ–∑K∂F¶ÓÕÆ¢=Lp#QàvJS/”≥Ú¸–Ÿ~W©>†÷[Òù`‹ÑJ4Rπ≈~ù¥€|Çå#RMP^rP©©ã∆vhfu_ô™}˝^ GÕ%ºÅç&≤ *ÃF“éjÆ2‹à£ï][^‡à\(xÖ∆@äD∏∞Éµº1%bÖJ+i‰ñ‹ÌFÂÊd¨T¢ï*Aõ9Ó»´ïeoõ‘4ï7âaLª÷ëBkäeTÜıÅŸ4ïÕ‰Ÿ√7XÒ≈0$Áﬁπì ø%ÃçjŸ2Uaö±2ó⁄Û»å§È√0ÍÆhüÓo’c•‰TYı¿îÇRGAˆÁuÕ¨˝ˆSmÉçÛ køí›£¬3∏Å√9”‰,íÅ‘å 5˚ì4˘•Zuh°eÊwEÆ∞S-ó<HMÕa•lÆœ"’Xº] •±-¶“∞^>Q‰∑Í§úfdªîeƒz&•d€Ω≤¡Ò…MÔ‚.òåä&À§ùÇæé3\≤¶h—Œj9›6{‘Êy&Gx}ó:&>°x“M∑ä¡⁄∂¿1
-5,vdvlûn®WR…0[†uK¥|ù≥–q˝´ªπq±ÑØ#åEÑP∫¿–-Áaé∂©Oª‚[‘@Ç·œ≈ú,9cÖEº«.€ „Öƒ
-iÁﬁÙJœì¬.©Â¥Ef,w–’ßG‰KÀì·ôÚü<é;Éås¬b›;"iï¸°M<íÖ„+^$$√´ÇJ^“Åhvzl¶»rëÿ˚5ùÉàÄ¶
-´P:	z[=ü
-ÿXåoÂçÛXFã_ÇWfÚm‡˘≠‰
-P´ÏéO∑HºÑ˙ﬁÿ:Àà„%ã	çoåL˝#¿É"/}Ω©J§°´¯◊Ä≠ACÿ2•Hg :
-˝V†e7UÓPπ*lêJ8{∞˙l»ØÑ˙‡«UÚ÷¨¶mZ≥“ôU,X\[eì-¨±A´¸X§+˚J™∂W1ûòO¨Q™0ã´wÈ&	0ï±Ωüû≠ßﬁ
-«K„ª`LÏΩ{∆apÌE≥ˆ«◊tæ@=AL{ÒqmÕ2˘Ω•^BúÛSª]~‹ƒ=
-«ã@Çmf≤wehôr ‰£¶
-PªˆVkÜøÄh]€±YvZÕ]ÆüfØ"Oè±u¿6$XPGÓÀ¨jÊ≤äyÛ¨Y<HPH…wQf˘+Y}ä–&6÷ujJcus™…UnIûì¡F√?K´òTZYÃ≥‚}uL™ƒ¬∞®4ÍihUë¬Å˘n A†≥¨RΩ:çÉ∆‰®ÇâD/m+˘rU?Õ„ﬂ —¡∆ô‹4ø∂{Jwy)îùüﬁ{Ibã{
-ø£!Ó,9ÎÅór_£yaa§0ùü‹OÙx-¶Ã”¯3»M1a~π^ú`ÍØÎ¥÷|›◊H¬~}Î≤çY9?`!Àü{FÓ^ëÂÑfÈ>Ù`≥·_aÍÅAˆ!ˇÃ?ﬂ2Ωjˆ„ƒÄó˙Îd∞N6◊…÷:Ÿ^';øp+©N46R∂f	Öv%QæúπØs*WÊvaÀÌÒÏ
-‰∂Û$∫g’∏îÌÁÓ/¢áïQŒSm˝˘ªﬁ~ˇrÍπæ√úq3:æªäíLOrµıßwd±Ù÷îœdtÀT√ﬂ∆J’$sza›÷¬aªŒ›h1¢S@oêuû∞Ñc‰˝§NHd∂i(,OQ¿ü˛`o≥GŒﬂíˇıøˇﬂ§∑EﬁüêAo∞£]Å^26Òvjmög£Ç©3„ﬁ‰/ÜXC§w&ïÇ|á≥õ[l±aÁÜ•?”Îàí6£Á∫√Èûô¶“A
-é˛ÉÈ≠`¶ã Y‹‰ZØnUËéG.AÄz¯ Ã‰RõÀïíL}L¶≠Ás“ﬂÓu{Ωû˝v}ÿxñd∆{TÊ#"ãp^fSóMˆWÖu:fΩ·©Ç2ghXíÎ-ıñ$;›'HmT &EÎ;¿”atcØ°‰•*OŒ˜HˇŸ†€ﬂŸÌˆª˝ﬁ÷cÿJÎN@ËT÷–äd‹``˙∫…eá¶˚»–yÚXÆçTløÅƒ∆#Î‹/s7à›¯_Kb˚É≈õ†Ÿ$0?+">dx¢®ì0íùç[ØìëGÔ(y˘ÚÌ:=…§@ÔÜ¯i“∏G
-=±àÈ¯ÇI±1´óË∑X‡CQbYËá‹ÅX›Ë)êNä≤1úxn*úÛ®±}ôÛÆç¯+¶Ã‰Nr∑ﬂ'’≠”$Ó*”$jdMì-‘*ë¢µW8>W®Æ¶7 ]π—çV¡gùE±πm6M™®é˘“61Ôµ.øa˝6ÍD≥ÏöÆ&òqÁw˝5§D}î<ÇÚ∫Æö\úÀ ÎlG∞cå¸ƒD@H;ò[áµ÷ü1M‡•”Èjõ“‹LhΩ»æ◊”µƒ|◊NQˆ·k¢Ì	7∆/É§§iwØ˛…bWŒ±nÉèr‡%ãzÑ;~IıÀÂ;Ûñ≤≤/æ’ŒÿŒÿlÕ¿⁄´Zóüt_^“xqÛt;Ûæ˘)±t≠YÆVãΩyÒbÎÊVÏMﬂjl¿˜”mÃ•{K….+y	¨RB⁄ÒFo›≠YÏM˛∂›Êz∂ê”ê∑Æ~À≥H~ï›˘Â´Ê&≠d.∂(øl¶Œ˙¯òf3ÈKõÁÕ¨¶“Æ$^zHå¿œ÷≤Ì»Úåõa.‹±ÎÕ€àkùú§îeKÃ 7|x<º”èêcŒ 5|€Œ5‹zÓÄPÓôbô\‘D€ñÚ¯π›∏ªÖE‰Bì#~&(ÆY2h”û°«:€%éYWqU∑ŸΩ∆È1@YdŸ¡a∏¶Úh8ÒßH}µbí'£(ŸXx, %ªä)‘&»-ô´âç•RZΩ¥TEè‹v6øoDœ˝AYıIX]-‘„tfQßøˇ TÏ(≈%•≤•RS“P«˚CØ;pgø0{^±z≠Aîßozπ)ìúJXìy∫»îW©¥o5!4vª[oSQ∫∂‘¸ªdû¢RJ¢åπR∏€≤úYc5`ñ_'kk¸tKƒEü‹ÕçFnLÅÃdÕÕ7ÿ"•‚(Z˙v“w’»<Œkr•…ªÛæ[1(Xﬁc˘ Y◊˜t€˘ k¯e5ˇcVë‡0£"LÖ¡V/Ì!Gæ¯˝ÕÙ√`2AΩ§Í^*4Rıì»jmÛ„V_∑7ûÉÿ	˜ÚBΩ ∂D¨TYÆGâe?ˇ ~]ˆ4µ∫°◊sœ=ú“(—“Oh§•øXRÈ@£æ·œkq†(á>≠ı,Îÿ÷∂N`≠ºZ®%≤◊7õº^Ë{≤◊ÅV^ˇEœ{x≈∞jã¯`π””7ÅÇÊçwçÁ‘A@ÀÇnÎ„º°≥≈÷•sÓ5∞xá.˙yæ–˙˜≠ü∂vé∑ç±q•w˙Ωóœv˚Õﬁ˘i˚ŸqÔ•…D∫`®mpÜ~‚Õµjÿ3»cõ⁄e{∞:tÜïΩÃÒôvb¯¶äzÑàu~9<ë\dzÊ‡ôÈ(∏AØ<˘éºG«îˆ÷ˆü÷ë^˛Æ∂H»‰∞¬6eËçºq£Oî¥7ˇâw*OÙ∞¬>Ωd∂”S∏ô§=Ë=`è%WÔ£{ƒ„©Î,|∑ñÆ◊°wÒIéhJHõ´F1˜?j+Ö—Úí ÿ `]Êøπ4jØ≠ìÏ;÷M{ç|O˙Îﬁ_±wÑ>*K˛pDÔŒÆ#ó‘ ÈL°UìY¨ì~:Éªr:˙‘ù¬ISJø ;d>uHˇG≤±AÜ
- µZŸa¯lÛÓki}Áë˚9_Geﬂb79§>&®è˛‚π∑ıB§™Ú§„ [ï’Z¥ŒNVm^˘¢‘]Ì∞∏¥ø„Â}ˇ¿ÂÕ∞ñk∂`ëµ—2›~(Îø÷KÄ ∫¶–+Ü∫;•«V∞ \ÓçÖü$I¢ÒF¬$ÜQDÔ∫X’[‹∫%·IΩˆƒã€ÆNx≠ÃÅ∂ˇ{f} ªU€ãîA¥ærÉÌßÄG53HParÈá<=v∑€Mß¥N‡o\Û/¬Ü¡m}Eì)P£:„J_ŸúéŸè{Â§„Œ\û•à
-,$~À
-)»öc	A¥â^ú˝||x’"ˇ ≠´·Âˆ«ÈÒ/«ÏØÛ·ﬂ.ŒNOŸﬂgWØè/JI≈”lƒíπ∏Ò8ÚÊhjêŒ5rπã÷ÿï¸|ˇ·‹@q∑ä4atL«”¨M5˚ºª∆œ∞l‹ì‡·¢m9Ç˚©\JGº¥àzuó˙ªÔdoBŸA—§åjv 2ptÁãx⁄Æ€29<H¢8Sê¯xŒ7ïπ‘A/›=ÚÌ2≠õÙQÚV^Í≤‘‘¿ÕÑ&≤‘‘l^lÏëyW¯Xm{_9ë*˛.·°Ñ∆7î$69Å9(çWÉÉá@¡É`†ÃÁØ8˝ÏÏØ`üº±6|S?Ù∏J®ë¥‚§Ω¿Ò&°Ù§KÁú®œπ| äsı]˙ŸΩp] á-úØ/≈~9#›∞«gÿÈÔæ#Ïß(±DbÎQ$ÒÌ“Ô",‹#¥¯&Ï¿	á7(í÷≥…à„w#ó∆èÇgÏêm? U8nì[√ÇëÑ∫P`óÛñ¿E
-Ñ"Ùr@¢ÆÒˇ ~wˆÓ¯œ?÷_Jô2ˆ
-ûc‚ˇOÁÌ€Œ—ëB¬ø…^Õjå¸¯oµﬁyñ:öÛ·æá{›ÎÌ±ˇo≠’Á≈x¡ÀÍÎ∂WÓÎL®‚ˇØÔ8pi¥TÜ['ÉÕu≤˝ˇ∑V⁄‹Aæ;œÛ±Ûçƒ#x¶€Á:¿ˇ&’w≈√Ük è◊ùX¿?fÒú=ÄjY	Œâ8MR!ôà·#é€sˆÙÖ˜^∆™*Òê™ãJ”4õ¶¢»[äà±"/#Úº{)»4Bmƒıc∑r ™?Ü"ò8g›«ƒH2ıbÚé@ò¡xÈEﬂMXÖ0:¿# \y3∑ΩVôKzSÈóKzÌû$Ëá%Æ†ÿôkù{bã Ô•∑SœwIõMfˇ†@@´Ö>ˆÎ#◊·≤hˇ˝˜’§$,)éÒ¸@@o≤<,v–≠ÉÔ¬\+{√˙è¸+Çø»‚!ƒù∞œL…ƒAÑ7Ÿ4∏ÂÀQ¸]oYΩ"ı‘2íÉØ‚Îøø9˝[c≥¬£äS›_vn\X˚á˙Ë¸Z Fyy≤Ú8˝≠&Ω={wı⁄0N™ÈH•j†zW#‡«nÙªo¡ã˝SÑı{d>ÍH"|V√«T‡≤|ô˘˝©B∆“4ÜÖqCaÃx√p§±∞˝òN©‘ˆˇ–¯1ƒ˘V≤D…FÉÑ.ä|"ƒ€Ñó3^'ôLOX¶EVˆâ:∑ $ﬁL⁄aÏéiDaã"¿˙4ypÃôù1¸=Öø« B≠’¸=t9ŒÚºfπÍﬂTG[6˙'◊=∑Kn:57nôm^aú:ú∫ü£08≈2:¶∏9MLè¬ØJÁ|™IÏÏ °˙[Ö˚Ø6Ô≤¢±ómΩ⁄|gu¨π…„èu¨¨xÓÍÁ™3Eps-ÓÒã/ƒ=¬Óÿ>¬{y‡£¢jå1‹q”Ê÷©˘ª1W±x∂7á˘Z˙∞Vñ˝CëE>w|ñZ¿l ÿ∫zåˇ¸ı¯à}z˝ˇ˘È‚ˇπ^±ﬁøkÒ(Eo-ßwÜ–cpI^=È}Ç™7^tƒ\%%å‡Q´LáèﬁÛ«4oÉ∑∂Tñ`?4t‘∂Ü 2}ËÀ≤0ÉÒ"Ü2ö:‚
-[l…XZV⁄O≥+&R± Á‘È|ªÙÓ?ñVi<w«p ø.h‰¸≠ 
-§Úì»çØB¥∏hz)òâÜÇ£A]sSD£ÚÅµ;QM©(2W÷!5±x—∏ã∞É\lŸ©$.Øƒ*>mÓ·v3wätcq«™Ôëfb¿∂?ë¯u-1ï)ÇÉÈD^#ä?X.	´o¥G˙›ﬁ¿î%µaJbê/]ÓÄÎdûËq‚‘Õı'zûE¨}!ÅΩË¢∏≈’Ã≈KÊÆ⁄Ax ∑ıÄ/ro‡Ñ[¶sïÇßP†Ã&ô/Àﬂ|ëöé‹ÑzÚ7¢∫ﬂçálò1Ze ÎPïPl¡ÂÙª€åœbRëw–èÒ1;v•6Ö`ÙàßáQgzúºóK¶KZ•X‹∏ª\[&î¡Yµg´6(Ç‰øaJ„ {§î∞ 
-b}iµ∏j!˝H˙öOßÂUjíÅú«+I|‰9%†/àY¬îêö†◊JÂé◊∞≤	Ø„‚ôô˜êÍn#:O3“œñYÿ¯W`ù–ª€Ó≠ìÕ5Œ\!gÂ|1Ú–≈¨åç≤pmÁã9#w≠
-lwõÄ8‰[Œ-N•ø]∫i}X√aÒá)ƒ‡Ó®`|√òv[ƒX<K	öﬂDãÑ›Wdlõ=…Ø∫)sJ∫àÍK)±5f◊ÕbY⁄«Õ4¸qã]Ïk&#Zgﬂ©Cá‘ù„·˛∆à≠j¥ºÓ÷±«)Vd®[UwYLEUÔør‘¨®áÿ"Í‰e≤wKD≠¢ï@ÉÛ˜u√i≥–ÃîBhÛ»Zu,m„0Mm¯õ¨*q©&AsWÜ\µ˝ˇõP©πçà:˘”≤Ω2æ2Ám‚∏◊Ù»«\©CR˘]≈ÚZg†≠_ ÕQf∑0Æ€∂ÜÑ>ú∞»◊ﬂ—fÿ0e™z∏Œ'è∑∑å{^ñEtÂÃª¿í'Ì6]'#vP4ó–πIút»®ÚïZ˝c≠–"|Æ$@wÄ\W!(- í^á I¥{ÖﬂíR◊;ØYy∆±mkÂ¨‹#)CµπvHr3îL~“Kè£n®™kå“©,p#?;ﬁõU'´J‰Z˘◊ú˝¶Å»ÑâtC á^–“»5AÃÏ‹ì◊∫v‹¶H÷åÈ6E™>Bç≥«
-ßÀûe
-A∂°.™∏ai†ã˙…Çf‚)‡7ã7Tú`Ò¨ñ~(∑^ÊŸè9ã∆Œ4+(Ã∂”J‘zÚÙBjAmŸP5l§èH÷2ôëáËÈ9i˛~çGÑEô…+œ°7º0Ág◊∏R~Ùe;Q£ëÒìô8õ•πx„û⁄zÍ‚ìÚzö ûVÏîm˛ã<ÎÃJIAâOGÆè:Ã¶ï≈ı ˙ì«Êhs#˝πz–– 3Cñ˚\Ì˙:˘ªêÔ»·S6J£Ï˙yÀ]˘Ÿı/wî;ÎZ.éﬁÅ`‚√ú“<BW%_»«Kîò±h±Ë∆r÷ä¯,‘º¬‘rfæ@üãBÍQ£,;æÛ rœ'ÃOØ∞y@YïGNrf¸RÚ’2bÓu%Q∂]ôV•gayÀ2u,Ω◊(Ú˛fÓ˝Ü©¸ˇ¿’’ﬁ`íîO∞ õÛ	`<zÖµcLtÉ©ò‡Z°$@—«ëπ<Œäl˚7Óú&¨±tyv˛ÆØ¶v¶’¶ÉZﬁÔ)]jm›5UÍ@â‚+V£ZR§$ı"9Ötó±)&Wº*`~QÁ…z∂ıßU4Bj}gÉÍï÷ı(π ˛¥¢+ÕoŒï¬EóhÚ¸©¯iM=,& ≠êˇ
-ë/¨Ï˝\(¯Z∫ƒ?h(Ë†ª˝'ê“Fﬁî`’„â«+<çXÊE.∂r'T…R*ÏÎXIˇ˘óŒ6+Ùä%
-E3ÇòËQ®©!·‘é∂;>◊≈r}Hø∑≠<™£6CÍêa ÇS‚›(ˆK„.¸îLóÓlÓ∑Ó∆V*@«ßW˚U“kKkÔnt8˚au≥åﬁÖˇjÂ<5©∫ñŒIó¢[Ç≤∑eoï¿¥J£
-ÍUˆ<ÈT`R™°”3ÙﬁLeŸ·Oç—N?¶4d.-ã1˚iûÀpÑ9‡?õ¥ª‘OZ∫&ZSÖ>…∞I1dYT“û¬‡[«¬◊µÇÉ°¢§MÍÔr“Áï~Ètë˜’OWW◊Œ¢∞Xìª≈n|Ô˚ÏrR÷¨ë™GË,CèÜ£6v€ß≠Ì…3≠]ﬁÑQ∆¢òø©$„,q`¶Ã€ÌnoÙ{OPáOû;∑ZåØAÓ\6à•Ø+&ÏG}Ùae…Y˜Hœ‰;H2◊·•÷ÓˆüZÊu)}ıàŒêhsıtÈí·4ƒüÏ…‹”ªƒJê•ÿ'5áæ’”
-WÇILhx„9ÙTπ≥=“'§oêe.¯ÄIüJ9Ù/p§W®Ì%h©ç©æ˙Ú◊=÷≠¡S™ÅJDû¥S¨[^;‘Íô»<I2JP´‘RÚÂÕ´⁄ñoiS«7@ÁYÚ;¨4:V˙üK3˘´"˙∆˜\n…âìp&-Ø˜TÂCi@?±Úmh’$78ëuÚŸú0‚Qﬁë{mÃ+àÜ9/˛z≈C;eŸq•¢†á^4ˆ]}—•GÆÙ	<}Òq +¸)„Ì•÷Hπ£Eöq˛¸™K∞&<°üÈU∏M§	≈ﬁbVcÃ;@ôÑë¢±é)O4“˙ôﬁ–(QıöÂë‹#õÚ<q÷McxB⁄ç‘®]7¿,0I’OtäYj»i‚Ë˛–ƒPyPX¯Â"¢#ı~+ÔæÊ“_˘·à˙$≠50é·0£π~ÈóãQé‹º‰∑Æ£,Q(¨◊∞‹≥Äº∆2*ñÎMÌΩcƒ;âN_gîò éw£—KîcÔˆHg[%…KàÏÿ™¯
-≈ñR˜`∑j∏•˜™VjÂ§æÈÎ™y’J5FÛ	˙«”Oi4L⁄=•Wíû«‘FK’‚§Í,>àõ®^ÔóÖw5´ØçuKV ì…ØΩñØ&â™ô≥ÙØsøä,◊=ô“æ™ˆM0_°˙»‘bÉŒJf]ﬂ9µë’´Í®•03N–∏…`ˇ?   ˇˇÏ}ÎnIñÊ´Ñµ’©€§$JVŸÇU⁄ÚEm…÷Hr◊
-çÆô"≥Hf≤3ìñUjÛs,∞?Ê«ã≈0o∞Ø∞è“O0è∞ÁD‰%"2nô§\ÆÍJtóE232Æ'Œ9qŒ˜…±Åûv¢yâ5d∏†ÜŒˆî1Ë	πJ9#
-˜í!=bÌã=´Ò˘ÙÑŒOA1üÙn&´KúÕ¥¢Îä]ÏÓ!‚©≈QêÜè‚
-∏-ñÎÖÁI\±…≤ é(ˆÈ;Ú6ûRuåb‡!lÀÚXxÕ?FWwö˝– ˜aÉLﬁë	]ï`'ëﬂUëπò7ØCxß∑UÀ:1w4	jeÚk€+—◊ñÃˆñÃ—ﬁÑÃ÷ÌÒwyúéa	ƒÙ´ˆuÿs Îûê∫<bLè`Ù√ËcÇÙ7◊G≠åœË˙8‚£@æ&téÔ˙Œ‰u	¶ $…<à¯õπ˜É9=ÊhVﬂ âAòÄç#:˝Y<L/mÂ˙(ú˙ıªú”ceQjjÛä[ÙR’d<àÀÖ¯åMÉÍ”íœ—0ØŒ¬kò;Y1µıZ´ráLÅ˙¿°]8‰ˆ©ªã?˜mB$≠6„^Ú!ö”phÿ¨[«óﬁ≤”6Ìj‹\ü™ÿπ!˘Vuﬁê›`2cÄyÌË›ü†˚z{ù≠≠mcW5õ˘aªd‰·H…π≈/”çÌyÙ¢ì $Xcô•”	«¬pó!”¿∑zÓnh‚é¨˙aª˜»Ø5Ëæ⁄Óß'v‹=—ƒ;Yıƒ„'~Ò¯^;¢H<â>.5}ÏÜCØ–¡«u P"RÇ˘ñçº∑`¿&Jí€1O*‚Ç∂»0jÊÇ≤->≤ßØ¬ipØ±´BÂÌK∆Ÿ}Óÿ«d„M≤á»AËj=—◊∂Là ÷èKGò†1ù˝ÓÔÜ≥mÿ¸:DffV18’“·ÄÜΩó&¢^ÎÄƒ9 ∫~¥ÿoéé<õÛn‰bºLóS≈@@ÓêkÓ√œ_*πnÈπÉN=ˇLq<„·˚/î⁄‚´m◊q ^R˙'/í} cüùÖ-ew[ı»Ω•∫]jm√â>ßüÕ\§èR®˙≈·klAI¸Û≈Õì¯*îËàúúlaÊ”Ï√%,É≥5í]}∏LÖwˆµﬂÔ≤¸6C:EO{k
-£4@à0x”(°C‹Ø;Y‹π=+âg•ØiñMÃ≥/Ê;ã√iùK˙‰LπXgŸ<›ﬂ‹ÑBGA⁄]@iPßqwœ6Á„^±Ω˚xowko{wÔ	òÉΩﬁ7ÙIè∑ÈÂ≥ÎÉmXæ_ˇı‡±VÄy%jêÜ"Ãn@*Í 0djËZiÍ–ÀË√˙ß¡UÜˇ˛R«êÁ%É˙ë¸.∏˚M@ëSßF.wã?8 ®ANòsgX÷åQ6Ie<≥∆iVÕÖÓ<·∑wÉMÿùûA`®Mõîá}e9Ñ√Ù6NsÒ§Ω«¿™`…
-4Ä◊]Îª’¨‹]ƒ”o?@ö[id0©◊ò\Yh_ú¨œ«µﬁw≠B…—‹ˆ);¢ß-◊ŸfYG«ú·8F<á¡t{(të◊9ÍÌ14SÌ#öœ8âAì{èw tI<SöÑZ∆~Ì€±ª-™¬3åÂÇÆ$Ú†Yûÿ˜`≠ﬁà¡±Ø’"%5°ë>)ÎX	…Ÿk…YHœÌ≠ÊßKbszadZl?«AE·Ónë4ﬁü,"$†JÒ†ãÙ£!5™ófXL∆d	qG”õh@‹@w?
-Æ±Ω‰ „gÛÃé∞ª˜RrD£	ùìÁ4YÏ;¿ƒj≤—vªŒÆ¨/?@˜≠p<ãÚ›òfiﬁ¢ s|YÎ:#~—√∞'ïw°‚Û¶.ÊúÖ√		«XÖ˜-pˆ9^¨ë˚Uﬂ*E8˚ ØkÏb:ü/UÃùœ0ã–’ÙöÜ^û…«pty/∆É≈*‚∆≈^Cõ%ıÄ»õ¶'◊î/^◊}ûtº0‰ÏΩ%›nW®ÀC¸úOGwrÄ Í—ıºTg0&lzªXà9wRv}Ì:N&(∂ˇÛ/ÿãk…œﬂøÎ¶Ãobπ|ÅÛt$ŸzÆ"íÀ ”˛Ü∞I_¬®lƒÍ™
-ÕcÜ®Áú3¸mØÈ‰Û,ò/!‹ÇÓ:ﬂe˘’¸õ%Q¥û¡U +°¢k_ıû`»ì‡@—ggô√∆áª&m…‚m¡#Ñó√0ìPÖ	˚ÜèºqülÂ°5!iîê_‚p€PÓ,S¢Ät√5«ÃÖs–"ÉôUÊ lR∞oﬂ5ƒ}kQîÌ‡õë
-áœ∫È‚íØWƒê|lÅ∂°÷y4˛µÛ˛$Ï≤ñ∑[£ÿ£âuû—´+À„KVQ÷Ws^lÇkù˚´„ÀπxrqπàF>ï§ãl‹ïj∞BÓ∑¶“S:ItQr;3!1nÁ0ÚÆ»Û‚õ˝‚õ7_cç‘@ØWYW≈3Ú√Ÿú|•@—3›ÈÕn≠–Yy∏≈ÜÒ|ÊÎ;ˆµÔ¬Hîo∞ï}o3Íyêå(Œ%u1ÒÈÅ÷_‘í 5Å~ÜÌdºmQ|Ωn7àW€7π	brÅï<çÎâêõÄ&ûÂﬁµ•m!;+ÏIy∑√pÖœzÃﬁ´s i‘êúä’uÙÂâ®i?˘¨∑ÎÆ=Úvß˙ÛJ±ep?Á›m1>Ô›]„ák‹‘ãb«1>äd$Ê]ÿËº≠yG-4@ÕÏr
-zSŒÇt˙HY¯∫vÿ'GÔﬁˇ©~D^øﬁ?æx˘‚MÀ}ª™ —s≤	uëwÃsâZºvª˜¯…VØ∑≥ªµΩm+ˆhr
-mŒ»õˆjÒ˘b¬ÄG‰EÄâ’SP“0
-“î¢„5d`bZÛ®]‡≠bùÉúsaÁ’N˘Ωˇ4bA{Y0wçs÷
-./ˇø∞†™{·uZÅ_º 7|Ìt‡/¡¢•€ÑSO”‡™'6£ôVïã°––ÂZ
-±ñﬂ∞˜Hç1ínôé‹v∑8C@~Û·⁄)‹LG`¯≥H√¸0a¶j¿m{Úâ¶u)æDÙ+T3YL˚ß!lP}∫ÖqA¬`…#≈6tÏrØ‚Ï(§x-πÂ2óÉf6ë\
-Û
-¯4gÀ¯Y€¸˚˚?Àn∏π˚îÄ946€›G›yç{Ò6πxæ¸vÀÇx–õ∆rW}\‰π\%aö?ÕÀ*XCñ€ÕVæïy/J·≠∏P∫fPﬁºl->X!÷æÎËçµ¯≠∏Ò‹¢¢Äß®Â$là¶X{Å]Ø€ﬁ‹qê\.RËÿIıøÈ"π\b±CsÃÁ:H°Œ€ﬁR°ÚkTt„¥iœx∆∑P.ùêÁ·tXWïµÚ0ƒ`B3:çG_~2À∑º¶Jè8¢}*@™}‰†¬“ñÔŸl›√iê!˚//›öárÓhB9VVåSÿ·@1√e~4£Y9À0cê¬hA!§ÁÂà£´p¥`sö@yÏ`é'Å	i”H£ë;BV»ì·Ç]„ŸOPLµ¡Xá∫∂˘{Ú6∏=Çø¿«T∆ﬂoj‚°Wñ=/@2 ¥.E0öE≠¸YrN/ƒ£1ú©öYí§`;Kàù¶?óÙπnwRç™gÕ;ªZ‰~}Ë¥{Úﬂô˝∫-◊'ØÍOA^Ö\wﬂ—Èò¨˜èÃ|®m|uv?HÖ‚ÇjÖó8“`z$•4#`K†GêMÚ5ô„)óÖGoèÜ÷Dì}œh˛ÇF‡È•Ä{∂ôü µZLw¨¥6-öC:≥#˚‹cäŸØi5« èéc∂^üûQÎ†üO˘1çn(Ø∞gCÇIãî<⁄öqrö)Ø˝ú5˝∂ ⁄¥ØM÷SC/&Í
-œab.Ê º.˜gVÍ’c‰∫¬?É“`vJ˝“tªwÒ∂Ó*ö©NÔC4\åàÍ∏1d„)ù#W'ôÿtÿŒî¿◊CzÖ9*Ã¬•XÉã(ÉÕâ&i8'¡ÙÍ§àá÷ØÀf¡Û6c_ÂR¿∂Ö@:4LÛ«
-`Àkd⁄_#Á∏&ﬂ≤9êh!z¿TŸAæ≠ßË6ÎÉ/¶Òb¯aŒÿ™úYï6Ÿ°ı´µÑìŸµúÙºú§0A…y0[P€"29·Ãûï	(·é„ÿﬁ‰9ü¶u	gäÒWËÎ#</ã—hVtuë©Y7|1ôÃÂZ(≤óï‹fî∑v¢üNAvÎ…’‰ÖTÌQJ˝Î=ûwaiMjÌs˝Ä-Á≈∆/ˇ !‹«])“Àáy zzp[˛˘ô≤i7]Mãbê!á˘¸Â˘ê~Uê}ÔÿP0çık“«∞t≠<∫Ãæ”E
-ñ‰!Ïct,!ëv ñWâ€∆qF«∂Ò'ãÑf˜€g(Ui⁄Åé>=œ˝•Ω˚‰.∞ë§7 $»¬lÛ¬I	≤OŒê6yl8Œõ•#|ÄSOÑ "AyËCWÇ‚ïR2AøÊàG∞˜Éj÷µ£‹≥ih∫%dÿ˘€`m—Ql∏) >+ÊcxGSCLAi.¿m#Íå˛ÊÀë“Ω,@——«π6{ÇÆkÉÊ
-ΩKÁòs–ΩS:&–Â£¥ÆR'≥®e>œ}~cI»{z˜ëªßd&èN.IËÌ}úﬂ∂™.>u!æ§–/àgñxcÌÍì Ç}ˆ0:ˆ…Œ'0ÎÒ¡ÀÿaS˘ËfÛNw{ª˚©˚…—œñï›ÿ{∫7vv4˜⁄≤âÌ—◊π¬ÂÍÎ¸∂Ü,l∑í<XŸÑ¨+#jÏŒ¨ í≠JÈM≤fï∆Igál÷T“lN¨Ÿ®¬N˚Íñı`˜rtW˛ÕFÔÆô›ïéì0öt∂?F£äøßïO≠AÇSAÖ	Zﬁuß!6ΩÉ√ÏÁ¿>kÖyñ
-ì!ÊP=;‡ôØ…π.Œ≤¬6&◊e†Ùµ.‡V˛‘º™ kÕ¸FÔ®®~ó8·uŸìuÌœ6 Ö;√u«
-Æ◊dFv˜Íq8}◊ä=oè™h’>4;˙Y%7£¯^ˇíÇ’`F∏`+√˜ä0œV∞¸ß7àÇÍc¨ˆãõ5Vπ;(£àÜ;∏-˘dõ5¿Ho¥Z˘ÚØ0#¸ëˇ+ˇvF4Ä2`„Ñª‘o‰˚yfXÒ:Ò”gÚ#¯81ÒƒŸMÌ/ë>7ÚJ§„ ˙Ï^vŒöqH”ÒeL÷Z(›aDÑÇƒ©îˇUª#À–&å¡∞Ÿ„î∫⁄WÍ3”Ä~ŒÇø.`+É¢•èÍΩ04„˛#ñ∑äü‘;ì ú]Çﬁ‰SE˛¨ﬁ=Ê†P‡OÖUì´ˆù˙îkY∫fÛÂá5ΩÃ õÖıh∞˛pÜÕ¡Ì:X)DÅ_3OL=ˇ‚≈ÀÛÛ5=\»èãò¶ŸIê¶t∞gg¸o-8‹>éØŸ3‹7\øÎéSXoı™Ω{ı˛s÷C˘FFhG√0Û⁄#F2›Aãﬂ`A~)û[>eΩ_Ò[5lºy≠◊
-Ω«m
-Ê$ãUÑZıAæÀΩ˜èi4ú/@,&Ô£ÈMﬁÉ˝hxç>∏µ˛,ó¶G3îB  Ú€
-ÃnÌ˜Ú≥∞Ç≈ó?◊Ó}UMÕóµßNÀ—>4öä8ºŒG‡>›˘à◊§j:Uø¯I¯è1≈úìgB”À8Úô>oŸùøI1œé•Q⁄‚Ä´^~÷íÄn7áQ¸¯ÀÍûÔ’)/¯≠öÓ»)Ëqa]–Ñ¶-g\“uBQcË`›˝r:	%⁄v0Ã[¯*NÅ
-ÖöÓ˚ö4<7>n¯©—Õ„_ºÃjx∫Hch◊{<"–Ã!ø$_sŸo‡€3äÁﬁ∫˜IuªN§ZúD¬ã Õ™˛›µ†úSöïÎ”m¶ì7Ê˙-›tøâG|âØc¥æ∞¯±¸F’Úeq\¯≥≈%ﬂwßæª?ë`Æ◊FãÈtØuã© a–,û‚¥∫ΩïW÷ÈuGQ°°Tîª;Ã~;ø<ò—π£g+⁄Wew3PÇnop˛}≤•Œ*Ö3÷.·¶mı&]êŒ£≠<RöÔ0d~ŸÈÌäÁ¥ f0(K ó%ôˆe˝Ÿù_ÅthìõD¢Ã‹}Cœ¯öÅEÃÜ‰ßŒ∆ª\∏Ÿ/Z¨ñ√•;Œ2C3+Åõ≈§Y_«≥@œ‡#ıLOsB.Ú/ áÂ|Àœ„züh¥ß89K qpï¬«0∂∂]§î°WãòiahØvvuIhï◊R†o‹üßµ0g«ÑÙ'0©tµŸ˜<cÌÍ	-epΩ¨ø®nÑÄë∆úPÃKëôQåø;Ë¥ÉGÀ‰òŒY‘Ω∂Úæëx⁄/K8wÅ˛zë◊ú|˝µ& ƒó‹]fg*y§∫
-@ÅV"í5ô“1îz(pÃ˛+ΩPÅí…E_gæò¶Å!I¶Q‹ÄH4’4r‡—:NbŸq¢OÙ7hGPë00ôô¯UbÎ§¿{ƒújõœtì¬g∞4Y"ª‘}4¡Rf§å6îG%uÇè®]∞’k2Ò!œè«.gÕÀ±'ÆÊK 6≤„|Òà
-Úæ R7WÕös'gQÈÄé⁄22Xg1ÉÃ∑FôI\©£∆R≈®4ù@l√∂\≠+—û•'`ƒ)…èﬂ@Ø∫psÖF	$%Ø˚©Áb»„ÅêÚˆ:Cª±3ÀûyZúÚÊ“‘:=äN1áJπbiº$Ñ¬P†.HÇ√;†œíÑläﬁ¥≈mi$ ì{√|CÕ¬àf<C°•0ÒSMÏ˘∏π˘2≠gùø%]íı.ŒåM∆zÌëmëÿQñ¸Y]øq#$ZñÒ¨õ≈Ø¬O¡p˝—∆›CîGq—H*Œ÷ƒœ√ ˚K^7g<æ?≥∆ﬁ˜ö9°ü¬¨áûÖDL–Õ]¯a´úŸ0û'Wg˝u_— ∂Ü˙∏Øz›π∆ÃZL…ÌRwÜI´d èÒè-›e≥deë–âm4ºBD#c_¬œ∆k∞ñ~gÅ„ u<◊]ÏEœYw¨Y¥Ö4ªô2ÔÔ:çáL∫â(gtûvGq<öåh??˚Î¡W¡…˘ˆ∫€ﬂ<⁄^ª{høl+º}{kØ˚∏˜MoÌÓÎü∂ø˘:^dÛEvÄôyC´0ù¬¿æÇ±—ºTó0§èÁì-)gº¯ZI‚Õø6R¿<›‰CnP}xvÙ)‡dê#=√V8Å•©ÉÅ‡óìrUcû9Û70É_£	8∆ˇ»8µ≤€Ò{ñ #ëK‘AWã¸C4Rz7–<œ≈¿t§*“èúr∑ˆ⁄¥ïÕØ-#Q!œck>AÚÌcò.Ë4¸â)bd=gã)cï≤LÀtπÜ1⁄*Ña˛W.@{≈E?ÌîTﬂCöéÉ°æØøO°∑ˇ“€JˇÇ94˘K]°>¯≥•l¶Å•ˆ9Óg√›ìçµNp0.w—∏ÏI∫L›∂,wS…Ú™Î=%"fSÃ3_˝Ç˘Ôr¸ ˘•∞ÿÊâı∫âãN…π€∆#XñœºqÁ·°Lﬁø]ñx›
-¢Ù·Ù∞qÙÓıæKÀæ-	Y*Œîãp÷ê3e/0w±◊Ü£–|O¶£˜Ìi0à£°ÁÌwK¿ñóÙ9¥.y≈â+&ü™[‚“Y≠Áí-˘-Rj_€*À∏L2Æ0å{ª*ΩúìÊ4/s.`òÅ±…
-ñ|l√w!§8¶/\Á∆aN4∏¯UÛL®¨ovÛÈø
-Ç! bcÕÃr√6èÕÊêÑ4Zöì≈IND0≤Û!0V~ç√´¿r"f¿,?"ì¬%cÂ|vπXª‰<Ä]i1.‡M`Ú“k:1•3·ç!a¬D˘X°6Çd°ââ`7ÜΩ`J‚i0.¿-F‹¯√jÈX;ïá¨p&C⁄…}çß»yÏEÓnìıÑ`P ©ˆ¢l6ˆDËüﬁ„Úd≥%>Ü9≥ΩùŸ’\£–∂“∏Æã¢¬ˇ∏"ô,=ãÜa∑≤L62ÛF´Ê”¨Â«“ÂÈñË%Cf†ûVÊSütÒ’†Äπ^‚JU_QP~6í7c!FŸ<„4^˝eßYÂ›®ù(1*»˝Ã∏≥‡*	“Òãky Ω-«—•È·Æ˘ÖŸŒI<J/?|;Åj1∆XYÀúæ∫É´ç4%§≈Ÿ_ﬁUÚ}TJC£¥πæ†9û,‡õ-∂≠ı∞)X§Éº˚]{ı°ô#O‡ﬁVÕ#_ﬁS@öx	¡iÃÎÁpºUajs!/Ë´GMÈWù¶π:V:±œLé1;¿G˚cBã6Æ9‡ê5J∞E+`ﬂ¬\@_—“GÓ√ãß˝¸Ø∞U,'¨V{ÓcÉ&Ò;Eô-a?πXåhä∫-
-ÎÅ¬íŒÇZã¶#stÑ=¬⁄†å¶ìí»z'!ÎÍéõ†»nÆ∂YpÅe©¬¸˛˙kèSF¶≈C1«ÓÇ(àåléó£ÂH«Q\Ì\^K¥¿<S÷(ˇ˙s.“)Ñõó'Ø–ä◊gYhÎz»Ï»SFIıhyµ~[†´[†ÎÚ
-=äJ•uÕER_‘Hy˛,¯◊kV“Ë/vù∑pA¢¢_¶ŸÜkìÜ©C◊ø]∑ô†É8™È<{èî)}é9µ˜±“·ﬂ&ÛE?b3S™„ÀOÛ JY’¸^W]ì``ù˘{7	ÆÇ#ñùıXX®Ò˛√≈öÌÓaz&¢§ºOx˛ıúﬁ‡GVıˆ}Üeaá	YŒÆæ¬[≠ùÖ7¨dƒ-’œ‚˜c-†’Y
-c5\åúÛÎÈ9sÛ˘	»ÿ,eÖö$∆VãNµ;œ∏2’‘≤b§E$ä∏”˛—·ö)"•hæΩùƒ‰ª…'H°;&E~§óS\WÜ˜âs…8+ &YmÜ¬8=˙p—˜⁄ÿµEC°=√.ù!Ë6á¸¡^AGß€ª˝Å≥€uº•ÁÈ [–© Õ˘Ê5ªÉOs·Â©ËßNÔ|äú“õ|~¯ÃÀ<x√ß&ê˝ª›on∏•…ã˛:P{ˇj+mÍ%sB®ñ&…©Nı"[)åU«◊Aj°ﬂê-Ck4©‚uØæ=›⁄˚˜XiÌ}|Üà{<"ºÒ6M»^œZH◊¨•°¢Vg8e‰ßåo»j[ÿÄJŸx)ª⁄™∆æÙØn•ô…˙Öd≠ZÜì9IãHx∆
-´ÑûbÕµèó#PY≠yæñNct¯_±˙ú¡XMbr\¡ôUÁ˜£™ı^&68xÛSÛN5†;‹ˆ/œö«≥7¨&®
-Bﬁ·w{ƒÆ·uLË<ÃS<9°…(4á#Ún∂ÜƒX≈»t›qNœN∑T¨ıIòH÷v9ãì›_íw¡‹ıfÈº~ŒóâRBKR°Ü\‘Ä∫‰ŸBíV≥cŸ‚ÂÓñ€öçªÙ2]W6√*Ü)è_Ú!NŒ[≠Ixy1zªÿπ-'-yzj˝–ΩG∑«ÆÅó8'äòmÒ•é=@ïÏ>√_EX{^uÄ√¶ƒ,å÷AÆ=$Î∆B6…∫§Ö˝Ìod{cÉ¸û¿É÷„ù‚≤ÛÀ°∏⁄∆“G;˙Bä}«&©{R„wÆ&¡fm∂~ª˚π|üo6åWBµØÙ%‰'
-95P©Kµtm@Ü¶îESOoqùÕ›…T¸∫≠õÒ™»ÃÂ°S⁄yµ◊C‹59h¨O%ø≥∆ÚMæÛ»}∞Á?â
-A√Xbæ‰IDnU’œ=7ZÏñ+b˘∂UüvÖ≤‚iW⁄<+ì]oæx—U §¬£ÚsO:Øô±§i≈ﬁÚYS<ãÎy›L.ÇdN'÷êÉ¢ø~∆â!˚ﬁ~Óy·´∂9~ˆvÃë%üWô<¡˘‡ÄXu‹D®¨BÃúyNiHﬁ"◊ùê¸ƒfﬂmÎåbœIÄ√/™Èm©3yÀèZ'¯›∆:T∆põ˜,;:kpÈrµ`ôˇdqi|^'ÎSæ+π€:W/¬Y	mÖíç≥I«µqb«}p>Ÿå€…∞<	úqAó£ñg™G√ÙY7å”‘ƒÂiq[\÷ê
-g@Ö#ú‚=„ü4Æ·µ™pV≈Äﬁvd$VhìÓ√C◊‡-3t≠Œ2lñÛL∆M7Ró”πƒ®°$®¶7ÙI~>µÎu>Â>kj}z–˛—^NE‰ÆU6±}*ÙBô%®¶!K©∏©ç–≠∏ÿh–èDßúMSˇpÊ∂,b UÒ>é
-D"»¯Cvå-Ò2‚Lƒó∏:`i‘3C™ó√Åá◊Ÿ˜Î$+ Ü3©ƒÈ•CÁÉäÿåi“œ÷∑<‘eO+…√#®ÂÇ\åÜ>=∑>ˆä>‰∑vO7è.‚b≈/RØ⁄√¯;m√'Xëó 2"Y„∑ƒ´tRcv7äØ◊7Hg†=Pî≥O=€ B„˜do´¯»
-Cáxm¯.t§ÄÑåX§Ñà(özÈ$•=‹ÁöÛ™o≈∂∏™⁄∫œã<}¯¯Q#\¡ëıu4ê«†g?jÁ±[¨≠#πÖ ™ˆ„5≤wÎ÷<”Íí3NΩNŸ"P#∫1‚ø{…£Ëövg¡ÊW¨◊Ø«4KÈ|é'n¯y>ÜπwÁqﬁÜ◊⁄_`G&íu˘≤!sÒÀ=¯í˜Oëgı£&z≥Ã\πÏË€V>º<ñQû,'AÌi°Ö'ù§µ˘}≠Êñ#Å_¡yFØÆòÅaŒEÆÆ*ª=≈Á:Cñ–jÀy..Á	ÆnT@ø
-c}Ïã[∑?√–˜ì$æ>còïè˚≤.œ:¡oq›6ur¥∑í[⁄»Fπpj0uoKo^\ıìÑÌ∫~ëDô1v2òÑáÔ6Z!Ñ	8e5 À∆ÀtrÜ!0'`>ywzé…Îûí≤*d‘#r…QπÁ¡t1#tHhë0√¨Má∂[˝Ò&@¸p2£ü:%¯ò£∆Á·îaù\.&îÃÇhÅNîº-™øà≤≈Ñ˝¿A¿⁄p∏jx˜S∞ª÷6∑EΩ4àâ¶|‚Ok3Go1‘VÂ¨∑Îã¡+{2ÙtØ∑´OíW∂ˇ¢2ùú–˘— .BïwVíπWï ª≈àÇªÓ8-»Q¨!ïß·4Látºò.S√≠Æ:í!òD‹#cUäÖ4	fót‚:‹‹WDÊ¨Æ)ùR¸o∂»óâ°8ä^Ïrı¡ì3&`eŒK™˝‚≤c
-i~∞®j-Xfd2ü,*ü˘'Ñ◊<°Ô–∑U7æâµêÆj/∆ä⁄=à¬}Y;	r”›!E*ÀWF>>‰E-?Ô{ø»Ñ·ìzßgùÉ Fg¶‘Ux’˜*_‘ ûÕitÉ†P†Çπ»∏^ªO˘Õtÿº®øtÁœœã≈°Ø“EB≥Œè∞X]‰±ÁxÁÒFM+”Ú«„0EÍFÈÛ/àÃRÓ0±ø“9¨˜Òƒ Êø1ó‹b∏€2‹H? ¬6fD†jı¸~Î!e·!Ÿ˙s›ä¨l=º;	ÊÕˆ…átΩyHÜ8Y‡◊}“´?l“T‡´ôUúí¿pí≤òV%È”◊«Ò(6+zÅ¬~o◊∂€2o@PÏêKØèﬂ?Ô◊éﬂY!Sf⁄h“{†˝\º|ÒFwÓ:¡∂Úç§Ä*›3XVÖÄÒ¬ÍfÄ\ßA≤HÈò*⁄ø≤I˚I`Xö°K5Yh…'òZ~Îç›[ªU‹Íã©˚¸cE9V'õ@ÎgYbäzâ^Á∫"ÿ qd/Ωb°Î¯ˆ§ôm¢§”Œ;”‰-ÙX≠ﬁhò»≈Ï›Õ5œ)_¶âÃ*•˝^œ»&”‡◊`C¥cúùÑ√z÷™Qß∫”ñ˙6[zv•ª?¡¸ZÅ
- ¥‘4±.“„)“Ü¬.{æ∏ú!ÎòF√i¿%ÖôY≠ÑÑ6ÓÇßSzLΩÈ'‰S4èj·ùÛ©·ÑÊË∞≤Ï7…À"˙mí7ßö˘ƒ*•©lÕ:XÀà’ﬁ¡ZıÁxÏ…[ß˚UË ˆí3ÍÓïcå°_ê|°√Ó9Ö˙Oπ6ât	∫?“È"`JNïU’Ÿ1`˙¿¡Õ‹”à~Ác˘±ı†õ—dd]V¨÷ä£WÒ`ëTÑôümsM˝cœßãDxJãßYS"jnÈœÎì‡Øã0	Üµü65·N∑iU2z+Y_áÒπ+Û[≥#”ä,˝˝ÄNòrıª?ÏŒ?m¸π ö.ŒW≠∏±¢'§WAr¬_?°ﬂQçu)∞÷A(]—!˚7ùÜÏèØ∆
-ıJ%ãqá˘≈LŒ≈‡2¶€èc÷~4«|õÖ_æWoXSÕpˇÓ®ƒìûÖ◊ÙÜf\Úõj”~˙Vöu,él¸êÑ√O÷P2◊©ã"ÉBÃ«9\@ÒbÃá-ı¯¡ÖD∑E¬¸éî∂Ñ8I=¬≤9[é±*–4l‹≠‰µı¨xˆ~≥ûúÁ∫û´*Û∆É6ã£ÿ∂Î∫„’Ω”∞ªÈÃƒﬁ\&–‹±Üu1^ﬂ$ø.@Wöå√Ñ√—"Bg•ìÔAd|w°>ËXVy”¯Cb±ı§§ífÁñ∂ÈÊAèßó©x¯$“Ig∂µuk^è€	™˛‰”–+µ{ıj~√ÖÒµ–∑x¬t
-v=°»¨w*Õ±rÅï‘BM-Ñó~ ˘.`øGØ¨"mX©⁄'$•ıÔˇ˙⁄ˇÈ’÷BÎÁ∏Qm-%∑á“j—3‹®ıqÕnói€õ=¬yBÿ∫a_¯ùUΩn$»sˇ≈‚OJûk˘ËßÃ\3ùfÄÖ™;®÷%ÌV+ﬂgÖ™æíL´.ö5óS*‹¿=`Çÿ¶TSE“G|Z¥ÕZtC}ºòSAà<”∫^ÿÍS<,ôdŒ<í%oä÷_¡ò®«lI0BJ¢?jÛÃ<*ÜA¡Ÿ-«©"º(/>ç‰”çèíò/¢JËd=s∞»y0°,áG¶§èÙ∞Í®Z∆Ipu∞ˆ_ﬁÁDﬂë'∫‡ˆÏNœ~¢Q∂ Eê…˝g‰Õ‚rçBÓ`÷ÙısO7—œ’‹˜\Œƒªü;ø(ˇs}2-z„íÊN|Õzñ_ıÿ‰;h&oqj-HÕz…uÏc∞b5s1wâo9ë®C{=Ú¥’b‚D¨Øá{]1mÊæbÙæì7›∞´‹èC=óâ}êµä¨ﬁü˛|A3&å·?ËYèœ˙%M‘∞ìO]˙JÎR?À%…*ºÍ?ª3}ì|»ìX2vzëMÙY˝Áπ˚\wØÕy¨∂¯óeÜ>ß£êùÉsödàèΩ≤Qºde∂1|}è˜Àºˆá†√7…C2L/µ‰søﬁa}œ‚dïgZ,Ûƒ6îZûñ#πıxª∑≥˚hÔõ«O˛±Ü≠ïS»1pé€«”r õxvñÕx,ÿæè:Fi|yi=mÌ∆«Ÿô°õ§4%ƒ_Êåâp•V∆MÉ ]¸ôŒ»M2áyæk1$∆≈√LÈqØ—©°z(üìõú¨∑®îñî˚'∞UIJØ<Ól=”ÃŸ—"fXÍôûÊ‡LHö≤&Hi‚ãµÆB¡‘±ù±⁄√ÄÃûŸ–ô”QñA)`XÛ;A@’Û Ü0Ω3y_W÷ﬁ¡
-ÍsÊ\r W§·∆˝ÍFÊ˚‘ú&i≠ù8ì⁄ßÕ5WÁ+Ãë6åQ\¶YÊ1Àr˛©≥√†À]¿Â8*r¿A^ä	òÌàËüë?ˆO»€ógÏk⁄¨ã@◊fóÉ·S·H/]¢·" ∫ﬁ˛·∞ˇÜ\º<;{˘∂¢´¨·–JÌ5üKI5*´z±WR	<Æ’∞’™‰ÓºÛ∏
-ú›≠ŒZsQhá÷“§ÚlaPÓV=(wG
-^ÒÀÊ)ß9Ûü:të≈¶£Fo¯"L”†@ ⁄›jú€„ãÎı∏ ‘1TËmê¸H…öÑ‰(*Eì∂2z®≠eËÄi√ﬁQ0Ç0{)îÇŸ8*¨ËAú‚õÄ;£QÄπ{⁄¢8Ω∑.˝∆î|£√Ík¬¨ô∏πªSõ‘3nõCéVç⁄oÉÜ∞a⁄⁄»ŒÊÊ…hM+Cå∑ÄÈMøDùyV°©Xr}À¯ÀÀ„æˇÛCk¯Õ8^$∞[ˆ:∞êAM∑!Ävπ»ØõÔåa∆˛¥Q«˝*f◊XæËi˚”?ÚL3˛p´Î'4∞ØNXeS[Ù©v
-óú¶ˆY\rúzÄ¡ßêóAµS≈6†C∫F0Ä1C	ïl#?U¢¢NµÜ†ùN)W#™≥[ÆΩ+ÑKw»ÓËÅ&r£‰ˆà?ﬂ—I∂ «í%⁄™d«˘±	±¶ﬂ∏„	ﬁ◊’4éùÃ´ıUS[4õdœÒÂ †˙Q∑8kØ˘ºÊŒ–>ÎøÂ©>¨.wõïûä¬GÒ¶Àù¡f‘nÀ£ƒO¯ Ú\x–4YYD`˜
-pR$&)eƒ8Â	?é<Æ√m4∂)ó ø&ÇõÇaöA0kfñ∑@,ÿfº/üˆß0„/íTåJ4Í]Dñ6µ«kc–DäCû5JÑn3˚ïäã@nØΩ]∞8ú!ömè…i+íbõ¸ñ	ÛçAòXÎ…,∑aRöå'ÖQG∏Û¯!zˇIÚÙÑ¬‡c[B0AL√0Ã(îíköDà|í–±≠d≈LÃfËo0èØ¬‡sÄ~´>ÂäŸëÃ–q"‰©…ø’Ì38Mﬁﬂ—√Kc◊ŒÖÚ˛|ê≤2NFÁÌÄ^jê6S
-å"«&^™èD..[3LÒ&≈’ÓÜÿî´ﬁ˛@”9‚‹¶Nq}Âí{WÅù*!Ñ’|´xS≤ˇ+≥-#çü•wëHLv`"yòÂÅ˝ÚÅ
-?K8p0=j¢#3Œ@y⁄‡Sµ{{˘£:ôA&K/ÛÜ…n}åÄÀk|ë⁄n¥£sy¿6Ñ‰ÄU?¨G–,'∆<uîæ†8y˙E¿S3Ìè9`-à≤ªe\ºı-E}∆£,Ü¯Å?€˚P9SúÅ!’“ª°ÚÙ,∏JÇt¸‚⁄œR¥i√’Fi»∞Ñ±≤Ø+CﬁëÊΩ›˝.∏–B⁄ƒà0˚≤X√¯‡ñe∫ŸÁÜ"ﬂ^≥¢°Ì˜ÚìÊt#!l9k∞ÒåÇÕÁÅÒhé_¡Ùç_ 3tBC/sKÆË ˆ‡ìxàûå7[k0ó€…ã’âÅùgã$‡ãºı
-‹„©«JJ 'ˆÖÑkXGsÆÌåEÑEÉ3«
-˝	6§’Hé#á‘ü⁄¸≥Ö$ØÀ\û⁄|L1B©L›‹’à‘
-‹á`®Ae+∂ÔÓÁ4£”%ÖùÏ–äbnùh»2qœgò≈‘+¥ÊK(k`WõÒ<ìÕê’·}Æb¢q™ÀÑÇwÉÈ·ÖWb	]Û„‹ˆÛë;ﬂ≤Í-ªà}QF%s]ïÃœnπüXHtåF˙wéx¯#<öí!ù“πÑ≤&`∞3LD˚û$·U8A¸•˛—Aj∞˙Oÿë·Æ63¸µ4D¶5~˚@Ò
-Pqœ»=yÄå oÕr√0LÇ	Ï¡k6ãZ≠jŒ∆≥ßI¶≥qoz®4≈-Æˆ√:∂à∑<Û£≈É˜?O¬‡ä˘?ºıcókuö≤ÍsÿÊ¨%^ÎM0·ûF{u]ú
-*IS∏äªéAÃÊ∞£2jeôJ˙—<Êp‰ñÚÛ‹p∂¸» ì•À?WÀÁW›>®pP\Ùß"vyØ∞m%ávº»¶ayvÖxJ˚xŒrö àæMs∂éS<gíó˜Á⁄⁄∑ùé<];ùßõ¸û≈@ï1û_˚ˆ?ˇ˝˝OÚv˝∏`‘É%·&93 Öı0Ö˜E#≤˛û‚o›yÁÌ∫èodÄF °9,˛—0%≤Ñß5ƒ|‰ﬁ¯˛œv/H^,SåI,&Mø¸äJ◊ÆπnPÇP^â¯œy‰ÑTx˛»‡¥·ıé8#|ºÌ¨Ø∞æ#º"Îı]Û@ÿV°G7ƒ◊Z‚Ê }w√ÈÀ£Ê≈62%7øäYÃìÎ^!gÿó≈Î6ß˛!r{≈ú»Ç•Üà{=:ÕøÒ"ÂuØº\≥@{ÚR]ötmm‹=p[Ã"–¥ZÒ–VñIKÿ«¡⁄˛˚ø˝wrX2	ê¬|ô› ⁄4öUuñúy-V;'Ú⁄yŒ~ô9Fje≤póÍCk«•Œjf¬ˇ¯∞fZÏKœQçö≤}ÑQü˙ŒàºNøÕáœ=ÃæÌº õ„ƒ—Ê¢πhâV‘ÏÕ≈˛gy-ü!÷jØ{) éjã}Tàsl˙ß√îm˛®óëÀ/ùQıDÒöî1ÍL°3:$Ñ¸ûá>§îf,ê·í·®ÃÇ®çìêp=ìÃ9WÑt§ËÈíwÒ∞àyœËúA˚ÃÚgUV
-,Â≤ê*úàb∞àR¸œ¢|*ûß!Yk™—Æë√	¥"bÑ	ºáÌjd∫†àL—‘Ê±qö[ñ≈Q∑ëÏ3cû/NAöÀH∆ä3≤VòùGÓYÊ¡Á}ÙÆı}ÖdΩ†#èIÆ¬°†´Ω<±˚_ä«ùíSåM–∏â§‡±ù*~◊?û@xù∏2a£…0
-ŒoÔ∫«”èåPz(˘=$Oœ≠œ9g¸ﬁΩÒ ˜‡óQ—h‰U—ÚÙÄÄˆ*„IƒªÕ
-ÂW‚i3Ô€è–´küqíB…eådu∏ÔU¶)(•∫‹:ã€ÕÍﬂ¨T∑ÛV.ÕszâÇ§Úˆ⁄„NoEÔ%OÚ˜∂ì*¸j%[4è˙J~µZæ¸Z—"ÊW#ôÛÂU›S
-Â4ëE¸R%“ñÅ¶∆uI¬ßM!ni√/_#iËN√»ÖÓ©y–ètû›Í}ßÁ	â˘HD$ûÒñÛÔî«xdÈmÂzò¢∆&Idﬂjz˚õÑ˚M¬˘<–J¬=È∆B˚Û•ê;6îoá!3%œ¿∂ÜEï·Ô<Ú\Vﬁ‚«ˇF›ôn‚Ã⁄
-¯Ï¢Îè4°‹ÌŸgæù[o…t$Q”KêBI'ZÃRÔ⁄.#ºZãÆ÷Ç´ı⁄_· o,≤æîJ7Vòb˝*¸◊∑6Ó‹|’eÕ©ì ˙Îøœûd∂T©N2	Ò^ØıÁ)±Ã!M }ä\[¨˚®ø.Éz[Ãñmï?õ”»Ã®ø–0êÉŸX f∫*1œ± _√W<µwF?≠o=$¸Ô0B^§ád’ÚMç%©J†ödiÏ?ÃwõÁ`}ml¸–ççªﬂ˝‡∑ÿ<˚U¥ﬁÛ0siZx‰ø…˚ﬂ‰}˝ˆ¶™iÕÙˆ◊Gek€Ô9?€√Hn+ü-Ÿ°bÙ#?‚≤kñ,Áh®Z÷6µéCw∏a^\Œúñd˜€, ì\ÄË˜V_˝7ZV˝os˚£?£—>Œ∑Y√Vÿ˛∆ßk˚©çÇ^*√≥Ú^∫ÉﬂM¶SU#Ú,Ü’´g™≈Q´óÓ—kú≈îÃÿt≤`ñË<N√4,~§ã±ü™xÎ#;å≤\øŒ√®M≠·ºµ2Nzæ∆…d∆QÊãîfºC&ˆı‹0p‹”ÙÙú_+=”Êó«I˙}æ€u™ŒØFgÎ¸rπoâWÒ:Ë7∞±
- –1ÄÈhVõÔ´û+≠§Úi|é∑&fê˘)RûÁÃáÂAÑX\^Øﬂ¨èﬂ¨è˙Ìæíü›‹\˙„; c∂)\Ë7ûﬁÚ±çN≈ŒÇ!h|Rñ„ ‰TÛ≈ã¿RSÜaJ/ß¡ Ò¥ÿ#†E∫=rÇõæ›äa˛à|u+Ó~±(khkÆ5≈'ièˇ.ñ`o%#áÍjàQg¥˜èt®ù[‡Uíüí∏g3∂≠Y>“©µ˛Àù‚uœ»à˜ë…˜6ÜF†áΩ>=˜ ÏYóxˇçèb§w≤ã£-4wf‚ëØıˇ˜πñÕC…±ZTm„nÊR},b'r …U§6ä£‡h‹3tR+ZHπÌm‹=$ œ—H¸˘GÒ∞*-1çdS,Ïn∑kùD˜Ç…—UiﬂO∆∏`_æû«OIg±zwˆú'ïÃtN$¡<†Ÿ>9äÆ,‰∆•…aÅ`…˚§Á∫5 QCçπõ4±‚;ŒºÒáLÉ‚µéƒFsü˛ÏÔ±çU F :€∞„y=H.LRX'÷˙/¡≥éH#‰≠’æ,© 4è‘‘†õfÒT’9Âˆ§3_TVÍÏ∑[ßña∆hÿ2·ÃŒfYœ Œ¶u:a™I'ùy2Õ¶‰π©Ró™aªÃÊÒ%%«td-[ÄF‚õ∞l‘:ù¸]&XÖ6øn=Ω->B◊L"µmª•ƒK¨µ+–êÏÙX4ÅÇµòÎˇΩ:wT∂FL∞ÎÃ4m,r"ºJt§ñ’≈Œ≤÷‡ùø≥πc∆πÔcØ{ŒZs∞f=)K≥õ)ÎfﬁvÁy=ÉF¸aúeÛtssFÁiw«£i–ƒ3ˆ˘Ÿ_j Œ›√öÇs˜ıO€èøéŸ|ë≥À`h=™Éı_øÇ!=g‡mÊ•˚tì˜∂øâ†¢ôÌp4≥ú Ëé%/P˜ëÀ	ÿ+L%ÀëÀû)üì˚ ){DÙÀÊ#Zè=9@⁄DA'’*ÛòxàÅ
-‰)¡’èss#±Dê∑ZÖø¢À∞êÍbm;‘ÛÕ—Î7‰ÙÏÂã£Û£˜Ô»Ò˚oÌÆOh»—…ÈŸ˚?Ω{M˙/^|8Îø¯ªfÌPù]Íê—9cZo@Oÿ≈◊‰Äîñù¡,›£¿YÓ\áwvGAˆ&Üj˘-y„fÌyıÙ*>¡Ω(ˇ>««gÖmmòmK;¥¬¥å„ÎcËP◊cH©i‘çÚÚ~¸Yä⁄ÛïÆ§Õ»ã√kÔ≈ÕM¬ÓìáÃ‚°móÀ· Ó{>∏AWøJcÿ7ª¸ü*ßÃ)&d
-9ç?—2´HÄ¬VÓÛ˜ãÃ≥”ëö≠]ØêÌo<z
-∂;±ßÿGæÌ“]b¸%o öp á√c*äe˜ˇ
-ù∏b6]∞"	ÄW3)ÄWÎÂç◊
-ó8^œ⁄gf©ìWz⁄á”j1„’vëVmÕÍÁk´ıWa•r®SÂ®¿	 —ˆ(Åã≈‘ìN:réêv†=ßª‹€í0¯“=%S;Ÿ‘F:-)üV.°ÿ∫ïx[|1ˆâÏ
-⁄s¨%º⁄K•Â‰R’B&õÓ≥Ö~“uM9‡q8ár9“+&C-Ô‡Z8ÏÆŸ…ÒB¬Ìﬁ>axﬁ∑øO`CÕ€.d◊∏â_´Îo⁄‚GπÖŒ(◊…ﬂ}V›ã·ÙÎ6ôΩ ˝¥ßa,5¥j,Ù∂m-˘ˆt‰úòA2•≥KjßñpG◊xmñºá[í ˆ[	‚œ<ñ•*çea1∂K'Å‰íÈ25ëÔ∆j^NXókI≠]àPnäv}·5ª^5Ôeˆv~l‚œﬁÆ©D¢±Vd_¥”Œâ€cx:*˛*äFÏbª©PÁvw0"xX÷7 <∫LÏr!Ÿ†ú˘„X+˜-'Ñ`›NıÃÂÔfÜxV≥o†køëY†÷Q=Å ~ˇù,&{¸ôÃ…◊9Â „¥˚&¢∞VŒlNCòπ“xbou[%¬âó‚Ö/(P◊◊∆Ò,∞k@∞ÔõÇwÖkÕ∫5¬¸D ºÅQ2≥ı∂≤¶>VDì∞•vπ1l!©)!nñAÊâr∆PŸi¿ä<2úäq™<˘ﬁd˜]1^’‡˜Ω›RX*k[±Ì•±=˛L=ñ’zú·GÔW8å§ÿ>ªÚ7;[ı®ä'[ 	Ñè'X1∫S∞3˜F^lgvÿÕEõÌ2Ût~{tvtB˙œœ_æ;?"'˝Ûoçs’6ómMπDÒ≠(Uµsu⁄¯ŸM|Ï
-i 8.J&tã?]Xç≤ﬂ#(*'—ÌO∆a¬H$Í`sñãÔ∑∑≠Û¢Í{]œYÌÛ≈êot¡5Õ`è¢3Ã˝≠≠.ÈœÈ~b€!tLë©[≈%)6Âõ˚≥e⁄ÔÿÍlh»÷XM7ˆ‡2Û‹g∆´!Ω%;æàiöùiJG^IEkHıó&#¸9ßå‘ó˛5&8k·/ÍÆ#^/ßœ≥<±f5ˆ·‘ƒK’Eúæ4ó3Õ¨∞MDß*#AT1°€2%(5ÀñYÓK•∏sõ;Ì	jcﬂÃúI÷ß”E 
-	Åèú˜ˇ•Oé_û<ˇpÊXªnZ1{|>6AGÛ—>Ïï¢‰ËÖ%˙oìÉ`ÒÛÄF≈Kó8a˙r1ºj\ŸJP•o‡≈’µ4ƒ I¥
-[˘õ§≤Uﬂ>Òºﬂì¶Ü◊™ºËO †ﬂò∂GN?˜ﬂΩvutÄ¨"ÊèŸÛ(ñb£¥ÁÈyﬂ_ß@Pû÷<áÈ∆óTU;¯<Á!ñ∑ú'W≠à`©‹
-å˜¡?ê<UÍùqîÁ>√Z.∂+ı$÷=∏Ë‘êl =∏eˇ»øIΩ£¬´òàò‡[Âæ†?£ ¸˙0ògÁAF»0ò”$õA}‡s•û:ªûrB∞"5V¢G∏§£êF≈Jh^G√ÈÕt9 ï ñ∑Ät™®¸≤[÷ñ@πƒ_í≈ùæ¸4¢4@&'hç!ùûÅ¯HÜ©÷íŸ)a≠J∫ŸÕ<gSzˇ·bM<TË&¡p1÷◊”≈Ï!·˜√ü‰ùÅàŒ‡œu¯9%^¨Ç[·ˇ˙
-EhXÎÍΩkX;mMÚÈ”$æ
-qà5Î»)<´Ò≥õBÁµ·Ú™F¶ççWo=…óùﬁ.ÅnÓå;|E%~JxR„Ä¢)[òíöwYufiÈl˛}ÃuCP¥ì∆,ºE~Ç˝Ñ§Ù*Ë¿Árè≠O÷˝«lìÁ©{∞)`'ƒí∆,1i˝xsÛ©¡ïÁeÔ÷‚69ë™W»
-H}«“û)‘˝Ï€Ëgﬂ∆1`f/2É±%tB≈†Ô;ó	πJ‚ô‡ãè; ø¬Q,©ÁΩ2™Ω“È%Ìc6¨•T§„$å&0ÿ¨ôÆí‘ΩKJsı;·”pfJ∞dŸfWùƒ†ÛLË≈ÃZëΩvÁ	ˇ∫;lÇŒÛﬁt∞ΩmR‹qæ-Ë‹È4;XÎ≥ZËo—Gòòå
-ÖÓÅØŸ'EﬁØö	;√ô√ˇ∏+äc)gw©IÂF?¿≠4&»V≈F‰∏2shΩ˘»Bó◊[∫àﬁ™¢%¶#»·÷ ;húrœ0ôSëùQÚ˜˝ÚG:EÅí7ˇl~rﬂNdh—A·ùÔÒ≤Iﬁ∆3∞”í0µ›o|SI“‰róM|ÜMa‹©ïÒ]ˇN¯Ûå^]ïLG∆—◊z¥å ∞˛kØ∏^&+ÕÆ,˚¨0;±<¡5‘Má€“t|”dh>GÒ`s<€7µœ·Œ(G2í+kŒ˛ÌGr“≠HÍ¨xLh˜¬»>i!S≥TºNåˆ‘1ΩâŸa—cÖÊëÂTó„û“(òí>v∏- …fÔiGÏûÛ–W#s˛Ø;è≤i⁄∫_¬∫™∫Wí∫_z∫G≤åú9lt «≥ _w≤`∏2≤Úì…˜∂ <ÄıCò"øDäÔƒ∂ÿy—´™¨î"  ∏_=˝.º
-ﬂÉ,Õ€lã|∂Bmóg kﬂæıÍ¯Ë›K˚z∞Ùú_o’ HÊñÛ÷Lüq5UKÎU±HgE6Á¯w0kÆBÓ–Kπ#^?Øeµ<gN·„*g]Èxs±z{¡¸»äê]gCA]$7´fä*¿+sM€ﬁ,Ã¶–Vﬁ?àò•ªÕ0fœÉÈ‘§ÁÓ∑ã(õU†Ã›Ä4±†ª»9Æ2¨}ÚW¬A∫[ﬂfÀùWó`ôÉåFqgõp™
-¯5Äk0°«¸à•åóîÇ•ÙÊôﬂ,—√l¨Oˆ±±#Ãef°bp}öwﬁf¯(=éG†%úƒC:6ZÕñS
-ÎÀ7øQêÁ´[‘Uûìº™W≤òﬂåfìnk∞¢·åKtàkÛ»j≈∏ŒóΩ…˝TJ`•∑iû˚´:{d:⁄«–«"ncø/><Æ-Ä€Õﬂsùë¸Û&9	≤$§§C@e∏ÅEïü7ôÅ∂Y⁄MøﬂTg€≠ìËæ÷;.‚{ﬂJ≥oC/±Æ2Ò¸mîÑ√úU‘p2÷∏≤>6»êÚX!ÙE§πE'|úÖè;¶2ˆ≈2v‰2¥ÈŒ∏ñìUÜöïÊ°èﬂÀª´mO˙¯ûÂ3µC#:Ω…`ÿ]kCö—Œ∂]zÜø…\–Á)8Euûmø√Wµõ ÚHŸËî‘îa/äàñƒ∑"}≠“÷€ª≈!D
-oV€‘¬ƒûLx€n
-µù>HVÜÏÿÉ wzImn≤µ<g!Áá'Õ‹E®‚„‘˜$zHãTL{,ˆgÔ9ÿc@ü=:<˚.Ã∆¿é_óN©Ãâ>å9'òÕßÒM§9;¸yõ/I√ëΩ…ª"ıLı}òƒ&◊W”5Ø°ñ·`{ä¢V¸¥SWÆ~âÇAH™l)¯Í≥0]¨t˘ı˝∆
-0÷Ï48LsÍ>Øçb¶€%s¥g‹∑≤eP—`»˙“?S
-´çÈ+Ø.Ω)ù«0’;”¬-o	9kπ ´hd!ÑØ∂¯¯?€“√Àÿ”r	:√§Øc>B‰ÛfÃ5¥¶º¥XçºÍ˛k/{†\@C™µZFn§ú√óÌÇß/ﬂΩ{ΩÊJ©œ∂Â.grÙaBØÃÒx∂ƒ)G @˝•Z€∂éˇ•⁄∞‹“*Mëm’∫1Å”‹>–ââVYcõl√‡7jÿ%VuFòm/¶ngÒêﬁÙ≥,àÜ®l>ÎfpLµŸ‹ùñ´1XÍ≈ﬂ◊(m{Ω˛Lô∑]˝$ßn€”œy=7öaõ5A0ScT\¯d’¡û"àäÍÅ˝†@V®¿2á–iê˜Ø™›dWΩëïaö√®WîÊ^MΩﬁY1Xó)˙cWâ˛®∂Z!«ß—¶€œSUø&/Aªò°z¯ö˛hJE≤lΩæ9€F	©izé¬c8ñ/ÚH∏≥áZü≤Ï[€;©Eû!ÿÌÃ:slˆµ∂Î…ù4ê*ù¢É “ïÛÒ˜ˇ˝o8Zk~‚eoó39≠FÔªCÆ;ÛOµÔöãç©)’ñ™≥9πïíK»óÜp/À§ß’#›ãú˝ràùÀZèE◊˙™æA9#ƒºÉπ“ÃúÈ_ﬁ˚øZÏv¸≤ÏyŒgIã]ë_æ{#øöt5ØZ î£rmÁåºÍ˚?˚·VAÙ:√pfŒ»HÔÓñcÉi∂∆kõ„ú¯mùˇ◊πµ¥∫Œ›˚:G=√ÓÓqbúÿ∂ŒUh°k6%¥Ã$t(ùŒ~ß≥Ã 6i>r†Ñºîuz@û”≈å€ ˜–ˇA§¨Nó…û≥æïŒY—>W`»å3¸,Õıl˛ ¥d
-xnÊ 8ÅÌ¯ı>üµwŒ˝èx‚g4Òñ◊DóB	åj≠îy~Ê2Ú,™jø“õ _ÚTÎÜ∞µœZìÉqâUâlá∞F55kÏ(K)•õCπ˝ÕC$€ŸRru:ﬁ§N˙V-÷À€4ØÆNRçB|N?¸F‘&˚ıÌ-üıSy∞ÇoÃte‰"W”8N‹öXﬁ¨M≤é|≥‰˜dèˇgcEä+?åöVk=Ø◊Ôjı⁄êÍ∫|5Ω–"ÒrÏ¿%®Y£ò_ ∑˘Ë›˝»ˇƒ.ªõ˘†D≤™πIy˝‡zÓd·¥˜P·)BÏyv“˘8º X¢%π*‚Í;ú˛íó˝<5æ ßhé€[l>Ú/öµå˙Ÿzh˘∞û⁄XÁ~	ÍøõUı˝’ÿ˚%ªÍb ËJ2ç‚“«¨jHV°H{e#ñàO‡ï=æaËF#BäZ≠qGa£«L	®o-jnN4ósˆufS‰h©Ìæ	S®˙Möa] ÎcK¿rqÖi•JøJ‚Ÿj◊Îc¡
-q˚Ñ∆2¶áM´Ÿp≈É8¢A6I=:r%c'ä$qÍ)ﬁE∫ë” ñ&Ææ¡π≈∞-ºÊ»ºVûìúpEàT±‚et'⁄ñmíùUÒR¬WﬁÜüQ∞» æ´vNú&07MÓ¿ïàVá,YE∏•]Ìjø∫∂Ü◊“:ƒµTµÆèvÜø∂Yf⁄˝\Ì,=t¸≠Éd¿I-pœqaºC™Êå!˛jª∏&Ω	£8fnï/Ù≠D√:ê≤uwÎGDÌ¸Ü9[ª’CêÍ≥µ¥xME¶·,ˆ9Ol√L7S∫b≈1W¶+ ?⁄≈câÕQ):I|ç[i0Y$#ä¬Ω™?Åp7°Ÿ`ˆ∆;RùåˆItüT—∞Eh,ÇIÍ#[∫è—! ıﬂ#ÇC Èµ∆x≤L<µ^˛◊ó/>\˝È%9yˇÓË‚˝Ú€ûˆﬂΩ<ˆÜçiÇO£ºÛ˝wÔ^ûπ_«ŒÿN^æ˚@^º<Ì_ê˛·…—ª£Ûã≥˛≈—+„NÚtsº”dﬂK’|)ÿ∂¨√∏\◊&¿!¢Ï·…$X∞P{rzÒ~â»xë!¬<dˇ:¬ÓNAq°)°Dõ≈√&πFÙG–.#VZ,‡Ù4Vb⁄°GƒW”l)ªÑ+_ﬁûï¡/πà_"í^âúÉ§ﬂz}!°[¬õb¢Fá¶Ø(£˙.ƒ˜5É»¡ÀÍ+yûÑ¡”C= C:•Çê[’NW º”€¥Ïòzÿx˝Z’Ä‰⁄Áã	%ÂSÌ«ˆﬁÿêî¥%!{WNÍﬁÀS—s(Ø]/˝AJ¿oîl˛Ω•cÌgf·pøf
-€j¬¢0ïK◊~Ûî^S$±èÆ‚|Ÿ:äg¡X'LÙ±ﬁ{g˚—ª’Ã5jÙw∞êÇÃØ≈o´Ì‘≥≈h*~ÜWŸÒ>M>Écöx6ß…Ÿbz69˜=}ÜVÉKW8op?À‡ıÓc∞Œ˝ö˝ÜkJßπ¶‰◊vå˙£èq8¸F˚,·‹≥’GºdrAG·ÿ†¿Ø¢Ÿ›uˇˇ   ˇˇÏ}Àr‹HñÂ~æ¬3L-f*¯>Rbâ)#Ee&Sîƒ!©¨Æ—»R`ƒÄà ¢ Ñ®(Õz”≥ÈEõuôÕ¢gQcΩòòÕ,ÊkÍ¶>aÓuw ÓÄøÄRR¶‹ *Ep¯„˙ı˚>Íiàt¡ï9@‘ëß=ÛÅWè‚»ëßMSäq¸÷<õrÍÔ`Èf*\Ã‘”¡»	‹ç©=ˆB4Y$‘F„6Û›s|√ù≥›¬û‚ÒƒãfΩºH≤”6BL!5TƒVÏ7Ì⁄}÷T£k;È◊öø¥RÅ$ îÇ≠”ÍI·Õ±Ó∂∫¨~Ïà¨¿zmÁıˆô…Î=®ÆN'*&tù(∫£„ë‚ úÆÂñÓêﬂ¶»pcí°óíªp<"WQ¯ñ√õîˇ%—'¶¸fE√â7ÉƒçßÌ√É^rúGnÛﬁÛœP˜q˙¬≠M˚Ö?Èp‰}ãıÌñŸ€Ì≈∑¢
-ËÖ√è ÁUÏ}nãUöiq OÁê∏’‰/–˘£ û∫Œ˙-Ä<uÎ˛∂Øˇº¯=@NÉÒ''Ê¡ÑN" Fî’c+X/ÿ‡>Ì€ËoZù¡®0?õæõ:S˘ÕK{¡ü`ÊÉif”4‰`ﬂõ9ûÓËü<∂˜üœxX4ÄO_¨V∏xY8“ß≈—2/ΩpõˆaêfßÒ0v%ÓhzÓ•Œ§}kvø zR]úÃ‹Ùt‡{ﬁπ≥ª¶∏>∑`˝˙¨ÂŸ[ÂEmÈ4v¥C}*ﬁ^¸¡qÆIL@Æπò!9Ny0≥∞Ä∆"¸“ÚÿõtªË¶ß°mÎj^¯≥ù+ÏA?ø°nˇe:S}@Ç.®!Ô≈K	√d=∫’‚î√ÓL†r¡N.… }$†8∏V≈9 jKÄÈ∏"°¡CJáV¬¥†Â´[ìØ[TÔ¨’YZ[#9Qàı®`]÷Ç$W∂$òd,åiqüaI˙"ÍCã©'˛¡V£‹òæÙê—¿Ç
-Œ"E˙}W–ÌéÑÏH˜kmM˝'ñß6EØ¬Rl•†4(Fkä2`Â˛à%1]∫!∂+óÛnB?±÷mÜ≠™2™¡˙áç¬øâ–`À9<Xõ}∫{¸á›ﬂÔ>◊í⁄M«ÀzpQ√A{ ô%…Õ;‰.ÒòÜÆ⁄¸Ò®I#˚‰•î¡ìÊ¨óûÍ≥Hé‚≥ErìS≥Ÿ,*8n}¡q:”¶°îÎêÍ!¡§wÓΩ3iÂn>º¬ó=“¬õÜ]ÕXZ	—2+J∑Ω1c≤ŒÎ{ ?Å´$rò7Y9LÕ®ƒ∑ùW≠Óª}r°ˇd8Ãå,wòôŸ’vj.Êß&¶ß&f''ÛbkZl§á;Î‡bËhÇ≈nÊgQΩÁõ°É∫›H’.„q£Ò”Q…÷ÃÔı≠r·Z• ÚE≠tR+EAF°ZÍanæËñ7°[ä∏6ø>˝≤éb±+\P{‘ı,]Y;W“è◊¿∫ûsnµsïÛ-ö√RÌ∏rﬁr®FÜ95ïI≈œíªéZUK≈S™SHõ(ùMsÍÍ $Êq¯ÿÜô¶â˘óÃpH5“|≠Õù†g ˛œÁZûW-‡;ô∏$	E˙6àhV‚©∆°GN¸ÒT]I“àúf<unŒ¥º¬ìCûû¡/@∫Òd+å8ÛíF%i•îì–UP?L%¢…=êÔ>òe¢ù›,M@ú—sCD∑ºpÁÍäƒ¿Çl∂çEÈ≈ˇZ~†@!Ñ„EK/Ø/Øô^-©ﬂÇûÔ¬ú…◊Q„õŒH7ÑΩ¯!¨∏?‰Kˇ}úúrÚÓöMÿªT Ïvä{”1ºd¥™.CØ~’øOèe!¯8BoV≥ u¶ôód ÈÄF}—„≤å÷“8æWÂ0›–ç‡(àœΩ
-¬]¡π˚"{]Ÿî-LΩq“[Î√2¸èB∏ŸT7d8M(ñ6≠/mîgú±i97ãè∫€KˇˇØê·¨ ºf¬Ûbœl–¡ÿÑAÇ-M;WoFY6I∑WV`…œ˝ty•ÈhyèW@ΩÕbX◊çµ˚˜Ô?ÿÿ⁄ËoˆÜ˜◊ŒŒ÷Ù7Vﬂn>∫‹Å%Ω˚«ù˚´w”‡|ÁŒúKs9[lu0È˚O|Ü'	ò}Œ'@÷∂˜¬lß√è≠˘Yc˙ÆEö≠Ô#;ñ÷ùP‘[R≥$8,'/€…≠U+Å}GâπpCöˇ„eó¯Ä5˘Ÿ÷ë?|ÊMéÇ(O≥^Ω÷®^ß~N˛∞ó6:æ*a<†«üÀ)\¶<0E¿◊nOAgâ¸˘œDx à·tËß›∞Û‘ÁÛ8^>;K:ê∂ tuµ∞≈6J¸∑;¬‡mÛƒÛ9˜·(¸t]ÿÀÔc©’pß≈Òƒ«Ã•(Üè˙Ib+D¬ö®üW?≥˚Ô§úf\>îY°ŸıG~fÄ5.[yı˚ÙÓ˜a∑„	àâwN◊”Tt5o.≈tØr!ﬂ¶˝ ŸÁL 3áÔ<\Ò¨uçıäéj
-wæÃ|EÇ˙N¸¡¨Í£∏YP"Ûü5:jéãÿ™yÍºZVhQùÒ√
-)nÉÂ®¯<ÒSµ
-QÆ¶}C’Cî>úÆÀ’3·É∫˛á9á’¯QÕú¢QTñ]ºÁ¬Gt&÷µˆ/Å*dÔY‘!˛“õ;“"æ±˜!-A>yæy7'ˇ¸p•\∂&f1◊Úáò'¨ÏvUè‡\sfœPû|ËmI6ıúV^≠˜©é%Ÿî1õƒ÷É4DS%#¿&ˆ§Rê#DP˛/-ÒVõuE@s”∞®uS∞ƒQ8Msì≤©∞çy√ï¡J”ÓÜ± &CÜÒÜ¥ñZ…<¥í-ìì Ù.ÄIùMΩ,ˇ”ôóLóµ£’√âËJ™ÍÍñ≠E!G„ãE5mG>õ¶uúR?;H'>,8?@œ‚°æ ˘éa◊:Vs{›—ë_⁄[¨f\Da¶o»©7>ÛFÊ °ãØ∞§ûû√<û1C¬Ø’Fﬁ"‰Í»”‚hpﬁshˆCD—–^~ï#¢ßÒÿ–g—‡D¿Dác1§5ÿM«∞&%i‘\"Ä◊´÷π Õ‚óo2·‹î`¡H}å≥Z]ÆXæ‰€à>æfdßáÒt¯‚Ì[Aß^˘éÏ=9|˘åú<z¸BÀ¶ó–ö¯¥Zƒ"]÷_rà„rˆd±⁄'ÓL›twÿﬂ◊:0çí}±ÅuIMõ-Ï'øßÚíºÀ/ìi∂›Ê6øÍæÍ`˘Œ=8I'A6√ßÙ»t^c®≈Ÿa1˛⁄Qu¶üû—-AácΩ‡∏k"Ô—,◊o√‡{≥r@ÆæÛ´7e–cı\≥kPÎÀI.<∑‚Ôÿ††R:x ™Ú	XM èJLw˘¶äq¨kÏ?%≤µg∏l£~iwù¢5_∆ª)°ZãÒ{$ß∂Á∂â‹wA¸.À}ƒˆ¥ŒÒ;ºäà—liì^ÄÎ¢ßZ` ∂Ù,á·Ø¬Ø|å@±¯(nÂ±˜C§‡ ·öÊâ˜,'âƒm\Î5≥⁄πå√sŸá˙áô ds€Õ,pn¯A∑’Ô0∫yˆç[xf4¢¬´õ˙+‘<Ú¢aË≥’¢‡ãÂ@Œ(Ë¢§ ∫ÒPÌüÌ€¸≥Ã´De„”ä±ú˘Á6îÅåı’∂ ¢u±M[jÎõ⁄ù…œMÖ2´cì:5˘:¡ìé˙Æ‰xî}íÓAt≤üŸaÍØdtß¨•AF!+£≤…<ïD÷F›ƒoU∑9c2¡(±,¡¨nÚN›MN˜EoÍÇ”∞ÂÙE}*Û˙[’1í*◊ç¬„™>©ìò‚Ó8≈î≥ò¶~Çü^N'aêu;§≥ÙjıµmZÛõÒùÕuODüÒ∏çr‹›ÃnﬁÂ|]|¥LªFÆ/çùMJÊ”CâÕYbj_ÔÃû˚ve%øõÑ{i˜ËË¯≈œOˆùƒh9µ¨Ü7È [+FpÙ‰˘˛¡Û\<∆l4o¶ ˚…ÈÛT∏/Ò≤d‰§TäÊXvòÒ˛¡…ì”ó?Ω<∞kHÛ¨.|ÈÙ…ÒÈÀÁ˚ªNJåˇ‰…âEI≤r†FƒÆ„2¢MÆf¿˚Fe®s=,πû…ñÛG‡‡nGE∂ä&ƒ““ÿÏ–»#yFπ™Î©a£agÖgŒcTM[uÚÌps'Î·nË'Ÿix—yò£{‹ønt14ﬂ_<)põüŒ≤›Œ¡wN¸°'ˇ»™—–Õy≠⁄ã—FøQïï∆!SñK™7{y7U„∏◊√evFg£À\oö±x”Uætewä_≤_IøyÓΩ?Û™@q,ÂãÖ7Ô\•Ùø’Ø
-ÿy;"êûˆπ”Lx~™>©Ã[©<ÉbÎéà|T} ›≠)ËÇ¯˘o“f´Wπà›Œﬂ§¬váëpoËg^vJ#ª≤\gRQJ™6•]§˙ê\e¢`ê,ıém&(Ù7ƒ3^!ÉädYÑRçzﬂˆsEÿ9£‘»©ûÚêz¶Î>R+‰N—¿u6%(—‰´è‘é¥%ë,Öàt¨—aè√ê3ízo˝t¢ ñ“öWµ¶UUTõTeõÀ*⁄\VC‚%ùÅ.8L`6 x&hÅ™(√Ç7ÃVRFúÀiüµÃ∆⁄@ï∂“«#ˇ}GXu⁄u¢∑∏j@tµ*K·¡)¢`6µ5“kU⁄m"aW’ôU
-fU aÈ^€6~‘*mÀå„7+zã√[*°JmçnΩÇvÕdÆ•rPGLJàÎK∞Ú5˘!ÒÜ)ÚÿXËÕ»◊+5LZc
-¢‘G^˚sŒª>”À»€ùy‡Õtéô!r‚·}H∏1πÁc…√¥≈ëØº–~¯,Œ–›∞≈ò‚gä[*ß—≤ƒSDË∂ÈôT,ßà9“ÈX\I`ºØ/¡5dˆtπq§`•
-¿ùÏÖ◊Oß‘»ﬂU∞® u o¢XÂ~ì¥ØìÇÿy°kuº”®_≥∆ı5x⁄‹πÌíS€≠…ˆ· ®Ô∆≈´/ÆÒ+j⁄/uõuS∞äRß!¿ÊNûÌ>'á/ûÓj‘å∆Qo÷_™|†µx‡+òÀ'UÎ◊ßX}è{ﬁ∂
-Ô®í--$~ŒmÁta∂
-?Y)≥’˝d.Bôc<ÌC‘ár1kU´›ZJÄ5˙≠[ÓÂ@(1YÃ5Ÿa?†ïî0˙˜EËè¥˙sX˚"ÒÆÓ)2ÅWy@Ó2Y∞scñw+ªC£jÚ MÕLuK∞ò]Qpv›~hÜ2g¯Fõ°πœ6n*ÓV¡VÄ´¨7ÆK±ÔßI0I¯ö3‘ó‚Ürv =¨¯ÌÚ⁄-»›?¯C—_Áz[`à:ﬂörc?Á˝k3˝sêNΩ0Hiyÿ≈&{XK£⁄ÿ–phKhïFaÉ∑	|Ss≤iB‘N^ˇùê:Úëöü°üÿ£⁄Èh˝i6©ôç›w$ÁÀcJÚyÉf@sÂÒÁG‹πS#bXLÓÙ∂ñ◊æ›\Î\ﬂS<ù”g÷V∑ñÔ˜øÌwÆÔ˛igmÎn<Õ&”l«ù~®ıex!Ï«˜@&ÃL´yJåv·ôı‰"V˘Ø◊‰jJ¸◊ö∏∫á+l3›hΩ¶Ÿ*ÙT´4GéU%Â„aEÌ≤ı«Uü_71Ê2Ä™¶≤R‡B_∏ê˜üØØ°;£√¡π$l’R∞Œ,Îfs§hë√§ıäOiª,‚óµ;p∏{∫]øCj«è¸ô>ˇa€‰≈s8üÔZT öËb<∏•Y¸uñEÅ¿‚s?∂Kj°Ò{Êß©wÓü¸qÍ%Öq‰æVŸ‡ô[O„1·P.í!÷∂>;8›X2˛OWC[º¿™Vˆ∫e9Ùf~í⁄î/Éïªôä-˝Í3s·ÕÎ°„ˇfÆπZŸ›“;º%<¥˜˚8üŒ&<s˜‡òøIT=:~Ò”ì«ßù%©pî¬”#‹˘yv\tRôß‡§4z,ÛÄ˙ù"∫æ™{ûîﬂr,º¡ΩR3€ƒ—…Ùl¿Ü±àga∞Ï’8∆$√ÅÑ˝ì6ÏîPÒÍ⁄∞˙.+™H∑ñ!SÄ7Æ>¶*‡oˆ´÷-»*{gQgı ¨∫RS¿£3Ó¢4^ÆÍ≠/∆©Ûá)âM]„~ÃËúΩsÑÖ§,/‘ÎØ±wª]%5xÈôÅƒ_…ã∞ﬂ¯K›x!˚áÂ?èìY∑Û‘áÂô¬!œ<ö	íª‰0>`.\ª{ífè„‘<bÈÖS4GÎW*"Aı´•Ä7%sb%œ†‚«m·∏’V3ÈÃ„”’¶Kªx
-Töy.Rj!'§≤≤öã<œ@~9ûéÅ
-˙h‡;p6≈Ys†“åLBm¥}ùvÔ§{èÏ¬gÓ¡3—–=DÌU>zß6ËÌ) _VK≥ ™◊çt”T¢…Üèﬁ”ßÏÄÚv‘]®J*æ£ëùi!`ÁºÇMcíØi£*≥QÓãrîL+Qˆ¸ﬁßp˛ŒUÃM≠´ ”á˝9˜ãYZﬁË/≥¬bÀÙ#ö@7aÌÇh2ÕzoVçGÙTRúD~•.™í/}Íè∫¸¥‘)æ¨ë¬cj4‰ÀbaÓﬂ˝˝Ø˘_äC$<ÛpÖuË¯µãiBeP≤›"ä6:1‚∑˛«ˇ¸ˇÁ_â·!¸Òù◊ìÏtü˙QêU:ﬂ˝Ìﬂ˘◊ÿﬂW»è®ÜeBeÖFﬂ9Ú·DD≈Z@¶>Á(8π˚ﬂƒ¯y«∆K°K/l8√|{Ñ`AÕËóˇÚ/ƒ¯åÈkWÿ—r◊–ë7ïeùg˛≈<IcÅæ%û$Õ¢C*‘Ù}%úx©¶Ôöe≤Áìôò∂è≈X„Ï7’à∞∆≈26e–⁄¯-≤Cd¶l+O¨≠·ecic‘›Ë˜P!˛Âógªœ_Ó˛ÚKE'V~≥°dŒ⁄5Ò±&JÀŒm≥—oÉ÷Êo0  ¸©Û]ØGéÇ0Â·‘OÜ,Ω˚b¬x—ÈıÃ\[YçU¯∂W—‡C)ãxÁI´ —™∞§{G¨˜∏ÙÊ⁄Ò˛˜ø˛Î%eIè8ñ"µœN]Nû_SÅ‡Ä¡ˇ˜¡õÏ x€}∏T8Ôr‡ll:.œˇﬁH\ÁôáŒäçQƒÑQDVP‹¿Sÿ.ê,—'3@£øÙFhﬂ ˚o—Œ°idÅ∫fÂë é"∆êµ!£®˛lu‘Áî7VùPwIT}¿ù$—Iw…x6:˛û“5ù–Uá˘y˘Ü§˛¿K<æÀÀÀÍØı+âˇ«iê¯C≈ïÍ±^»¯i:ú¢$Zƒ:	,ª5ºÆœlKÓ!OFÖ|NQÖBÓ4êW∞LXåË˘?»¸±Q37ä/∆cêÑÀ8π@kóÓÓ∑µjvj ∑jfÃj‰t*«a§^∏-*'àC÷6…âwqÿ’ƒ#è„h82“'—`tè¿∑a4~y‰{ôˆúËNäÓi√!—î?hVjÏ£⁄‚ Øêó∞o:»N3¡•`F±∂‚EfIŸÉ)Oå@ßA„ N¥7®|∆óùÔX41L˙9 ∂(}µ.x4Ûw,hôt·ÏáS‰ #∏ºh©aw4Í˙;^M∫œ≥ÙÓ|G2Kw&¢°áY˚ì4êÏﬁÃ•ƒœ’æUÃh©ˇ ‰⁄º4	j∫3]Õ-‚hx¬ı£¨≠Ù	Kñ†≥ù—_¥Æ]{<——ä6c‘xÌ¥ªP∏Á¡˘J—kXL…å@¥≠*ôÀâO/ìÓ ›_9øGå∫úŒ5Ç?"œßò•Ñ?,-g1 w°íaE∫n§îÉ˝Œ-M§˝ÄVaìÆªU“Ωà”8:G”⁄ª‡¬#Y0ÑÛ>ˆ«Tf¿__Ò»≥N-5‰ôx˙FA∞…5f‚,D.n–!ÿ≈›òG,û34Ω˘$^&^@ë´ÀŸ4d
-8"/Ò’%€ÿ-(Ñé6íÍ9pÂZü*~ì˙AÁãM´µ™ªñhp§U§3 ÓN˚"WÔëâÕ¸3Ô~óÀc+‹Rõá1‹cZK:ÅAº®É^b2√Îpdú´2Ïı±VH[úf≤_Li,È˚8ãã≤i~∆OÌL©≤Ñjﬁn-å6Á:˜‹Æ+
-¶q+eü»’‰ÑºV—
-Ñ2»zÔaÊ1B«Úü˚+¥<ÆÕ¡XYçø÷gi@|√¸l∫¶ß~2A3àﬁ|jOá-
-4ŸT*Õ!±íÆ… ∆jÅ7’$(÷-ÑŒXáﬂZó	Ï1SµU)¯ì 3sFó7.?˘ÄQá3ö¢)D≤äôxµ£iLibµ™tÈÂõm™{b3ô3≤πÁAä[47é“ÊÀê™?¯qÊù´qi÷í¨7πè∫Pöv;X‘!ˇº∂4Ò“Q_ﬁ¬Ω…TÉc€4s]À~∫ÌÊ"ˆRW±bùgeØ‹Õ∆
-€X÷%Ö{Å_+n;c†˙î6Dª–¶ç–[ÆµòWsß…æâ•ó”xtNû2∆¿ŒøRp·_º!rhÀ¢•ƒùı~M>êæÊµg7VexÕ"z,ˇ’⁄™≤hmâé”g•ÔùÏß0¢m ı†U’pÁá-so≈†pı}ÊZO˚óP€WQ.vuSY.÷\©Q∫±9ºÙ·fÂ#‘"{µHùKÃ•˛Fá[ qI–4∑zı·RÇÕ•∏oW+n}ó!û )L@˘·ËîVö˙:«@-’¿rNig]/—∆6"? ç%Åâu’t)éQÜCà±ïh”µ’
-ª(Q®nÅaêjñ± ﬁ¿ÿÅ.ªƒZ¶VÕ5@ Zè¿ö/'aÏ˝åÇy“á–:#˘g[mò?ïﬂ°O5åõ‚+2∂`∏ì¨c@ŒÙìÍ¡§LÚ0ñ/¸	(˜1zÂk”£"”a≈„Ãäè{,Tn®∆¡äñj¸9}¥¸jıµ)àE6·≥∂H¶¸;âÔ!•Óê»ø§ª{L—5ac/.«S?BT˙≥º¶À°‡›%~:3‰I©Ÿ‹u¯ü›tﬂÀºó«át∞èΩ0>≥Ù`“5Pïù¿‰Ê\õVbgTû“Ät=ä…?BÍ$∑Lïî†¯∫eP¨ﬂÆ
-´&˝˜ø˛˚?ëß£àÇ?Ò/–ΩVòt™÷√ºNÍ˚LÓb¬&Ö
-¨ı§®è`≤üZS©Ôj9†ä∫h9oΩ0U©9–Ö7…¶	vByóA}fØ˜¡≈ê÷wÆTáúáŸ·Noeº¶Íb:i>0ı+‚≠U∏<Ô‚3∞±MÍ! ¥ì*÷ù≤ ◊L—K§Øz≈LV3∑˙µcºRßeÜ©[é©{ñiì<S∑LSSÆiçIÈÍÓ*≥Á≠¸jÃ\lò∑Ëíµ∏ﬁ7TÉ±Kné§≈jâ≠E•/∫U‚Rô|n™ÎóÏªõÃæ{ÊEﬁ;öfJï∫Ö¥ª|∞‘˚;Œ¥ûƒ£iÍe‰ ¬kñ≈$â”Ï*ì¶á‘Z\o√ê[áVÑ]D=&ˇy
-'Ä0ƒ`ê*Ù÷≥W(ÕªV8W»Y¨ÍA°pÛz⁄]PÆ˘BBÁwÁûó‘ç2j|ÿ9å«&+p›∂[Ió.
-X3Ëxâ√Õj·◊≥ÑU~-åñ1´€˚≠lÙÁ|zU–‘ïìC)∂8uDÏsªA#Áõ*${H‘˚∂ΩY<ÕÊ´â8üô#u„|eÊ±‰⁄]¶`JªÜ±¨∆Á ?íª‰âÍÂdáVÌm”Vÿ≥tiyîû¸„—ìÁ'Opî§∞Xº≤\NSYÄ˘∑wû‡ †~$¶«OËLa˙¯G;QOÀ–/öÁk ≈oq®ö[BÏçï»±£∞,Àº2ØP pÀı0	/«…®ZÃt‡úF‡§e®ﬁVóükRîJ¸–˘†YÚßè∫uc‚;®Ü,\’q-Gè*ï•©1CHMÈs˘±˝—√"Ï¶—fN◊+Uﬂ†Â√†|(ûlìS?ÚŒ=ñÆü◊ŸÿÛË˘Êóß.8eëÇwì$æ<¶öï≤@`>øÕUeU@Ω≈P≈MPs‡ˆØgqd1ü…a ª€@k–U±k\µõÍEµÅ“N!dües˘c/ º©NKU(!Ó7üLŸxàu+OÀø&O¢LÈ;”˜_H=› 0hB˘™sà,Ø≠ ^5ä4~Ê≈÷Û/%x¨!Ω◊
-,
-78<Ê=‚]¿}Dºx):2BgeÀ„˙ê®|}Ä~Î-ïb≥∑Ö˛n	˛=¸∑c°3÷Ñ™	ºV7π…J¢fx…0⁄∫≥· ñ_%˙¯∫}\í™^≠.?∏ˇzQ1XÕ– >ñqfÍÅ.Ö?y|GeY\!<≥¢^dÆìZﬁÀqöÍàùERÅˆtBgîB˙§X∫ ÊØ›m}=¥\ælum“PH6oz^(tårÚ),IÉnÕÂ-l®÷ñøªû
-
-:
-8õMÄ$·€⁄y#ås*„l⁄∫4à¯ì~√±#àK˘…Z[≠Ä·RQë¡L≠
-Âß«J„?SwX'B^>{˘Ã>zkD6#Ì9P_+ﬂGUKÚ˚ÙÓé≤Ua‰·∏ÅÂëcaÒ€Œ5˘€?˝áK∑Ã∫A® ˇl™“Hª≈ﬂõ¬±◊aQ◊p¶+zuéIΩ&RÒg –ﬁ`}qÈÛ@["wÕ`ΩX¯H%–/cÎ7Vúï˛˛DΩ¡4à»Kıêæ0ØZg˘Ã£16>n4Üöõa‘&2Ô˝≤î8(já‚oLU¶iqπú±í∫:|Û7Qxy˛@Âçw gë‹%è·4*FSÿP„¶~%m≤Z@‘ÇdÒ1îtQ˜É»$’9¯/œúç&^°ìIŸVD]§ºª+∫J;ﬂ¢ú≤ï5z¸ÚÙ`Œ5*duA?æ¡R©ÉáM˛ee Œ:ä∞ôÍUz≥Ÿbßπ…>®n2÷4˜Ÿ≠NaÒ›jÁ\y'ö∂ƒÚ<1t©*Ö”Óˇö›…ÿovJU6â —î=hÂFêùÒq∆O¸Î#è®KÀ Mﬂ)ã)#±jaá‘.Gup≥ôÕ˚$i©Í ≥ob!> ›hËIµ,’∂o3$£Í/ “Úî)*Àõ™ ”ﬁÏòÃÈ*ß1FñBM2¡`ƒ∑fÎÒ÷¨]ÂöÔ©wn2ñË\2&cR√J+m+≠∞vàuNNÒ-Ús‡_T-Cvàj™EŸêıæCï:c·AA¡_-E∆¯å Ü¨9@≤Êh»ö¨!kM¿˘ná="æ"JøäŒõ‡≤ÊÜbàÕÇ9»ö∂Ù*?}^:°oPÇ‡Ü®€Y@0¶É÷ÃëíËß˛¡∆nßû’%}{DˇﬂÄZBNA2bb√DÁüü|dnSZ„?Ç<•f⁄-j|Œ…ﬂöW˘$‰9÷Ê!"⁄…πõ%±s§ﬁY®)õäç_;–C¨∆Kã^?pI‰ƒÉè$û¡˙™©ê& meÏL√⁄L&;´V¬2xí∫_µ⁄»Êb!™.‹Hèø{€»⁄©áâ»X9Mã≈‹rŸ“álŸ∆ÿå}À∆+Ùy∫„ec≤òÀìÕJ≥fdÉÛp∑πít]|D˜ìáÂ∏√©ﬁS\ªèBpiÊa⁄ÂÿëÍ2á'oõÍ>[™xÊ•S]‡f>ÛèB~4¸ºI¬"fid,CÏDÉ´‘ù¯>
-ÈÂw QÇ40z`»œÅ¯úHès#j∂ÿ∑^mÆW`∫˙oΩiò˝ÃF€yÒ/	∑ã%õN^zÕKπ{ˇî∫˜çùò4¿≈ï≠˘m‹µ˚\ )¸Sd¨Ù∂µì˜ß,„}ñtq‚ç'ﬁ'MpÂ~ﬁt—Ó ˝ºÕO˝	BoPHá]¯™ˆ2µ7åµ€±YiâQtëöjm&Òe∫sµ°ør§*Ì?yg^rAÀ≥ÁÛDWÜÎFkÀ≈Á•wµ–Åﬂ=\…§π°ÑªkÂÇFöÚE˙§DZX®3ia,‡j¨çÍR’Ê[6V»≠{h’˛
-ı◊„cıô4 È÷oœÀº¢≈¬Â%ôÍø◊Gí©ÂvùﬂGÌ˛∫Íö"lXµ≥Òån@Jv5∆√ôÑïI±ºZÊ':’°+õÖ‘y0§&=…<	€üˇ‹‚=¡¨ŸÊÌ@Õd4—Cäê2±5’õåym»¢Õk£¸6{‹NŸJ˜·€nº)uÆgıÃÌIn“UeÍUNßEvõôèÂc^h∞©ä~®ñ8›«ÍôpnüWıuŸ[€Bﬂ—QÖ±QNjMûËy”,7∞o KÛÃB¨«ÿ÷˚÷Ãß xeÃÉ1«œa∞eí_\z3/"0¯îa¥`™.’ØúÅ1:›aäˆ¥óW µ‰‘ˆz9Òﬂ˚IäZ;O¸£Oñé√ñxÖçÊBè9k}XUîÉÅñ(KéWb(á”Ñ˙ó1	÷¶8Pü;C¶z,Úc˚”ˆ‹0ÈMÓÕÈ¡E$¬›°[ô’|näí2-≥’¯´”ØLeÎòÉˆÀÊ∂4ê_5:{ÊPﬁ“Xu∑J…rsI5ìø”¨.sÂknÎÊƒ˘£ŒO¢`±—<qﬁ≠KΩ©ˆ‘˘eY◊$®ÆﬁÄ~1Æéúz£i‰E÷T§ºÅÿ≥·º†ã,GÁîíU6∫æCeAL›ƒ,˜S˘†#Mπ?Ë ÎDNWDÀrãNÃ‘¶∫Y≥ßÚÜ*•PM&	\_kìÿêJï∑Ì⁄pé˝w4gΩ·)R2ÒFCô+ø+onWÜÅ^ïK„“©#ô⁄îÉ‚9«`Áæ!ÿYÆ(Ê.6∏7ÆÚá©Hâí}˝;sÆ}êˆ“`≈Üµ!‘)ø÷<©µÇ[(ÔªoùÙ÷Ê∫◊ë7wrÍe◊§«•3ÓÆæ~”ÄGàΩ°·˝ö§+√≤?˙+GYÕ}ô±}údÚ°THAô\Å#√!V›d(3R2π¸ƒ…ø0∂/ûˆU¬»Ze:[ïÑÄ*Ëi£S¿ÏÙÆ‰Â$}‹0ØgnÖVøŒd∆ç¸=k…®ÖºÔJ’'´hËJ[˚ª?Ω|∫˚|€%Òûµ´¬ÒOôp‡$„I	‹å„¡ éÑ¡1ûUEÎï#pfvC¨‘â¶ LÁ˛	√˙é‡Õ0éŒº6ÛΩ§≈˜Æ›t“›˘¨†≤lK∂Ÿ˜CP≥w@óô~ıUMk+%g ˘µB`=ø4ï¢æ2:è¥ØkŸG¡hØ≤m™®,R≠=ôéÄ¸/zéb.≠©≤”°Ëï•≈⁄Â]G&/ceÆ;€Ë}˜WìõﬁÜçZ>Èbæµ?§¨§P¸QOçÌ¸ˆ Ò•ÆkÂÜZzhΩê√gV¥›iRz¡¢´:≥‚iLzpBƒ‚ÃI…üp dáº¸K∏Åûå'a<Û˝#oü1›AËÔ*=)≠Ç‰E~HvÑ°u%?!NÑ	Ú>ﬁ©z5«ó‹ÀéÉƒe'È,ëªwÖæROÏwˇ©2‹î›,C¯˜hÄàX^Ò√èAö≈…L·ªÌéj˛⁄ÓHtóñKlÚµj_ÅªAû>+®EœÖ+s©∫9ÿÁc‡cª√˜8ÙEÑU”‘¶3pòç˛°`h_g^(∆W2ø√È¿ó∆òN«˜»Ä≈9Äl˝|›√çñâB¡Í=≈y(&
-‡˙˝}ú\Ï{≥î∂‹˚¸£]o0ÿ&^4{ı˙^Nu5«?Îq»$8énFe=˛Ç,Ô	íûƒY/‰*¿S∞¬ËLCÅ—∞[!7Eƒ@lFÖ2æxy⁄©?Q,≈HøÙ}æz‚˛âõF@ h"*vÛc<MpœV≈ı√≤&“ÍUQÈ‰FÄ¥W‚´¬`ßËc∫\D-ﬁœﬂ\N˝åŒ¢ªˆÌ=,/Äˇ´<+NGªõÅˇÖ˚ÆÏ®¯eÑØ∫\œºl¥¸6åcEÏâÓK=ÂóV◊yd∫UÚ5Ÿbˇ∑Tïœ+≥Ô4)™ß˝;FË›!=n√Â‚xïƒRõ2æb◊®{Eñóó˘Èª'ü©{Ú≤‹+ŒÌµ4@qx<fz¿´ÓëWØE
-]Y!«>P¥ˇﬁ'∑g≥∏åáÅ?
-ﬁÏ!§à
-ÍÜ˙√Z?€⁄ásvP;ﬂ°⁄Fo‚™˘ƒÈ¥∆ £6TLïNº∆RãE5gÂ›ªÏJz®
-o√m˛öx±∆÷e[{iïO°‚%?áW}G
-Ì·ì›üü¸≤ø˚áöJKr û¢ì™>¿Ã=˘àŸO’g8ŸnóHXñ
-á≠ç0ÁNö∑ãì^}ë£˝·j±˘’Ü.ÆmÒ∆V9c¨ñÓµLxïçßEqj‘I*Ï±Í?sÀ¨x©(/ü∞S]ç¢wÂ-¿pH+Ø/*_‡	ŒÖ¯˝HÂ˘ÀÇävÖÓ‡˜Í<^KÒåÊﬂ‹π …˛∫wÁ™Ï∞B!◊oÍÊ∑s—‰d8ú˘t–ùØ?‚r>Ñ¢ùµb|Â…ﬁ“ûóa;’SÅM¯6
-¢,…á√rà@]3^´‚í9‹a5ˆΩ¸6NûxÉQóQ7¸J…©øí•i√Õùw≥¨ª¬+=Q“.æ≠æ†ØÎ˜––üd'~ñ!Æ¬˛Gl´«ó÷ÑËn î	º:´‰ôwxëAâ…˜˜˘ê§⁄µó‚ç∑ÙhYzZ∫¶ÖQõ[€A´ÆÖ?CÛk8„™º8Å‘ΩdV÷8õÜjT˚8ÛRü˜Ç À™¡èŸü˘†»•>™’ù–ØBG“–Ñy<í>¯MuÎsaÅÍzCNyL€Éüñe·ˆkiPñ>¥Ì‘uïÅÊÎJR≤èbKV;ª\dã¥ì˜P„
-è§=zAπ¨táWkol´˜Ñ≥ |AªqúWz≠Í÷}YÒ®DîñgŸ∏´¬YO±uÙ}˚&V¯”è*Ñ˘YAf"—ıjÜYRˇÅÜL^=‡0Rr6#óæ ä√z«_Q	VI=‚9ßÌyu·œ∂9ò¯k.·‚»’$VöDqÄíôQ˚ƒaùTña]Ë(û+Ó|H∏=z§¸≈‘:›«û˙∏æoû¡¨Œß˜»ù´≤gÖ˚*˜K¡zT<IÖá(≈I÷∆Õ|Ú≈$ ~KÙ≤Ñ—ﬂ(5K¯?T5ïæ≥FÛ;ŸØôkûØ¯§_/Ò'XÉWØÂ5ˇÃÓ™aÂöRﬂº˜’’µI©bû#ò[09oÒ“Y4ê§gXK¸ˆSø§/¯ÒÇ7)h∏UÂµ^≤â%>q
-h†RQt¡Ô•k»·*ªà√a¡=ÛAW∏ #3¨ﬁö§ D∑À—)≤™Gıçß‡Õ¬T%fæ™ö‡îAö'x%Ò√Ì|ok‡ÊI]a
-˙N∞<4AÌ¡
-…_zp≠≥?y¸e6ì˝x0E´€Am Ö„&,(˘Ñó*Géı∆Áª
-¸3´Z¶:Gª8~qxX´;/èˆwOÎ‚ˆõg~t>=ÛF¿XäD:”	¸2Ù«g”§#Æ˛}#$ßHå¬£è(bZÁnÄlz
-ìB˝Ê÷+	»Ò˛ƒI∂`J2CNÀÛŒÚß˘‚jüÆ®c’e√”©ˆiTΩz¿˙V>®Póóó’ù÷UxîÔ®MôA†Q|y{i÷Õí©_1ºl0"]?IT™yÇJù$q“Ì0H¸?˙´m†2|M£˘ËQ)3)Ÿ®†÷±Î\ú¶ñ«.íãäR±∫[∞]ªí^Ósu]QZØÕ¸V|ˇï$FVôÓ…ù|}¬7™ÛøZ∑-È◊±úZÆûNËnMrçØò¡íj‹7√°(-√ág>2>f:¡/ÜÙÖÈÏ.
-:@¶¬O√Õr¢ú≤⁄p$\?—q.Qô$´ØZ≠¨X]ØR™,S]L‚3"-‘#ithÁ2pÌ¸∞fd◊≤πÒÈK®∫Q<ˆÍ∂7=h ZΩ†K™Ω˜Ü`∞=âÏù¨ãpV†ÅÅˇeëâCN_ßhy W>Á`eZıSP‡6—90Ûv˙µ¶hæ"ˇπ∑aÃxÆ>Ôˇ˛@Ñ/Ú⁄ÿ¡w8ﬁ¨xÔuµÌi˜◊	MπB∆¢ılc1‘êVgÙ"ÚhMv≥VqÄ~ûÇXÉ’~˛xb
-7.ÈMÛ ‹ÆπŸì⁄∆‡¶O¨ûuçﬁrTÂÂ∆n<ﬁO›è%7~“Åío‡NÜè™q#î®)¶ñ˚∆ì›Ã1–´ﬁîÅ7ıáDœ;Œƒ•‡Fﬁj/+qÍoiƒÍÕ∏Ä≈"’\ıÜÉ≥ÿáÀ¶s…T˝0ÿ)Ûøò¬U±Yç”eSõ©≈V°?J%yÕâØÛı0‡—Vr” ‹∫´M}≠≈2wó_@“¶:c òãÙ≤Q÷z_¬ÀŸo˙´RF^kQf?æåƒ¥ÔÊ¬ä+‹ˆ‚†—Â¬a’r,Z`éÁ∞Ë<◊ <®)dAê„•C+_òÔåÇ]qïM9´ÖßπicnÈƒ'ó¯…Wü˜E‹ê|›“LÙñj˝»xj^⁄ñ6Âk÷Öd•n¡êïNÀ™° o∂∫OVÙt∂õŒ∞‰z≥í¢Ò¬]äØT0¬Y’ñJÃG¬∆Á∆ì"ö‡xÔ=`JÊT%π8RK®Ù•ã!>C≥IoÄk&Äv;ı¬lßczƒ\ä“˘+Ïê›© ∞ËˆıÑ§+≈Æ‚0NRMïúöÆ8µÚY¨fÿÊ‡∑Uï:¯≠‚Lk>†œDpã‰Ek
- h˙”VÅ±^Xt◊˝≤òMiÿ©dƒjÄ_∞Œç=ıI€ﬂˇ˙oˇóÏ	.õøˇı/ˇLãó8‘ q…Ã≤◊'±)üMpü‹»s]n∫Y˚Áñ»Õ™◊«K¨ﬂa^é„	¨Gö5•ù¶hÃ(VnÎ˙€*ì4⁄»©üyë∞ﬂ‹πnÔkJ‚‰©üºÛån
-YHù ◊ÇYóªÁñΩÁûø◊$Éœ-áœî§WªëtIÖı“ >)‰ÂE .ﬂ≤‡£Ç+kcô‘∑ÃågB8Vı≈¬è:Å>u†zæK„~æ ;ÛNÙùqÂ∆\Wj™—jÅoN¬`≤õ˙=*8Ê®Ñ¢JhÎ›`JÙ6¶Êlr779(e(ù£Â∂›,MWK≥H»∏ıã7sê≈(XP´ˇ»KÉP#[*•.˜J√3PØ˛Jˆ´aºÌLã◊ü‡∂µ£˝Ô≠ßxΩ¨ Ù@vÁgôÎo@Ùïclµˇ)…®j˚Só|‘ù€∂(“•;LÅ'≠‰ªã√ïVﬁ”¨5∏≠Y[(ÆtQ3ÆÔ|√_≠˜ÒLÀZ\Q–#á|≠∆Í ÑMË¢´]ÀVı7»ˇØ‘ÍJEoÌç43Ù∞¥c_[‚ oM;/HH⁄Ë,Q•üzÈô∆‡ﬁU:Ø∞L«Ò-LÚ€v%§vﬂMÖaDÔº1¸∆sÅﬂÊ»bâ.|8CS‡
-l◊ªX$ ¥∆˚ #OÁä„O€<‹$∑E‰≠ı+,#ƒΩ˙zyªΩZ]Ó˚„◊9ƒÄ«˜BNZ§{<—IzÛ·†2V;Ao^c,⁄QˇîÑb®‚£Å¸`G ‘ªP0%f¥3|™ÚOü≠0$k’˛π1e‹ c$*xséG€‰içŸ ˇ¡ äs3:√üYoØ+¬«TπÊ-Rë¶ú—<£ÑeŸ,.¬-µX÷Wù¢±âÃäËõZQ.ªWÔùògÅ‡.é2è5∫)àÜ¡y≥Zïâ&Ω˚‚^î+:ßTTº˛',E/ó·îûÖûC)kqV ~ú‚ßer.QïrœO“`D∫œ˝LãôÏÒ*g˚FÖ»%€˝ÇÊ„"w∞©Ÿ◊‚fw2≠¶ùpÙ´::=\ú¡¨á	»Àg·4Èçá∂
-ﬁf≈[ñÎ≈O≠W*lØ[,Ù˚^ÊëS?íﬁ†9ìè€Ÿ¢µ æZzu(÷X˜‰y¥ØPìwˆyVˆ+áy∏ÈÕ*æ≥.zÍ÷≈"ê≈#UÂ\Î¢4L⁄‚´(ÚkôÜ†˙Ïeó÷¥q÷bàÜ≥©øç›≈=–"Ôc⁄≠Z}ZÈ¥I‘®Db÷z.l¨≠úk’ïOöXÜ∫¬rµÆì˘-1+Ωÿ 8Xn3úk≥óU=pEUŒv6,l˘∫êﬁ‹=hπáå>3„ÆÇo‰˙ec8dÁ∑±TZµm^Ø‹>¡2pã{®©‘;Æ4•%ıwì¡“¶1´a‰}!lˆYPáÕW÷å˜4äR †qú§|*‘ÿ 3IFÀ0∫ÊÉ~dè—‰
-‰œ`¸û",HGﬁÜ OK¿Í∆ 2Eﬁ#„≠hG±∏`4FEÀ–∏)ÒÇô°RˇÛL¡b∆ì∂1vYN%«©‹üYNñ„6QéÎ€¥ÌZ§ΩÏ÷FÀ6â\O√‡ÇÏi©ÛQl2ïvÌ’ÄÀW+_ì}?ÛÇ–íΩƒ˜.@◊ç»◊+J◊X#`UÙÖ5™\∂FÑ≠ØÈj	ã≠ç^b µY©›%~«ñÏàYG◊õe!’ﬂku∏ˆÁ≤SøFÓ√-rü!á+õ’®C°jΩÌVqÅœÃCùs%ekaôä{Cƒ∆±®vÇƒ∑ÈòÛ4éﬁÁÔáºúx#7`ä°÷E±ÜJZ£Ó¨@#Uä©Ë`kd<‹Æ©d∂¯;‡d,dîP°BÕ¬Ùc®ƒ5’œÌ¶,øıKóy:Ê™9ˇy<¨jÂ4∆∏ÒAZßéoª·˛8Âe⁄˝ ‘öÁÃrÂRıÆ¥‰!ñ x•≠√~Õ…Å˝÷=ƒpGœ8±≠'Ω0\•J†™{`mŸéM&aÛ')}e
-±áªñÙ¢È8uGLÍ∫êÅcgö≤P∫JàŒΩn7Æ˛ßnKmB†Àv#`Q÷«úQtúB.´É%](¿ñÑ\6ñüïr∆ìÃ…∂ÛÃKß<]º‡:{^2›n ì§™ˆ££B$
-}ç[u3Êãóó¬ñê[6]ªÓƒKRˇ  Xé#‡U£?∆ﬁÒ´°Ò÷Yé˙Ø{ªûR≥UõaÃº+EtqEíÚ≤
-›°ÍiVv•⁄¸î≥¿ÒÀ=âÁü Âo”ñ‹¿´>Ÿz•∆≈Áí?Á¢˛T}òìj†˛\DQÖ0©œ«ëDI'©·Vˇ-9…ÄΩÑºåÇåÂ◊8¨öı˙tX0åETTiÌ¬/ää•ﬂœ@Q·;yÒìßñ¨åÚãéÒâÈŒ◊©xETÀ”“˚ˇã§OZJ˙s»v…é»fí›«°Åfí¢£î÷TJ‘ àŒK"ìÓ¬4zp*$∂¬ß >2Úµø˙EzºÈnqê¨¶IAéí∏ó`Ï€ë€ [?`¸≥⁄ÿHú≥S¢›)rs*ôï¬ù-G{ÜÒ%ó«ﬁIöıB?ÉÔmªl„qPß«ê4}=øfAü≠ÖHk…Ä´
-E^Z≤,	†æ-Í≈iès—˙ævåW5¯N^6Ì;≤⁄Ã1j.L•{´ù;≤⁄À®7·±[kbTã6±¨Ë«∆•Ÿ4¶XŸO¡eJA+∆ÊRÚd!Î`eGu"°≈≈<ˆ ÕÇÑ±\k¥hÔ—X8äµvuü™°Ze0◊JﬂÇcﬁJ[n·gˇ∏[≈vì$æƒ†‡c ±πtqﬂQ∫pS6úûZDåæ‘€hS_⁄¶~u9kò<Û/á›t‘ÒFõs)ˆ’äQ"ÅHõNÔÚÂÕj©±2™°ômÑê}ˇ,–ß, v58“ê5åÆQ%W∑uÄ‰∏@9[+p¢uAb““µ[Ã∂ø˝”êÇµ≤|¿Ö˘…›4Ñ6jÑLøı¸8áÕÍaÄr>qñ4€÷(≥©~…›B§R|AãÛ-L?•à\Èí √i?¯à(_5Œà‘‚‘ÔZ£“⁄¬≠ºGA…P˛}ΩM^qxÙáævê8]PÈ ÔZ%v∂±<∑ø£≠¢WQ'…*ÉÚÓH¢.ô»Æ¨¨XS'Ü‡ÃΩπ8ƒâÊ˙HﬁÆruZ6«ÉP<N∏≤øGÇ·áå®Åı¥=ƒ•≠øó $O÷œ°Áø ?* ~EÇdßzaÌ∑ÂÌFÅ
-ETDÚê‹Ø·6§üS◊ö„vÍöûßswÿ$œojpBu≠~®ÆŸã∞ã≠ÿ4ñπdÆD/∂o¥…pIıÕRÒ∏ﬁîZ±—+Ï:Ë›πpm¨Ym≤«•ï!ííç˘Cñhá¯°à|Ÿ†ó&CK€*≤°∏K[óh_…∂∏o)Ã\ıuﬂqÂ¶¨5e'¨±Zª•Ì†fY(˘3˚BΩm◊9s√™„‹î«Ÿó¥D¨ëPµ\(õ˛Sîã@´'UmJJV‰›Vç‹öúÆ&«È¶¬"Lﬂh"!ı§0wºZ[◊ãïÿ< ÷X%õ$,∏{Ûfn1 îqGÁ"ÀVA3n—Éå‹ºUç_ss7G	Ô4ªYÔµFmU∫¢ÁóΩ∑AFKü3$π∫+pæ5öè%◊:ﬂ§5Ãéº˘πxHk∑ÿ}np]m:Dl¬Ú∂xª∏ïÎ⁄™Cz…FËñ˝lìj≈ÿ5_S'^nT°üoÛﬁ(}ﬂv∫/W˙>/Ò_IPkN˘mhü÷‚l#\±ˆàºy<ÕÇïÉ?—vaW'›;Wx_Ñÿ/∆Ó^/È ‰ö≠”^‹Z≤æZ\(ài_G™¡B√¢ˆ{√‡<»™>à¶à/\¸
-ô/ß¨8√ú@9Æ|W£E/fop˚[mxì >Ò-GªΩÿÆÍdl©§˘x3/	œ”ï“Ì€8JV1%g∏çÏnj!@≤œ“AiT πfø#˜ÉM+ã–jﬂ
--∂π%ÖsWB<kM¥œ•"’ˆÇ+ÍfÜt‘∑´‹Rı>¥ ìú4ìõãÉ-é≤:∂Ê˛çÄq®⁄W‹ú≈-C˚h#[,BiÁÉy:≈⁄1ú≤ÇvBˇüiU7ò÷ŸåúÃR∂qõﬂÙïÊ/ò3ÃÛ*_ìÅ€$ö>ÈViV€€"ÀHµ8-,ç©1)¥\kO±)€ 1ÉF[Òg∆üõÔ√ÓÌœõ‚y‚@˜™Ê6∏~◊ƒNÁr≥A®ÁŸb¢ﬂ¥?mmx/Lã^DøÕv¿V	7eªïÉ’ÖFèª¶˙:¨Ã¢‚{ñÙá]·a®qQ∆PSó˜™	+VÿúøhÆE[ÕiòÅ∂(ñl&4ÍTY
-Kê±·Û(uU¸∂‡fõ°∫&4zt∆zﬁ4ãY•gK/Ã ∏a±2⁄Ç®ı»ãçæ€Û√ÈòÏ=r\z3œ%Îw>xE-∆∑πd˝◊’ﬂ’êojÔ©Aˆ\ ˆ\ˆ‹·ı\¿ıÙ–z“‰’µ‡KbJùƒöN˝ŒvÒÃ¸{‘°ˇZ~pﬂhèø±÷lO‚
-Î´_∞˜Lÿ{AzúÔuÅë« A÷~ˇOÍ‰¬¬+∂
-Ò»ïlÒ”@°{z¡ò -°•5é<˛‹º»p_)(∫5úPµ~¥µQÎ®pÜ“‰%*ˇWÒ∆∂,)Ó(ú¶èÉd˙ÌË˙Ü∞‚Í{ıÎGäÀ7◊«ûº%¨∏íÊn,éıÓå˜rB—ˆ¶Y@ˆê65í`º86îµùè<∏Œ±ˆA
-g˛b%ä3zJ¬`2;ÿôÙÔuÊ<"ÿH”S†ı˜÷ë„äSˆ7NnO°üÛ81ë±"Åiàå4‘†E|Ëf&=RÈ≈ÒØ<X¨A>‡Ë^d'¶Ó,®^Ê@ÑáÒ˘4yÔÖSœ)^Tì8…‡∫∑hó‚£dÖÏÌ=3jçÏ;ÜÚ4é“ÈáëˇãzìÅ[Ùv‰%A≤räÕ˛MÓ¯©EWª@,=™G[VË»∂bÓ=æbUΩ[Â–¢h„‡ˇ∞wÒpÖ≤·	A÷v#‚‚™bó‘Ω≤÷V‡˛°r=˘3ˆãq∆D"Ÿ£…cì{˛{àS&íæ^d◊jü—ö`T(‡ìfí9∏ÊTÕõC’¸¸©‰©'ŒcU]¸Ëú¬Uﬁ4∏&(ûÉ$†L™!¬Êû*TDNP˚…ª‡‚!G”‘3–ﬂÁÆÈDLˆ¸ºèDHﬂ«YLNP“A‡9∞¯≈àe#4¬πx˙BuáıººÉC≤RÁ¡Z‰JRÎ6Â⁄WÇç¿îocí*{Ë≤‰◊Ÿz_ ”•èFË{ÌB3JãQ~°à+/)í6ÓØI¢òåJ˝∑ñ5övÊAñµ[ÇÊCõÂPE6€°…“I	9€ˆÀªûL«òñd™Ô™≠Íjµº4≤ıÈX4b'ø˙˝K¥∆åˇDcíDsNi
-“2Òîc‡√k6ÚgmpÜœòkŒ5™÷0‘îe»2”4-6M¥®P¶ Êd%›å˚¨ŸÉIÆÒ$õ£óﬂ!êA∑ÀÚﬂìet÷©o^¬w¬ﬂ£®e≠K1ú¸n7ΩGÃdNæ!^Ú„Yµºﬁ≤Pªã≈+‘q%›a˝tä¸k¯qÔ=“ºvı˚%ÖÑõ®dzœI⁄HiŒÙn
-ÃÀªh±î:¿Ì◊.ª^¸i#‹Î/ï´ÜÀ7˜“-…@*7èn6˙Ëzõ7*xóÁ^û[DÂa¶¢ùıˆÃC|™ë?ˆD„ u∫ﬁ∑t≥W*u˛a>òód;˜k⁄®yÏ,¸«z$·‰Ç^ögh:'qÈ’%3åõﬂçÜÊ– è
-†j_H>˚∂‡òj3oØñóóeÚm≈B/Kß 5¨^Õ Wó´q©hÙêäç÷¡†};îy‘∏V?lìûŒ∑*6çüıÉ÷œ*∂Rπ¡˜á@£6¨˘ö¨.Øn⁄;®;¥6À‡ä¡†SÀΩ
-t˛8Io†6Â 9,≤ûñTıRâ„¶cîLH£_πñçîßc%ÃqªÆ’0âπÇ•
-1!g≥v)_l¸åÊ.@W‘Áäñãå˝gò≠È>µÊ’*ÿb4ÆR±®⁄mÀI¥+"·Z:‚„`T∏Uúêj}Ë≠£¡lMñ≥4j~Ö∂J™s¨,ƒH»$õ¶¨2[ûVËö¿«jWî˘u¿«é∂É9ˆﬂ—JPME‘˚ñuXÒç¬Z$Äªq…aw°∆+qIõ —Ê6Zˆ&YÈ*h•† ∆’Ê‹πñ˛¡™™lÁ´©⁄Ë»7π-dUcÏ}Ë]¬„õÏ˘d·ùÊVíMSpÛ›^∆å…Ñ-6mfÕ¬íT6te˛Ç¸ªﬂrÉÜ=^◊1˝í√´»a»È¶€≈c_Õ›ædÃôI∞ÔΩayfæ*ÓS…$8Òáhc∫Kv—áπá±p°2ÿdÆtÇAÓuø ˘ê›˛πªgKÉ†fùKõﬂQö&î.T&;˜uVõÊäE¢¶/˛ìŸ¯e3yQCÔIkÍ“Á¨iMTç≥Z€≤Q˛Ñ˙≤Glæ˘
-j3ëKn üÏ˝Ã¬éÊÕ ç&6mÅY#Î›Tò≠‘"]_Â(™äa©ICéí N`ø»A4@
-ç-0¨AÕU[MbhºT„jXùÖ4úH≠ıÍπaYî’†ˇÊd>…'HUÕa4&’NR,≈ ”K€öè=c9Fô˙ë§Ñ∫~ëT*G∫ºß”VµÓ∞6+”·Â•‰ˆÏ<–?‹~›§œ∞õœºA¬„«~4ÙFo‰b=äñè—FÌb!E!YM1o°o6â;·‡Nﬂ0å“ÎàUú´\™LœEÀñŸ!˘ÃõQn»ñ£Ù“h=0C1W–∏<¬èé’_.SgB˙˚ Å–úeìŒ÷¨¨=DÉp
-º¶€ÅÀ7µ>t«ÀÁpQ,}∏t™6DQ‚ø›©M∆Í¢’Ùw:ø ›D6€‹B;ù(é'~€≈I?IL!‰¨’ÂŸ5πäöÆ*ø∞êÈ'AZÚ‰◊Wı,å"∂ô3 ”ΩÈÖGé‡æ∂=_ %Œí¯ˇ   ˇˇÏ}˝r€8∂ÁˇÛhWﬂî‹c…∂ªO‹Y'Nw≤˘‹8=}gS©	,“#â‘êTèØ´Ó[l’˛≥U˜ˆˆQÓÏ#Ï9 ? _§‰ÓtoX©ÿñ@8 ŒÁÔ$êtÃH›sâ\vîkˇ£˘ÛbÊN£l¢Mc%:ﬁrõZ-,Vg.{Ä!"≈w∆*˙n.I'!⁄-b7ƒM◊ZEvS®â´€™∑µ7õ6©øÆÇû≈Tˇ KxúÜYÊ¶£~i˚–aÑÑ˛∫õ±Ω…—WQŸFº˙P™’#˚N¸“Äã'{∆∫L˙≠ú^zA*n˘≠Üj\œQÙ£e ˆS´
-eig0t=DîÀ'úLÕú˛£(+‘ß¶ëTJî”ÊÃÂ⁄rQ9õã‚ÏûÀ˚b˜ªÿ˙◊«&¨~∑%±-sÒB∑˚5ëÏŒò≥jÖΩO<»õ»„˛πÖ˛vóxœc°óº@ÙÄ˛ºaF°UâQ_[«™{‹‘•ﬁæ√GDGÇ¬∏
-fiºtÏÔc~œi4_Œhdç_ÛaTÉEì/sáæe:A3XFÕ·˚ﬁ;µ]x3ó{≈¿‘ë/Â∆ ˝ˇ÷™8VÑ'‘ÈuÖ¬´©ê´ê¶B4π±?¡*ºØ¥Œ∫≈Í€‹≤gÏWG©›Q™XkW)ÇÉ}ì…VÂÕ“ÅäÄëµùxuØÍgTOã‡—ØæT~g{_™‰(ˇÍSΩü*€Z_æOı)Æ-ﬂG®Wf–vˆ◊ıßj@√òá≠XÚ(ICË˜EbJ5&Ä*…üÎ®r¥òRA[Äp‹G›]GÔÜı‘∑QÅ¬Ÿ[∏=Z;çé/s9@∫8ç⁄9åt
-Ä6Îÿ4êõ ≥h⁄⁄‚Ô_1˚VîA6Pm⁄π¡±¬“˛–{ÿ∂Ÿ√b¡cÛÙ¨¥w™(ïÉ∂ï∆$ßäÈKÉs≈ÿ\ÁdÒhÏÁl±:Z∏ì≈Ù.õpÔÔhÈ‚d1∆≈˛Œ«ä’-ß˜ÜòHo5Ò="voà£∫A;/àqÕXâ–~•Ÿï»éq¥.™
-:I˘gªt%≠¨∂´»j˚Û-R.Ω‡'u∆C∑áíÙ™‰„ôÙÓÆñ€⁄2‘yÊçÈ8Tï˚ö V¥ø#´Öu˚≤èπ«L•,ôv€&À¨N+⁄„$‘’4∑íà_‡dQﬁ€ (æs%Û›Œ{GÎèI˜6ÏHv;•õ›µ(jd"MWŒ’≈æeŸNƒ£dﬂØ∑≥¨>˜∆rÃ©ó‹P¯I‰Ñö÷™Py©ñ|’¯Â∂Ë∑uêµqnÿº≠µ+Ûj˝k∫Mfã˛åB•À∞2ëÔ)›ˇøMØRb“Ï*F†Mø4C’Eù©}m¬.;bΩ€Ff¨Pe
-¥Âéüœñ›R«ã≠ËTèË”“∏≥
-<U?¥’Y¥Ê<èÅFsƒGvyπúNmßç9ÏÆºƒ⁄©•≤öŒŒ-/◊÷µöñΩí£À*Ñ‹˛)ﬂ˝løÖµV≤¥nßªßˇîl˙} ÖYz∑;‰@mz∑F0;lfók?qÜ}]˘L~xN1⁄ ,§ÀL∫cÁ4vRG¸\ß9”≈ÃÌ≠!fŒ'^Æe¨ú6NŒL%kºú1VŒvìD$FçZï©T∏AﬁÌ¸}ÁÔ∏gˇûéœioÔ˚≠{˜∂Ü{˚[;ÉΩÕ˜&A’éKÏ˝E[…êf”å<è@∆_Q \|_Ÿ“ëåYm⁄üs:◊YzM9øP_c!Á8E∫„√ª”vZøÂMK¢6tâY'W¨ñõ∞ÏB|îE´KraßÙBGÇ°Ö34µèª—ïV¢}Íjˆ4[ñè{F¥\ˆA9¨xÊπ‘áÅÄÕ∂»xÍ®+ÅóK∆ÀH–xÔ”∏“4›·êº•&kVŒõe?™¬(n≈Z°'≤;’Ë—$MyÅ≥°‡
-¥¶Qm∫àÎÒZ&ƒ∂xüÎybâ6˜W3ú∂1≤U⁄!_ﬂößIë9	™˝|€p<ŸP"s—ª⁄BqÂ˙u‘€\ÙiÜj˚ÁÛÇƒ0î¡∞ÊÅùÛt‡;+"X≠∆sL«h Ão¨Q‹ÊEdQRÑ!öÓ∂´%v|†MÕÊl!◊jR0,!˙ÇwÛﬁéwÅÇœô_ÅÓy/£¶ ∑∏À∏œa≥µÒ˛Xtû˝cI”–˘dyæå«Q.frö¢µ!l_àãﬂy 1‚ÇÙß†E“KØjI[ø≥Öpl
-∂D7ÇºBÄï ﬂΩ!ûP⁄#–ùæ´Üˇb‡ñÆ6∆W<•/)ˆ˜ÏÙEUgPØ∏°ø»?"6y¶¥ªÖ Ã- dﬁ?i:“Ï˜W·≥3X,∂2Ån•≈\ˇO∑ºLµÏx!|õÓBœ5e:±$÷Pwõ\ºå¶V>£òÓí,í, ¢¡`–º±—oÛQ&}‘Ÿ*ú/f…UÜ¯”fW±€Tò=û`0ßXÄ»M∂‡ÿ≥i¸◊(ºÙ ˇ≠±)ª#ÖGÍ€vuÚÇt ùŒrzqÅ§5 3’l<√ñV'WiÎ†ÊQ†éØÆ@9Iá¬;Q‘Xíªy∫≠j—|lê≥tƒó˝{ È#;∑ãÍKÕp¡:K∫"KqˆœNë~!53
-ÏÓH≤1˚CHMäùÂ«èãMßod2¿€T]ûπ∑±/FHõJnÉ'_ÁôÁÍ#äæÊ>@µ€:1V ÙC‰Wà”* B≥c˚’∆≈oº\Ä&9Æ(ÿª{X…p ˇˆN#KÕ9}®Ù—ˇœZútví@ŸI§§ÄV-∑∑…#:-q!íüË«àF7#˘$ {A’zîƒàláüù‰9F¿QKéA¨)ˇxeyí^i ı&xpJÓMƒö,R´¢,‰ﬂ˛M!†Â¶(ÿ$wÓ¸InçÚ]a{)D¶'≠0¨”pGxc
-¬Ms¨2Á¿£∞÷RHC x—4xØ¶3Át—ÿı¬7H¯c·°ÚCòÿ+÷ÛNÑ>êø⁄›ﬂÅK˚ÜW∞˝± É„Mâÿ¨Ò2ı[ˆ>aÒ˜-„ËÀê=ìOÈUîT÷KYuN$$çéçØﬁΩﬂ*kÛhƒ,˛íÄçÉT¡KE˚∫»Ü-	KäH≈~ÜÖ
-ﬂBq˝éFç…e˝
-∏ ]æ*0øÑ- Ïö´§ºúmL·›õAíw/YÊo¬à$ÜÕ’Ï™vÉï_tŸf¸j∑Ÿ {Í-˜ÍÁ∑˙VQ'≠â⁄ +e2'Â}íÄÙ
-Ñ€Q!ı+ 6I/©ƒ5V›%Ùµ)©ÎÙvW⁄˙˛ÚŒËlΩ›Ô∑P]¬õiF9¬ﬁ∆!˚	D˚°~Pı°n¥§A±4ü.fIb((ßyY_˚≤m“€’ˇoS¬ß!ÅzZ™„N],≥IÔöÄ]l}‡x$√Å¸8ŒSPÊ*ro)CºQ^)?æ8"·b+)˙îÊ0ñ¯-+LzFg°s¨câuŸÕÂ|c!¨ÆË|O˛,∆∆yDﬂ5ô|›˘e›Ω|D≥…I	Ÿ
-Œ¸H¯SwxÛÚ†#7#qùwå:¬ÀÀÛAÏèÓÑ`¥*äî2≤TeJÖV;Æ∑øΩúô∆dıı=î••üÄ—Ä\ç„0®–ØuØ*úH‹
-$ª¨H∑P8uO¶e˘¸‚OÉè‹wÔ7ÎS¥∑lZF^\ÑL~∆†9ÅLÀgøÿ≈·¸≤#ÌáJ3éÒÕÊÄÎãõE&–ñö_t§¨éÇ<˜≥¡ OÃ€,{∏!ê˙+8…ÔúDˆ-}ıP‹Üá‚Zﬁ`&ÎÕó‚© Ãè‹Aqàíg .§ı!ë_N	Ù6$O¯ﬁ}»ÇÖn•D¨—±DÎ_ë·I.ëiM
-ŒU⁄àˆÂ‚˛<≈ª}D…5[¶h#’B0L≥Ã,´fF≠d#ﬁÖﬁ¡
-È íΩXY≥$Yı'vŸêú3L¨MgfevX÷+œ—Bt¨Zﬁk€Í—8ÙBsonâRÍCüïæÈç≠⁄z≠≥|0éV¨ßÊ∞≠‰ÍC÷ç#}ÔÙÃR368æö„’âWﬂ†æ´kåîP∂.[‰QÃBÔL8+"ÃêXP⁄»2ã·m, 6d{%—’hÙm≤^’/Ï‡	–ëﬁ¶`
-3¢µ3ß¡”SÚ¨fHÅ¢-?“òNDﬂÂåKltÏ∏#ÉX`!ò_òÎi=îâç“¬–\ÈÁ„a»ÄJ'o˛vÚÀ…K-…çì—.©Ò{ëœbÔ
-(é$NXu?q©ÙÄÉ*+‡˘îv≠A∂<œ∏	
-ÙàC≠ ÎHÉh.§ûTsô+∑ê— ¥ãçM_!Øq«◊…¬Ã’E¸ÙàdNÚDc%£‡èW%¸”Ï*{°£R+ça—zÄÒ|ë€b™7~^0Co≥ﬂG÷ÙR€<oXÓ4V\‚V∂¢Á»„—É¢7ß…ÉÖ4üá/ø}Ä©ˆh˘ÇqF9	Œœ¬ÙS4
-KFÖ”d¥DOÑ#˘m0ô#˘V]ÎÆT›öÇG¬àÏπ∂fa^z¬3,~2X≠Îë*Œ∂ÑÑzoL8ÓCs3*Ü[¶A;üpDñj˘“öA´/tìCKÏ9/0i¸ˆni«kªEµ£ (Êiﬁ€∑.¯öÅDp∆ú”t}c™Y∆^`¯∆'!™åÕí‚®˜Õq‘mÉf
-Qﬂhì‡2Ê:g´fZô–Œß!Ùfh[J∆∞9-9%Ω¢R¿È)êé•$µ‰ÿ*ËrÎ1L–WÆ—'¸”:aH?æÌWÖgÕÒ⁄+?ÿ>ç“pö/Sç£&ºK˘´Ñ êπı|‰⁄À)å8ŒóS–\Ï‚ñw≈◊YkÜïµTD›öç’»ﬁƒà	ˇ1öÖè8bkeßHm	4
-\Ö¸Ú_È9”∑1Dkû˛&B◊&n∂ª‘nWãªá&ôq◊¿a‚ÎI.„0›ÓŒW˙9Nòë«Òî¸ÊI8[∞Ÿ˘`≥ç«$Â’Ö7FÅ‚[AπÚ"\
-¡Ë¸à—¬ãmÄß\≥Ëü#ÈŸ7∂gYæ¬Å	œaP-óa˙ò\·8ØTª® ıte'xthm}ª!·™G?ÿRŸ¿It4¨}˚|A°K÷NõJÁ‡ıÖ	ﬂ“ ˇÿ7¸/çˆ,k´C]UÃ˛P≤jçàM`›~§AÑâøıŒª˘Ê√Ø(y£kC†á;;JprKÅ‹W˙6€∂˜I©∑(ò£›á%ªØY2∑»Æ5<”W>Ø zÇØ*–Ùp'‹¢@>¢V°˝ü6D,ººº.û›Zª‘-Óã‰]5˚¢DoÓˇÅ?e°º,OÓ∑øãû¥¿uùo
-·eé‚|üîr˜yΩLGxƒ„≠Jg¥ñøgﬁÍx1¢2xEæ˙1øGSÍy·èîGı7•˝áÔ¥„]Y∆”q/yèﬂ¯U‚˚-$æ∑‘îΩà◊WYÔ÷d=›nÈùFü¢,∫=âØùò'ú™_∞—ıw-˛°ƒ4Àj€ÜOÈ§ñ†~m˚+œYÚˇ Œ≥^?°iƒTñ≈6˛Íﬂä‰KO≥†>ˆT|VYvb%!èg	Õ´ámÍ“ÿöóÛ=¯º2¬ã‰¢?ÁÁÀî Ø›qŒà?¥7P_õ=◊]ÄÒ§µ@â(Â¨!Jû2eõz2ˆùœh4ÈIıı≈…‚˘≥⁄.G¬∫uÏÈr§ÃÅ˝ﬁ?¨‡lÑWºövö~uü~˝qUñDÌJL/eG<ÛÓ|X∂og—|A„ØJÕo†‘ú&≥Mœ¢±ÖÙ´nsk∫Õ≥$æà∆∞!≤àK∂≈FŸfR
-ﬂ,∑g’nQîãê7–z ‰’™îH! ïB6A`C ˇ˘ÔˇQﬂ!¶≥⁄Ó\}Ã_u&ùÇ'3¯Sd2{≤U]ÚDÕ‚qØ4¬ßà¥ˆW:[ÜäËŸÃ#µ≤á>Õ™«æH:{µ„∆6ÿØÇø˚c¬≥ª˙QQ%ñÿwè£‚ˆÎq—ı¿¯Réå≤Êüêíƒ°umÆhÁQ±™A¨M*ègó\ÿÈéØoùü∑‰ËŒ√…îçåó!i≈;Ò…ZR≈â›g(lÕKZ»√Ÿ—∑ ©≥ò$qh¬˜®?^Ê≈µïÅ1ã\üêÊµ˝DÆ. ¨9ãXÎ8é·å~ç(óÀ?'oÅBÌÈj®3m';V;œé∂∑/È`n´p9°yFãﬂ≈˘¬’9∫œÉ©úœ«/H¢ì≈¬4!öœØ≠Y_f— ”Ì´@˛AU†hi%zMØ†3YÆ≤àBNÈ,ZÙ«†ròE.Â⁄kÒHuíÂîç.ÀHÔt ›Â¿‰ãﬂ -?l´o◊⁄≤¥íÕœÄ¬L©sHÒÕÔV´Y¿ ¬!L$ä>5Zïj„{Fë˙ùnkhG9£Áp:êç'4àRÉ—˜jGZh%éd£ø-aπµ≤Ù(ã≈”7d“bYÚ$äÉhú∞"˙÷Ác^˝¢h∏Øoß5Ò⁄I¿e4;t8>∂—?L£˜à«»´‚ˆqC÷5Í'K«£ñ£‹#é¬hë{å;M2üq≥f˛„~œmÓX∏dãD∆f∆RYh;rûÕ	™•%œ‹˚¨b®8«òomÃ0g˚z∑≈äÉ ŸÖ˙æBÌˆ5#πD÷^ æM©[˛:∂r⁄ÿÛË;¿U8:…ˆ¿∫–gÇô˘ hw»èQÃO ‘À¥qíøﬂ≤åo`¶4ÉÈdv”;‰ÕŒ“µ∂Í∑_ÅCÂP⁄¥$}qÏ1N· ¢ÙÛ§ûíã4ôÀÚm“œC:„ÜéZJ™Eób£A?V7Mî›AõóT/FÔáaöE∫⁄µ^ôı/K‹x>XYÇ)∫ 4Zï=‘WÍÙa∏@yÕdúî…ä%èˆ®†|mxn∏˝ôU´˚hø:ãÛê-ÕEOÀ•…˙‚\óÈ—Ã~’Ö©¢N˛◊ßI,„µd—¸Í„“PüØı
-m´‡îxúƒ≥ç´
-‰o 9c$·rL≥©©rëˇ—v≠E	E˚≈é°¬¶ÅgH‡vM4§~ ã÷XYç√ü1ÄD®»^,Îfd\§<⁄íî£≤N…“,®hrˆæΩﬁ ∆8LÜ€ [Ã¢º7mæ€y3h√MLÚõ°Ëh€∫ˆ $rW˛ó•ê≤E¡ã)#≈S,ÖîW≠S\¯µ
-≥_•-fœ«∆á◊-˚∏l’>ö8ã^ı=LÄÇaÃç√Åq¯oû”´dôª+zÕÌÓb-VS¥X[…~UK–^Oñ˜ﬁ\¬¶hq[ê®6\2ÕX‡(¶8É_ê+¨]ú‚éJ≈Ì™Ò∂ØæãWî|ÔÑ|+æÁ∏mÂ:ºxq#QÖœ(⁄o∑’V∂WWñëΩB.^ˆ2ÀÏav–:S—àÚ2‹Ã∞B∫ﬁ\"åòÛÑ:¢S¯’2®øÍã¥a8V:ŒÅìcr≈†‰äèÌ›„◊áìù“	9âA&π¢¿DHÑ	õòÀ5û–≈2#ã0FÈÑ’i«¯	P˜+ƒôoeû¯‡É;∂’A√/å˙óÜÍË‡W'ïOªíö‡˚cp¸fŸ€’ã4$£r≈f<‚Ë~µP„VÏA<ºeå{3é›ì~DC;øÿCrÎk{ªL¨¡jÜ6¯<dÖ¢X¢aÑ•a∂ÄâVáYÊıÿfds3zY∑.|ª]`—ΩÆ∂P±OÑh‚	Ã@¢øêÆænúœ£	ÈÖiÍ∑¯ÚFÃ∏%I{èÒPv,ørÕ√ƒqKﬂjå?—1Ããém1<«Ál„ja	ü„óeS Ê#"π`jèe—Bp¨Öˆï"ñÆ;èÚÙÁ	#]µ\Ïwπd∫˚ˇÍ„ˆ-⁄Z√y¯e∞˛€ª≈±Í ›∑
-B€ iö,‡ÿãIûê∂à…õe„⁄ÆÃ.∫åªNÚE©¢≥,°+‡Êº}∞#˘ﬁ@0÷8]7˙êﬂk73>KcGa7zàv„ô—0g2ÇÍ¥ªbpü3v„*éÇ„Œ˚SÏÛ;Ã˚PÈÄ`ΩtBm#“ˆgƒOÊp€Æpw¯b¥Ãé@efà‹Lµ„°¡_˝QGåx≥° º†À{>ﬁË`ÕHÃÆ˘©x Ê…–ÛY¸–Ôì◊—,ö®”M˙˝˚€¸.ÛcØ«a°>ï[πg”ü‰G‰õé•ç¨ØÍ9ÄÇ$‹\ÖÜ™Ç:¸∑J^ÿ=¯≠RÀÌ⁄£õ†&ûÀÔÊ‰2Óﬂx{_]¶(X≈^˙xÜe/ë´π=û±∞˘áWOÉûa[nÇ–Bûº}Ò¸¨xª√è∏(ÁüWo¿ùÙ∂õY˝ƒÍ^óÙU»Eg—å"≥[∞=PÀ|¿bùÖÁE@'ÀŸ“)Ú¬TvåAœ—ø:ˇ(WãÉ∫æVëvY÷ó.‘Õ™óñ{@†ûå£'>¢DÉ%Q¶!ÆÍZgp¥g…<$I>AgÜZ˘Ã4‘(;·O:)‘B£´ÎíπﬂxçkmHÍ˚À0Xœ⁄©ÔÙÍx∂Ñ•ÑÎ*†9MÅóãnF£x@,
-?ùü”…¥÷R¢8"·∞v©Òé5Àñá4÷MØul˘“≠⁄[T˙w†‚˘.Ç˜Ckﬁ,'’r+köÁ∞bì~õ–A±€4¥U˛]⁄≥ıÀ€RŸÀsÄ∞L66˛Ç\ÍMoÙ`ÙthÛÇ_Øa"N…∑¨5ì∏ù∆Øh˙Ö6Tj¯ÏS?Â^UÍ´qîÉ¨‰–ÎÕ«ë_öõ&™ˇ^3ÀÌpG∞ﬂ)ËjΩY˛z˚ÛO'gœ¥Uj≤Î·MZ'(ØKñ}Ô∂ÑL_'ãı‡®Òa-Á.ø9!ﬂë∑Q@ß¢Ôº¢`„ûtmÜ÷@íQö„˘•˜Ö[‘ ñ	m;ÂS¥QÎã:⁄<˙Ú&∫§W@˜ìÛ,Ñ=Dﬁr`8-AıC≠
-yÒÓÏuàx›√Æ—È$“%n;j+π¶¿aâ¢≥Ü∂xÜüàÅ.|K!Ô4Yà∞ß∞j*°|‚Zêò"Eà.C¬–çA={˝=ìv;H√O∏µç ?◊ zµE¢‡≥2Vî˝áD˙#‰Pı§W©ê7ctçOÎÍX|ú
-oí˚‰∞Æ9ˇÌZ—§45Ü’ÀÉ3-`/lQ0l»Ç∑ªE(årz∏ºkö:˘ƒDÜÌ:ã}2lòﬂ%Î¸=sVy}q'8	nœÂΩé0ÕsÆ?‘±<m¬wæΩñ÷µ@„™ kïaR®≤'+ÂàÅ*ÆNC∑Àå&ﬂ@vì+òß$à«˚•†û"îC2£6)"/#Rfﬁ‘«õ◊»Åô«·%ñ{2#®¢gÒª"Ç÷ÀïVÑŸ˙πN}]≥∞ëß–?Â,1¶65/~K a
-ÇôÔ]s ˚ÓÀ&Iö{ﬁe≈+/ãÛ©º‹AV¨ï)æ˚Wâ≥¬Àπlﬁ¬G∑∑lÄ≠.1€lÿ¢qìDÊQºD$≠Í#ﬂ)±≈©ä◊/O˙–E{Äsˆ[ôdÜYK¿í6û„ﬁ¥¸rbSxq8ü&:‰VS[õ/|∏Hñsvœáó&Dn∞Ôí€Ï∑
-ì√À¥#@©}≥∫,˘Å‹ÛZﬂ∆Ô{ü∏9ºéVøsØ"7£0≤â÷DíÄæ3CÛÆ≈ïY_Gÿ~ä‹/tö/ù;‹…«Ü#ù¬ŒË9ˆ`øÙ«r∫◊∑4„Lﬂ≈b∆“∫‘±tñ)c®g¨^wf˘_@÷G¸/s“S{9Œ8w¥ΩÅ8AßU≠û‘2πsrŒBÊıœ}Y‰,ÜùÎπÏC◊óWü hã˛a≈êﬁ›e¶Ÿ7_2Ø4IΩ|◊V
-^•?D…æ.-Ëâ…%ÜËWAJuuãQ±nùM∞‘	s¿©“fÈ›Üf˛—òï∆Q’“8å¶©ÏâkÑº†1˝»∞’O¶À∫8â—‹g Ps-Yœ<BKOi<Üπ˘Ô )∂5Iös$ç_òmEÂ≤Ÿ˛û•'HVÿí¯i8£üCÜ÷ã‰]8¢…#¿º‹ÛpæD∞/:Õ¬åÃÓYL√)‡Y¶Áîia7–ıX Å«ÂaNÃ™À0W…AÍ1I
-é3S*]Qæ≈Fqiè≤ ™{¬A8ã»«hJy˘ä"ﬂÎ¨^lNtfºo¢å≥µxl∂ÿµA—aXÅÂ#9B†?VÏ<8∫Ï”eû∏yGU≥˝êYIï%p†w°0Ü§lZXKfù®_√_€s|ÅpZÇ›`x›Ë3ı¡hàx),`+Î∞¬ﬁ-ü⁄3£÷a∂ÿÔirÈ∞≠=‡∆Ì7_+›-Ω-^∫è©ÉÁõÄ‡≈|Uyh√≈YŸÒ•w≤gcıƒì¸à…ÊÉ8πÏYëµÒr®”_,ï©Éﬁ˘åXÔËÄÀ^ ≥óCŒŒ·◊ø—¿Ø;FÏPçÍÖ^á~]w’Â°Y$+∂Íæ„mB≥º@UsF‘T.|}hM«‚N·¯[-2c&…%Î£v•@Ä”jÂíÕ`…{E¥•¯™Œ˛"ÑV>òæ˜?ò
-πÕ≈V=˙∞’W%ÅóøT€ª˙ˇF∑ƒÉ∆(ˆŸ#Ô[ÇÎ¶¨Ìãå^—“º⁄ú‘~à3´Wôu•∏Q®n©k>í?{I?ùS’ÕØ≥QÜÒÒu∆~™Ôç≤Gh Éß–D¯√ÿÓ’2¬_jÀ$~Y∞‰„Îí9´m0q!;æf?‰Ô$)Î˛ˆ<¡ôHD®Î≥∞%∞±H8i¬ç£™¨3% AV+¶Ê9EyshP•vH1¨Bºã–)1—√;ÏeKÏΩ¸˛:òèCÄ6>^+vSà&ïà˜@n%óÛÔÕ¡«$ä{¿Æ7d+ÕëòW¢Å&gÂÑŒØ»´ãê„6Ñ`\ç„˘~=i“K¢∂!ù__ìdAGQ~uDvTfN„hŒñé–hWm$pöy˜'}æ∂…‚ºø'!∂nÔI¨VŸH–PÅII1jŒEˇºa1Úu√_£È…ìEá¸T~í—ã∞7‰sOõêŒLe‰Ê
-Øe§I2ı»;
-\tìëäqp∂∞6Õ·¶5+<öÑü“$~^‰fPÙçR”gùôπØ…åt2tE&ïf§:@–âo_rFØtÜâ˚€ì°ßue=P¶^"rQŒ™–<0[4ßñ¶I¶4”ÅµjI˛GﬂbÍi’HE; e§”Ås4ÃúÖ-≥&ÛeΩu—Ö´ï’˝πòA„IùRG;È`_∑øI`4≥óí”pî§¸9∫d@µÀÙ‰Á%ä@å ‹>¸(Ï-ì˛nàå„ê’BL“g{nAëIóú!;qW8ﬂ_1ƒvÄ≥¨/éî≈‡Wºå’ó»\'¯_MyÊ>ëJFø[˛"!¶°Lß~˛ô[õ NöÏﬁ—‹TÉ4KG«ñ -Ò∏≠Ö¶ÏH+!ƒ#8Ó¯«É—hF ^tº´≈≈Àﬂê6·?ísñe4¬qõJg˘ÒFq˛Î€h≠Ozw	^
-≥Q*°Oû #ç≤Ë<ö¡
-ÇÖÃÇ∫„®Úzí¿4ËÀIj¿øΩÍ™w∞2`‹Û˛>ﬂª€C¬ó8[HüŸRê∂†µ->˜˜ÀLGQ[∞.=≠/Ñ„u£q	lóÛŸ∆i6ß5vnézo∞π\ø»√·¶øXÇ&µa)Ä”°HáÓ ˘^È ·Ó⁄roÂPîsÙvZ]ôı3wœZπ»'sÿ‰f%l@¸¸àìÀî.|ŒA~]õÖo[~∫q(÷ EfU–∞ÅY1Kt
-úpWÁC&Î0†
-æWGt∂Ï}¡´ﬂ|x¡Üc—ãÈÀd&i`_ÂÌÊt(“¢*L˛ª°$F(˙à‚ﬁr«
-ﬁè∞ìa Ú´ ÅF∆+qv~dπ¯h.Äë˝∆·ˆw¶f ú≥y´,Ì°Wà1vÙ”p G’8ÃQ?≥Éw;ñ¥2TÑ±ùOU€îkC«,~ãªºaÙ¨F:~” âa©2tL¸±áfaNŒaC‹ÂÒUpsÒº4Ãñ3Ã∏+`mÏñElÂ=‹31JÊxUˆtÓa–ïü·6√_S£ù¡˜ÆFÆlæV@/äΩóQß¢2"nˆı≤˙:"…yŒˆ6NñU”ª#òÖ¢ß‡Àé*°∞˜òw‘bé\9|∏wäûπI÷Œ¯^‹ÅëÖ…2ÔU∆÷˙‹÷∫EÜº±u6∫«ﬁ≈'˙”~Ûúsãµ’"5H≠Ïd2™ïNu¶‘w1L∂©0‚ueXõ
-ﬁbˆ™[}´-Ô≠GÜ‰…è©al¡è!<sÕAu‡Ùj¡GıÄlXÍÍs¶8ap…˜ˆ™cÑ=‘œ™œ˝ıM´º∑íJ°Bî$ÍlÃ2ÚÄ~F9|xXà~àíBˆà‚ÿÜ>≤¿"âìdÔ=ﬁxA≥Â=Û0Jûáúø0ﬂõƒgÀ‘ﬂéL¢ö–Ç™ﬂQ;5Of~ıJ3_7ƒ∑Uù˘ mﬂ1'ó¿,úÆIã˚1âüÖWß…eÏ-€q˙ÜÉix≈ëú3â◊EÈµÆªuÆºvkœ≥Ø’˙Î≤◊∏]Úé˝€÷+ªö4÷(Wã–πà∫ºØ˝Æ∂rxÄn˘ °Í|ÿÕA∂©ÁmµE»V˙Ñkw∞o>dl	Ên∂ò\»zmM)"@∑lû≤ıÚ,0C˛ßÀs:L©ÒÎ∑ñX„‰Ã∑wë¡JBRπ®≥Fsc•YπO∑Éö Ã°b-)êÊ◊9Ÿk¨*]xÜ…c÷ƒx/ñúeë]kÈœ"®~f|ÔoOˆ|YŒB™—àuP•avy Ó%"ØÚ@µ)ÜnÉ‘ÏhR‘¥^<„ªù¡0úø7ïhgME¥4å¥òW¯=Ÿ&œíyî—42÷∑ñTîM#≈·gK
-9¡vQ£…ã
-Å%CÿTq8#œÈxçµŒ¿›$2ú”q
-à∑èÑ·ôH>∫ÍTë+1HkUø"weîYöæ[¬√ìüûûº<“ç“T”g=aPÍß_>∏IÒßâ<çY~Bæ‹¥Gøµ–ç∑±ƒ !RŸI~°ﬁV±|ñ*”P˜kgAÂ2ﬁ‚Ú+Eç(&ˇLí9¸ƒ3*X¶ò“Z|‹n≥1ó®≥‹Ìmc~ÜîÇ•Ÿy˛yXÓcëΩˇÂ° ˆ–^|›'›OCgÓØˇëR.+ﬁØ;’∏ÄmôÃì‘V√Z∏#Ω⁄aπ„ó€~«Ø“ägå3-/¡îáœn»„ó…ú˜ı7ÊÒ´™‡≠Ö.Ÿõ±ÓM7†aı$ﬂ#xu29";áª√Ωª˚ﬂﬁs›ﬂ≈L√ØN∆ö˙÷bæÉ¸¶ökÿ¶n≈ø.´øÿÎèäŒ˘¬t\‚>§ãEª˚|´¥4ˇ´ã®∫≥4yﬁAàŸf‰˝¥-˘∂ˆãñÜOQ≠^„ì*√Ωäejµ7ªLtˆ´ú£]äQïr@	∏14§™cÚyÓ*·ÊQ&»b´àÏãˇ% j∂µî	∆Ä:'D–≤YQm£àó˝\∑“|Li-…Ÿ¶Ê“zœÇıû≠œÄˆ¸ﬂá˜∑Ê˚›x˛Mˇú«Ò}ÜÁ`fÚV=®¿o5A^Œ,ÄÖ^7 ﬂX√#øÏ˙ågÌ3Ÿ•}›µæÃokìÜı–`≠L“Äï“&Õøg_G‚+öøb¨ñVÀªù¡Ω√˜™≠’R9’§*¥≤¥“˛≠∫#W∆_ÛØFì≠‹P?uª±√¨'Z[”Aâ∆°«ØΩLê+:ôêg`:ı1∏jë6˚ﬁΩËÎµ~?˜≠ñÄˆ‘"`K1√©‹ƒ‰∆ñà\B®$∞+£ÕòÀ8≤ŸRÏQ‡ÌñöZ¿JY2‚\•Ú∞GNëÙxâAŸ7ÇÍ≤£ùÆˇÿ“û˚{˝Yæ'êU[^|Îúÿv
-p¥´GìxïµœùñáíÆI∑ KüûV7dõî>2ÀömóıQ1Sµ„.n*Ò“≤¯œ” ™¯M≤Â9è)ÔÌlëCk¬ñ+:>{®O‹t¬ªûE¨SÚ<äßäü3ºKw∏<hÕ≤≈, {ˇecÛ›Œ{Áy≤Ê‡™}wóûî¶I¯ìTLôù\~¨“¿<úÉJæ&Oì¡ÑÕ2Ú\¥V+)_≥e *%ˆÁi˜ ~‰¯C<#
-–™°*π’˛/Ñ’Ê;õ;1kFÔ¨l.‘*Ã?—™p˙€p	1€m4EÆ¿ºö⁄¢]oÍ∞∆i¸≠@h¨xËΩÕôﬁÜ—K„≠d6MRú√!ı˝Ÿ*?XÜkËôPcyÛõÖ*˘⁄fπñÚ8`Wo–£f≠`ÑP≤Î,ÃQï,
-ºY≈ƒ^∆Õ)eı7È≈<X¿f(⁄ÙÓ›Ó˛\∆5ê≥‚l)\ÿ:—ê∞ôZQ'oqiâøàeŸaa:≈2’`Ω[R]€…Néö¬æÖ\∫@i å∆rB⁄¿vøòCí#KÌÀµzöâ$¨Ûf ¨oÔ˚‡ﬁVπz¶Øë¿Î4“ÍU≠*N∞ô≠1$≥	lŸiﬂ¥úÓc¸åK{jl˙nw∑‚*¿∞Jàklä	UÑCÒ˙àA4^∆àTÖƒ”4â£L¡AÑÚÁ≥"m@^”åïz'±Q(ÊtLS2«Íç⁄—dyæå«Øm–%#h©IÕÿÕœìq≤ÃÀÙÂ(&<ä≥pJËú~ùÎä?¸E–Ÿ+†ì	Ì¥Û∞∏ÍK’⁄õıŸeh‰J˙™ò·SúˆPp“£)õMû–´Ì
- i&®˜jÈ0@<aïbtf1èösEotˇäTVe±kà2nñ2¢≤J ,ÖÈÏ⁄∏ÒÑŒËπèÂ"eå˘qqc”Î7dµK‚!BéJ@9∞ıÆVâ:ÚRU◊‡≥dyí'…<TYsÈ)¸©py`œnÿåî	ÔXB‡»ê^ùÜ9Hõåã`U_¡%√∞‰* Oﬁò^)àr¨%j@ØàÄqZﬁ°IYB”U0K5®ıZ˘x∏ “o¬xŒß(ºvS‚¥æ¶W∞`gäâ@| àÙ•0èÂ Ïæ* KoóÖy©ó–&æó0v=π€4#4æAø#∂E@iÿÔk·_y≠F=F•˝û´
-bëÁc5Ø~Jçı/’7aÔU(Û6…ŸZ+âÙg6›Â˝¨&˘NÍ_±ÃŒ—‡»$p»¬·»†Áﬁ¡Àﬂªœì˘Æ2∂`ÒãsÿŒAö,˙Ã¶!1Î1˛¥[˛*@Zò?÷RiË¸µ#g◊p·º©ö”H£·\84¬Ä™<çH:CÜøºs¶Úï2 ªº#kë6wèπi/E¸´•œ*HuD*e,v,’¢*Ïπ&èl-∏ÂÊ	M#Æ®yÍi“ûˆ‰¥'‘ƒe&⁄v´L5àÏ¨ºÊ™±VVS”ﬁ~£,°fï∑Ω¬√”–†—””#Ú˙‰o˝kâD@°Ç.õeQœÉF?öÉﬂ±±ÀîàC«÷ö!eÙ–Íƒ/te©¯™™˜VpÛò¨G“Xá»dæ5;r¥y1˜åˆ°kÈÏÁ!£10&¯Ë*ún`◊ˇ˝_ˇÛêgÀ¯„ı‡*;‘‡âaÜ⁄J4É—b)∆≤⁄˝É:ÅÁ9h–Àx 3˚*ºø˝tïÜ>¨¥€b∫ºØªFO`√w…LÄˆøTÏLqç¯¡ﬂô¨}ªfJ,ÇºãqÅ>õ¬™?"ˇÁ_ø†˘d¿:Õ∏5¡YHGW∏tv6oÊKü…Dÿ¡‘gü™äw´Ö˘W[óÖ],âcÇl∂W⁄¸öˆÃ§ÖW∏MYLÀ°À/µ÷£°Y£§æ·ç≠‘Â˛˚òøl÷¥4Ù‰A]—–/KıK≥g¶ÒÚ§"^ûîƒK[n/∏ªﬂ?ÍÎΩﬂ+¢7ÕZx9ÕÒÏ’#B|ÂÎjv/(hˆ™ô”K⁄∏lÑv’•≠ƒT"rú¢HÂ>6Å @w‡..üåçÁtÊ@7#‚äÍ˚]«:o˘Æ6‘ìÁr:7øˆp†KJ⁄êc—2˜>„5®/…J<®JìÓ63´µÜaÆeô˘®<y\OÍ˘Z±†ûæ\„ë‚±.R:◊’Ç‰ì„Xiˇ¢õõIà«ì˘{ˆÿálÿ«⁄ŸÕÚ´≥p‚h Ìp=~(ùÁtë∆I2ûÖÉQ2g?¯«Ò∑l≈¬`o∂ä_„ÒÕùÔﬁIñ˘bôáÛÛ0–[•3ÿ|?¬⁄Â&ÍFãÓos*≠∞‚¯Ãﬂ[√äs'€r<µãòñåöÆï_˙+EkK‹◊◊1‘*Ø˚f¡G/F>KÊã$Üé†mAC®∆i„µ5=Üz•™VÑ.≈®¬ç)ß^iá≈,%Øìi2’ŸK¯8Ù≤ØΩZ».∂k˚Òf¡d4Ç˙GsËªvÀÑ˜R≠Ù¯VÎö4–‚Åë-S“ªnXîo>Íƒ%ã#:ÿá7w“û)ZÕ†˛¯Æ±J∂Æw∂ÑB]˜\ÊÙÅA∑ªîÚ±ﬁØ:±ñ~|kﬁ]Z˙qƒ)Ùå˜∂ _li÷Ö[òÌôcwb∂µ±k#
-ÓöΩ]k†*ïx4eÊjîï6Ò *ﬂ.ÛÂÇºâ‚Q”0Ót±Í¸ﬂBÊl˙^Öÿù◊5RÉ;t^◊∂Ó0`V^Ó0y&1aFuáâ 64`?6≠‹elˆ‡∑L†è”¨hØT…
-?Gπ˜ì≠^6Æc¢Éêª◊`‰≈Çºl¶§ ∏Úˆ˝|pó7=¡ˇÑ(ù:&G4/¢W¶¨#„ú[	EXaR<L£ÄyÉ—4m:üQ§ºØ|ñƒáà‚q8 ŒÙp”î’∫kŸVî(0<}∞Ôj;Y–)ùH∂+
-Ü’ãı∏ß<8( Ò®ÜIx£	Mó¨òåÖ∫Ò¯¯6«T¨§7ñ‘(“˘sÃkDk4Ÿ√3U≤|π3¢Lâ ˙îÆ˙{‹Ù]Ø{ÖkwvŸ≠„Åê™ÃñﬂƒH08kÌ¥≥#Xh⁄LE°¯=Õ˙Äv**!«ı≠•2y⁄,L^ænªô’°ŒP'TO˚D*q|7ºñ{¨Ò\óŒ·§°X•—ê¥yØdLPŒ:<# }PSA/é‰ºõ˙s≠∏y]x±∑ˆÍlG¥’≤ïàÖÔ^¡‚ò—´L0œ˜=áNΩ	iñƒ¨qoSÛ=™G˙oOÚ~“x
-°eçVè“ê£s†ATﬂ‰çÈÿﬁ‰$(Îè÷o5∂ÑÁ-ÈÏó$ù¬≥µçû∆ü`&Èï˛Î∑4õÍø)ªøNCH”7˙oÀ$g"í˛Î7!¨ï¿‘µF∞^sVjF£L˘KX»—àΩõ<‚;≠ûÙ˚‚◊¸€jDÚ¨„Îlí\äÕÑÄ–X¸¯¯:÷∑Bé	|B‘5‘G6N Mß'V„©XmïqL∑YáÛ‘‡¸,L?E£p¿kæóì’€ê:ª±E¢†È»âÿ˚uµÌe,[°•¨Ãè¨àâvÌT¢ Ü‹aY]aÒö272aCöûÃfÊ”®I,§’„˙{;I.‰âlœ†^¬ö`Q_Õaß“:¿‚ŸZWœjr2˝’âƒ#$è<8O‚÷ı%q1Xy+	å3+Åsd∞[ΩNÜˆÔÉ",Ó†“Ã\5ˇˆt≈»Ù…›\‘)&áB->AyÀf˚•œäobˇÓ÷
-›ûbDYw˝?áyz„áÎ)˚"Ã28n$AY:¥ﬁQ}|Ûßˇ  ˇˇ -∞ ƒ
+<html lang="id"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8"><title>Notifikasi Pengalihan</title><style>body,div,a{font-family:Arial,sans-serif}body{background-color:var(--xhUGwc);margin-top:3px}div{color:var(--YLNNHc)}a:link{color:#681da8}a:visited{color:#681da8}a:active{color:#ea4335}div.mymGo{border-top:1px solid var(--gS5jXb);border-bottom:1px solid var(--gS5jXb);background:var(--aYn2S);margin-top:1em;width:100%}div.aXgaGb{padding:0.5em 0;margin-left:10px}div.fTk7vd{margin-left:35px;margin-top:35px}</style></head><body><div class="mymGo"><div class="aXgaGb"><font style="font-size:larger"><b>Notifikasi Pengalihan</b></font></div></div><div class="fTk7vd">&nbsp;Halaman sebelumnya berusaha untuk mengarahkan Anda ke <a href="https://ais-dev-t6snira4tmhv7p7pnhkssm-546022300409.asia-southeast1.run.app/App.tsx">https://ais-dev-t6snira4tmhv7p7pnhkssm-546022300409.asia-southeast1.run.app/App.tsx</a>.<br><br>&nbsp;Jika tidak ingin mengunjungi halaman tersebut, Anda dapat <a href="#" id="tsuid_ZkeWauHWOsyb4-EP5ML6sAw_1">kembali ke halaman sebelumnya</a>.<script nonce="1iKJnrGKLJ_t4BY1L53Fpg">(function(){var id='tsuid_ZkeWauHWOsyb4-EP5ML6sAw_1';(function(){document.getElementById(id).onclick=function(){window.history.back();return!1};}).call(this);})();(function(){var id='tsuid_ZkeWauHWOsyb4-EP5ML6sAw_1';var ct='originlink';var oi='unauthorizedredirect';(function(){document.getElementById(id).onmousedown=function(){var b=document&&document.referrer,a="encodeURIComponent"in window?encodeURIComponent:escape,c="";b&&(c=a(b));(new Image).src="/url?sa=T&url="+c+"&oi="+a(oi)+"&ct="+a(ct);return!1};}).call(this);})();</script><br><br><br></div></body></html>
