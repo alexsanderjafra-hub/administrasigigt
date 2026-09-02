@@ -39,10 +39,39 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok" });
 });
 
-// Direct download endpoints for clean App.tsx and project
-app.get("/api/download-app-tsx", (req, res) => {
+// Direct download endpoints for clean source files and project
+app.get(["/api/download-app-tsx", "/api/download/App.tsx", "/download/App.tsx"], (req, res) => {
   const filePath = path.join(process.cwd(), "src", "App.tsx");
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
   res.download(filePath, "App.tsx");
+});
+
+app.get(["/api/download/GeotagCameraModal.tsx", "/download/GeotagCameraModal.tsx"], (req, res) => {
+  const filePath = path.join(process.cwd(), "src", "components", "GeotagCameraModal.tsx");
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.download(filePath, "GeotagCameraModal.tsx");
+});
+
+app.get(["/api/download/AdminDailyReportsScreen.tsx", "/download/AdminDailyReportsScreen.tsx"], (req, res) => {
+  const filePath = path.join(process.cwd(), "src", "components", "AdminDailyReportsScreen.tsx");
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.download(filePath, "AdminDailyReportsScreen.tsx");
+});
+
+app.get(["/api/download/dailyReportPdf.ts", "/download/dailyReportPdf.ts"], (req, res) => {
+  const filePath = path.join(process.cwd(), "src", "utils", "dailyReportPdf.ts");
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.download(filePath, "dailyReportPdf.ts");
+});
+
+app.get(["/api/download/project.zip", "/download/project.zip"], (req, res) => {
+  const zipPath = path.join(process.cwd(), "public", "project-source.zip");
+  try {
+    execSync(`python3 -m zipfile -c "${zipPath}" src package.json tsconfig.json vite.config.ts index.html`);
+    res.download(zipPath, "project-source.zip");
+  } catch (err: any) {
+    res.status(500).send("Error creating zip archive: " + err.message);
+  }
 });
 
 app.get("/api/download-clean-tar", (req, res) => {
