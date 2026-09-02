@@ -1,6 +1,6 @@
 import { FinancialRecord, DebtRecord } from "../types";
 
-export const seedFinancialRecords: Partial<FinancialRecord>[] = [
+const seedFinancialRecords = [
   {
     customId: "INC-010626-001",
     date: "2026-06-01",
@@ -1358,7 +1358,7 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     sumberDana: "REKENING PRIBADI",
     recordedBy: "admin",
     timestamp: 1783166400000,
-    refHutang: "HTG-016",
+    refHutang: "HTG-017",
     referenceId: "WESTMARK"
   },
   {
@@ -2484,13 +2484,13 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
   }
 ];
 
-export const seedDebtRecords: Partial<DebtRecord>[] = [
+const seedDebtRecords = [
   {
     id: "HTG-001",
     customId: "HTG-001",
     type: "HUTANG",
     title: "Talangan Gaji Karyawan Project Westmark",
-    contactName: "MUHAMMAD YASIN",
+    contactName: "BANG YASIN OWNER PT",
     amount: 1200000,
     dueDate: "2026-06-30",
     status: "UNPAID",
@@ -2503,7 +2503,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     customId: "HTG-002",
     type: "HUTANG",
     title: "Pembayaran DP Pompa",
-    contactName: "MUHAMMAD YASIN",
+    contactName: "BANG YASIN OWNER PT",
     amount: 65405500,
     dueDate: "2026-06-30",
     status: "UNPAID",
@@ -2542,7 +2542,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     customId: "HTG-005",
     type: "HUTANG",
     title: "Pembayaran DP Desain",
-    contactName: "MUHAMMAD YASIN",
+    contactName: "BANG YASIN OWNER PT",
     amount: 1000000,
     dueDate: "2026-06-30",
     status: "UNPAID",
@@ -2589,7 +2589,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "Makan malam rapat Bogor",
     recordedBy: "admin",
-    payments: [{"id":"PAY-HTG008","amount":325000,"date":"2026-06-19","note":"Dibayar via kas perusahaan","financialRecordId":"PRS-200626-007","recordedBy":"admin"}]
+    payments: [{"id":"PAY-HTG008","amount":325000,"date":"2026-06-19","note":"Dibayar via kas perusahaan","recordedBy":"admin"}]
   },
   {
     id: "HTG-009",
@@ -2603,7 +2603,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "Gaji kekurangan Panjul",
     recordedBy: "admin",
-    payments: [{"id":"PAY-HTG009","amount":500000,"date":"2026-06-20","note":"Telah dibayarkan tunai","financialRecordId":"PRS-240626-004","recordedBy":"admin"}]
+    payments: [{"id":"PAY-HTG009","amount":500000,"date":"2026-06-20","note":"Telah dibayarkan tunai","recordedBy":"admin"}]
   },
   {
     id: "HTG-010",
@@ -2657,7 +2657,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "Talangan Jidan untuk Pembelian Fitting PVC Westmark",
     recordedBy: "admin",
-    payments: [{"id":"PAY-HTG013","amount":446500,"date":"2026-07-04","note":"Lunas dibayarkan","financialRecordId":"PRS-090726-004","recordedBy":"admin"}]
+    payments: [{"id":"PAY-HTG013","amount":446500,"date":"2026-07-04","note":"Lunas dibayarkan","recordedBy":"admin"}]
   },
   {
     id: "HTG-014",
@@ -2665,7 +2665,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     projectId: "WESTMARK",
     type: "HUTANG",
     title: "FEE PROYEK KE DUA IBNU - WESTMARK",
-    contactName: "MUHAMMAD YASIN",
+    contactName: "YASIN",
     amount: 5000000,
     dueDate: "2026-07-31",
     status: "UNPAID",
@@ -2678,7 +2678,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     customId: "HTG-015",
     type: "HUTANG",
     title: "PELUNASAN DP POMPA UANG PRIBADI",
-    contactName: "MUHAMMAD YASIN",
+    contactName: "YASIN",
     amount: 25000000,
     dueDate: "2026-07-31",
     status: "UNPAID",
@@ -2692,13 +2692,13 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     projectId: "WESTMARK",
     type: "HUTANG",
     title: "PEMBAYARAN PELUNASAN 50% PANEL CONTROL WESTMARK",
-    contactName: "MUHAMMAD YASIN",
+    contactName: "BANG YASIN",
     amount: 12500000,
     dueDate: "2026-07-04",
     status: "PAID",
     description: "Pelunasan 50% Panel Control Westmark",
     recordedBy: "admin",
-    payments: [{"id":"PAY-HTG016","amount":12500000,"date":"2026-07-04","note":"Lunas","financialRecordId":"PRS-040726-005","recordedBy":"admin"}]
+    payments: [{"id":"PAY-HTG016","amount":12500000,"date":"2026-07-04","note":"Lunas","recordedBy":"admin"}]
   },
   {
     id: "HTG-017",
@@ -2711,7 +2711,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "DP Kontrakan",
     recordedBy: "admin",
-    payments: [{"id":"PAY-HTG017","amount":1000000,"date":"2026-07-04","note":"Dibayarkan","financialRecordId":"PRS-090726-001","recordedBy":"admin"}]
+    payments: [{"id":"PAY-HTG017","amount":1000000,"date":"2026-07-04","note":"Dibayarkan","recordedBy":"admin"}]
   },
   {
     id: "HTG-018",
@@ -2719,13 +2719,13 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     projectId: "WESTMARK",
     type: "HUTANG",
     title: "PEMBELIAN LEM, WD, DAN KNEE UNTUK WESTMARK",
-    contactName: "JIDAN RAMADHAN",
+    contactName: "JIDAN",
     amount: 133000,
     dueDate: "2026-07-31",
     status: "PAID",
     description: "Lem, WD, Knee",
     recordedBy: "admin",
-    payments: [{"id":"PAY-HTG018","amount":133000,"date":"2026-07-04","note":"Lunas","financialRecordId":"PRS-090726-002","recordedBy":"admin"}]
+    payments: [{"id":"PAY-HTG018","amount":133000,"date":"2026-07-04","note":"Lunas","recordedBy":"admin"}]
   },
   {
     id: "HTG-019",
@@ -2739,7 +2739,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "U Bolt, Dynabolt, Ongkir",
     recordedBy: "admin",
-    payments: [{"id":"PAY-HTG019","amount":265000,"date":"2026-07-04","note":"Lunas","financialRecordId":"PRS-090726-003","recordedBy":"admin"}]
+    payments: [{"id":"PAY-HTG019","amount":265000,"date":"2026-07-04","note":"Lunas","recordedBy":"admin"}]
   },
   {
     id: "PTG-001",
@@ -2752,10 +2752,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "Piutang invoice filter softener PT TTI",
     recordedBy: "admin",
-    payments: [
-      {"id":"PAY-PTG001a","amount":11750000,"date":"2026-06-03","note":"DP 50%","financialRecordId":"INC-030526-001","recordedBy":"admin"},
-      {"id":"PAY-PTG001b","amount":11750000,"date":"2026-06-10","note":"Pelunasan 50%","financialRecordId":"INC-100626-002","recordedBy":"admin"}
-    ]
+    payments: [{"id":"PAY-PTG001a","amount":11750000,"date":"2026-06-03","note":"DP 50%","recordedBy":"admin"},{"id":"PAY-PTG001b","amount":11750000,"date":"2026-06-10","note":"Pelunasan 50%","recordedBy":"admin"}]
   },
   {
     id: "PTG-002",
@@ -2814,3 +2811,5 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     payments: [{"id":"PAY-PTG005a","amount":11753500,"date":"2026-06-26","note":"Lunas","recordedBy":"admin"}]
   }
 ];
+
+module.exports = { seedFinancialRecords, seedDebtRecords };

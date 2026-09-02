@@ -216,6 +216,7 @@ import { DocumentPreviewModal } from "./components/DocumentPreviewModal";
 import SheetsDashboard from "./components/SheetsDashboard";
 import { getGoogleAccessToken, setGoogleAccessToken, syncAllDataToGoogleSheets } from "./services/sheets";
 import { calculateKasbonBalances, simulateKasbonAllocation, extractKasbonRecipient } from "./utils/kasbonHelper";
+import { normalizeContactName } from "./utils/contactHelper";
 
 export const isReimbursementOrDebtRepayment = (r: any) => {
   if (r.flowType === "PERSONAL_TALANGAN_REIMBURSE") return true;
@@ -6604,14 +6605,16 @@ const getEffectiveDebtRecords = (
     if (!isPersonalOutOfPocket) return;
 
     // Determine Creditor (Pemilik Uang / Talangan Pribadi)
-    const creditorName = 
+    const rawCreditor = 
       (f as any).pemilikUangPribadi ||
       f.personalHolder ||
-      (descUpper.includes("FAISAL") ? "Faisal Mustopa (Admin)" :
-       descUpper.includes("WELI") ? "Weli Mahesa" :
-       descUpper.includes("YASIN") ? "Muhammad Yasin" :
-       descUpper.includes("JIDAN") ? "Jidan Ramadhan" :
-       (f.recordedBy || "Faisal Mustopa (Admin)"));
+      (descUpper.includes("FAISAL") ? "FAISAL MUSTOPA" :
+       descUpper.includes("WELI") ? "WELI MAHESA" :
+       descUpper.includes("YASIN") ? "MUHAMMAD YASIN" :
+       descUpper.includes("JIDAN") ? "JIDAN RAMADHAN" :
+       (f.recordedBy || "FAISAL MUSTOPA"));
+
+    const creditorName = normalizeContactName(rawCreditor);
 
     const fCustomUpper = (f.customId || "").toUpperCase();
     const fIdLower = (f.id || "").toLowerCase();
@@ -6856,13 +6859,20 @@ const getScheduleForRecord = (
     }
 
     if (matches) {
-      // Check if this financial record is already linked to an existing payment slot
-      const existingSlot = allPayments.find(
+      // 1. Direct ID match
+      let existingSlot = allPayments.find(
         (p) =>
           (p.financialRecordId && (p.financialRecordId === f.id || p.financialRecordId === f.customId)) ||
           p.id === f.id ||
           p.id === f.customId
       );
+
+      // 2. Fuzzy match by amount & date if not yet linked to avoid double-counting
+      if (!existingSlot) {
+        existingSlot = allPayments.find(
+          (p) => !p.financialRecordId && p.amount === f.amount && p.date === f.date
+        );
+      }
 
       if (existingSlot) {
         // Link this financial record to the existing payment slot instead of duplicating
@@ -7267,7 +7277,7 @@ const AdminDebtScreen = ({
 
     relevantRecords.forEach((r) => {
       const rawName = (r.contactName || "Tanpa Nama").trim();
-      const displayName = rawName.toUpperCase().includes("YASIN") ? "MUHAMMAD YASIN" : rawName;
+      const displayName = normalizeContactName(rawName);
       const groupKey = displayName.toUpperCase();
 
       if (!groups[groupKey]) {
@@ -7297,11 +7307,11 @@ const AdminDebtScreen = ({
   // Records for currently clicked contact in the summary cards
   const contactDetailRecords = useMemo(() => {
     if (!selectedContactDetail) return [];
-    const targetKey = selectedContactDetail.name.trim().toUpperCase();
+    const targetKey = normalizeContactName(selectedContactDetail.name).toUpperCase();
     return effectiveDebtRecords.filter((r) => {
       if (r.type !== selectedContactDetail.type) return false;
       const rawName = (r.contactName || "Tanpa Nama").trim();
-      const displayName = rawName.toUpperCase().includes("YASIN") ? "MUHAMMAD YASIN" : rawName;
+      const displayName = normalizeContactName(rawName);
       return displayName.toUpperCase() === targetKey;
     });
   }, [effectiveDebtRecords, selectedContactDetail]);
@@ -7309,7 +7319,7 @@ const AdminDebtScreen = ({
   // Financial transactions linked to the clicked contact (from pengeluaran/pemasukan)
   const contactFinancialRecords = useMemo(() => {
     if (!selectedContactDetail) return [];
-    const targetKey = selectedContactDetail.name.trim().toUpperCase();
+    const targetKey = normalizeContactName(selectedContactDetail.name).toUpperCase();
     const debtIds = new Set(contactDetailRecords.map((r) => (r.id || "").toLowerCase()));
     const customIds = new Set(contactDetailRecords.map((r) => (r.customId || "").toLowerCase()).filter(Boolean));
     const projectIds = new Set(contactDetailRecords.map((r) => (r.projectId || "").toLowerCase()).filter(Boolean));
@@ -7320,9 +7330,10 @@ const AdminDebtScreen = ({
       const fRefHutang = (f.refHutang || "").toLowerCase();
       const fRefPiutang = (f.refPiutang || "").toLowerCase();
       const fRefId = (f.referenceId || "").toLowerCase();
-      const fHolder = (f.personalHolder || "").trim().toUpperCase();
-      const fPenerima = (f.rekPenerima || "").trim().toUpperCase();
+      const fHolder = normalizeContactName(f.personalHolder || "").toUpperCase();
+      const fPenerima = normalizeContactName(f.rekPenerima || "").toUpperCase();
       const fProjId = (f.projectId || "").toLowerCase();
+      const descUpper = (f.description || "").toUpperCase();
 
       // 1. Direct structured debt reference
       if (fLinkedDebt && (debtIds.has(fLinkedDebt) || customIds.has(fLinkedDebt))) return true;
@@ -7338,10 +7349,18 @@ const AdminDebtScreen = ({
       }
 
       // 3. Structured PIC / Holder matching
-      if (fHolder && (fHolder === targetKey || (targetKey.includes("YASIN") && fHolder.includes("YASIN")))) return true;
-      if (fPenerima && (fPenerima === targetKey || (targetKey.includes("YASIN") && fPenerima.includes("YASIN")))) return true;
+      if (fHolder && fHolder === targetKey) return true;
+      if (fPenerima && fPenerima === targetKey) return true;
 
-      // 4. Matched in recorded payments slot of this contact's debts
+      // 4. Contact name mentioned in description or refHutang/refPiutang
+      if (targetKey === "MUHAMMAD YASIN" && (descUpper.includes("YASIN") || (f.refHutang && f.refHutang.toUpperCase().includes("YASIN")))) return true;
+      if (targetKey === "FAISAL MUSTOPA" && (descUpper.includes("FAISAL") || (f.refHutang && f.refHutang.toUpperCase().includes("FAISAL")))) return true;
+      if (targetKey === "JIDAN RAMADHAN" && (descUpper.includes("JIDAN") || (f.refHutang && f.refHutang.toUpperCase().includes("JIDAN")))) return true;
+      if (targetKey === "WELI MAHESA" && (descUpper.includes("WELI") || (f.refHutang && f.refHutang.toUpperCase().includes("WELI")))) return true;
+      if (targetKey === "WINGGI APRIYANTO" && (descUpper.includes("WINGGI") || (f.refHutang && f.refHutang.toUpperCase().includes("WINGGI")))) return true;
+      if (targetKey === "PAK DODO INVESTOR" && (descUpper.includes("DODO") || (f.refHutang && f.refHutang.toUpperCase().includes("DODO")))) return true;
+
+      // 5. Matched in recorded payments slot of this contact's debts
       const isPaymentMatch = contactDetailRecords.some((r) =>
         (r.payments || []).some(
           (p) =>
@@ -7406,6 +7425,7 @@ const AdminDebtScreen = ({
       type: activeTab,
       customId,
       ...formData,
+      contactName: normalizeContactName(formData.contactName || ""),
       amount: Number(formData.amount),
       recordedBy: user.name,
       timestamp: Date.now(),
@@ -7573,24 +7593,26 @@ const AdminDebtScreen = ({
     }
 
     const debtType = showGroupPaymentModal.debtType;
-    const matchingDebts = debtRecords.filter((d) => {
+    const targetNormalizedName = normalizeContactName(contactName);
+    const matchingDebts = effectiveDebtRecords.filter((d) => {
       if (d.type !== debtType || d.status === "PAID") return false;
-      const cName = (d.contactName || d.title || "").trim().toLowerCase();
-      const targetName = contactName.trim().toLowerCase();
-      return cName === targetName || cName.includes(targetName) || targetName.includes(cName);
+      const cName = normalizeContactName(d.contactName || d.title || "");
+      return cName === targetNormalizedName;
     });
 
     if (matchingDebts.length === 0) {
-      alert(`Tidak ditemukan catatan ${debtType} aktif untuk ${contactName}`);
+      alert(`Tidak ditemukan catatan ${debtType} aktif untuk ${targetNormalizedName}`);
       return;
     }
 
     // Sort by remaining sisa ASCENDING (nominal terkecil dahulu dipotong)
     const debtsWithRemaining = matchingDebts
       .map((d) => {
-        const paid = (d.payments || []).reduce((sum, p) => sum + (p.amount || 0), 0);
-        const remaining = Math.max(0, (d.amount || 0) - paid);
-        return { debt: d, remaining };
+        const sched = getScheduleForRecord(d, projects, financialRecords);
+        const paid = sched.totalPaid;
+        const initialAmt = sched.contractValue || d.amount || 0;
+        const remaining = Math.max(0, initialAmt - paid);
+        return { debt: d, remaining, initialAmt };
       })
       .filter((item) => item.remaining > 0);
 
@@ -7627,10 +7649,10 @@ const AdminDebtScreen = ({
       category: debtType === "HUTANG" ? "Pembayaran Hutang" : "Penerimaan Piutang",
       amount: paymentAmount,
       date: groupPaymentForm.date,
-      description: groupPaymentForm.note || `Pembayaran Total ${debtType} Kontak: ${contactName}`,
+      description: groupPaymentForm.note || `Pembayaran Total ${debtType} Kontak: ${targetNormalizedName}`,
       recordedBy: user.name,
       timestamp: Date.now(),
-      refHutang: `GROUP_${debtType}_${contactName}`,
+      refHutang: `GROUP_${debtType}_${targetNormalizedName}`,
     };
 
     const finId = await dbService.createDocument("financialRecords", finRecord);
@@ -7646,7 +7668,7 @@ const AdminDebtScreen = ({
         id: Math.random().toString(36).substr(2, 9),
         amount: deduct,
         date: groupPaymentForm.date,
-        note: groupPaymentForm.note || `Pembayaran Total ${debtType} (${contactName})`,
+        note: groupPaymentForm.note || `Pembayaran Total ${debtType} (${targetNormalizedName})`,
         financialRecordId: finId,
         recordedBy: user.name,
       };
@@ -7654,9 +7676,10 @@ const AdminDebtScreen = ({
       const existingPayments = item.debt.payments || [];
       const updatedPayments = [...existingPayments, newPayment];
       const newTotalPaid = updatedPayments.reduce((sum, p) => sum + p.amount, 0);
-      const newStatus = newTotalPaid >= item.debt.amount ? "PAID" : "PARTIAL";
+      const newStatus = newTotalPaid >= item.initialAmt ? "PAID" : "PARTIAL";
 
-      await dbService.updateDocument("debtRecords", item.debt.id, {
+      await dbService.setDocument("debtRecords", item.debt.id, {
+        ...item.debt,
         payments: updatedPayments,
         status: newStatus,
       });
@@ -12555,14 +12578,14 @@ const AdminFinanceScreen = ({
               }
             }
           } else if (targetDebtId.startsWith("GROUP_NAME:")) {
-            const targetContactName = targetDebtId.replace("GROUP_NAME:", "").trim();
+            const targetContactName = normalizeContactName(targetDebtId.replace("GROUP_NAME:", "").trim());
             const isHutangCategory = eachRecord.type === "OUT" || eachRecord.category === "Pembayaran Hutang" || eachRecord.category === "Reimbursement";
             const debtType = isHutangCategory ? "HUTANG" : "PIUTANG";
 
-            const matchedDebts = debtRecords.filter((d) => {
+            const matchedDebts = effectiveDebtRecords.filter((d) => {
               if (d.type !== debtType || d.status === "PAID") return false;
-              const cName = (d.contactName || "").trim().toLowerCase();
-              return cName === targetContactName.toLowerCase();
+              const cName = normalizeContactName(d.contactName || "");
+              return cName === targetContactName;
             });
 
             const getPaidSum = (d: DebtRecord) => (d.payments || []).reduce((acc, curr) => acc + curr.amount, 0);
@@ -12596,7 +12619,8 @@ const AdminFinanceScreen = ({
               const totalPaid = currentPaid + payForThis;
               const newStatus = totalPaid >= debt.amount ? "PAID" : "PARTIAL";
 
-              await dbService.updateDocument("debtRecords", debt.id, {
+              await dbService.setDocument("debtRecords", debt.id, {
+                ...debt,
                 payments: updatedPayments,
                 status: newStatus,
               });
@@ -16123,24 +16147,29 @@ const AdminFinanceScreen = ({
                           ) : (() => {
                                 const isReimburse = formData.category && formData.category.toLowerCase().includes("reimburse");
                                 const isHutangCat = formData.category === "Pembayaran Hutang" || isReimburse || formData.category === "Talangan";
-                                if (isHutangCat) {
-                                  const activeDebts = debtRecords.filter((d) => d.type === "HUTANG" && d.status !== "PAID");
+                                 if (isHutangCat) {
+                                  const activeDebts = effectiveDebtRecords.filter((d) => d.type === "HUTANG" && d.status !== "PAID");
                                   const groupsMap: { [key: string]: { name: string; items: DebtRecord[]; totalRemaining: number } } = {};
                                   activeDebts.forEach((d) => {
-                                    const cName = (d.contactName || d.title || "Lainnya").trim();
+                                    const cName = normalizeContactName(d.contactName || d.title || "Lainnya");
                                     const key = cName.toUpperCase();
                                     if (!groupsMap[key]) {
                                       groupsMap[key] = { name: cName, items: [], totalRemaining: 0 };
                                     }
-                                    const paid = (d.payments || []).reduce((a, b) => a + b.amount, 0);
+                                    const sched = getScheduleForRecord(d, projects, financialRecords);
+                                    const paid = sched.totalPaid;
+                                    const initialAmt = sched.contractValue || d.amount || 0;
+                                    const rem = Math.max(0, initialAmt - paid);
                                     groupsMap[key].items.push(d);
-                                    groupsMap[key].totalRemaining += Math.max(0, d.amount - paid);
+                                    groupsMap[key].totalRemaining += rem;
                                   });
-                                  return Object.values(groupsMap).map((grp) => (
-                                    <option key={grp.name} value={`GROUP_NAME:${grp.name}`}>
-                                      👤 {grp.name.toUpperCase()} (Total Sisa: {formatCurrencyIDR(grp.totalRemaining)})
-                                    </option>
-                                  ));
+                                  return Object.values(groupsMap)
+                                    .filter((grp) => grp.totalRemaining > 0)
+                                    .map((grp) => (
+                                      <option key={grp.name} value={`GROUP_NAME:${grp.name}`}>
+                                        👤 {grp.name.toUpperCase()} (Total Sisa: {formatCurrencyIDR(grp.totalRemaining)})
+                                      </option>
+                                    ));
                                 } else {
                                   const activeDebts = effectiveDebtRecords.filter((d) => d.type === "PIUTANG" && d.status !== "PAID");
                                   return activeDebts.map((d) => {
@@ -17757,22 +17786,26 @@ const AdminFinanceScreen = ({
                                       </option>
                                       {editFormData.category && editFormData.category.toLowerCase().includes("reimburse") ? (
                                         (() => {
-                                          const activeDebts = debtRecords.filter((d) => d.type === "HUTANG" && d.status !== "PAID");
+                                          const activeDebts = effectiveDebtRecords.filter((d) => d.type === "HUTANG" && d.status !== "PAID");
                                           const groupsMap: { [key: string]: { name: string; totalRemaining: number } } = {};
                                           activeDebts.forEach((d) => {
-                                            const cName = (d.contactName || d.title || "Lainnya").trim();
+                                            const cName = normalizeContactName(d.contactName || d.title || "Lainnya");
                                             const key = cName.toUpperCase();
                                             if (!groupsMap[key]) {
                                               groupsMap[key] = { name: cName, totalRemaining: 0 };
                                             }
-                                            const paid = (d.payments || []).reduce((a, b) => a + b.amount, 0);
-                                            groupsMap[key].totalRemaining += Math.max(0, d.amount - paid);
+                                            const sched = getScheduleForRecord(d, projects, financialRecords);
+                                            const paid = sched.totalPaid;
+                                            const initialAmt = sched.contractValue || d.amount || 0;
+                                            groupsMap[key].totalRemaining += Math.max(0, initialAmt - paid);
                                           });
-                                          return Object.values(groupsMap).map((grp) => (
-                                            <option key={grp.name} value={`GROUP_NAME:${grp.name}`}>
-                                              👤 {grp.name.toUpperCase()} (Total Sisa: {formatCurrencyIDR(grp.totalRemaining)})
-                                            </option>
-                                          ));
+                                          return Object.values(groupsMap)
+                                            .filter((grp) => grp.totalRemaining > 0)
+                                            .map((grp) => (
+                                              <option key={grp.name} value={`GROUP_NAME:${grp.name}`}>
+                                                👤 {grp.name.toUpperCase()} (Total Sisa: {formatCurrencyIDR(grp.totalRemaining)})
+                                              </option>
+                                            ));
                                         })()
                                       ) : (
                                         debtRecords
