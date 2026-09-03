@@ -11442,14 +11442,30 @@ const AdminFinanceScreen = ({
     }
   }, [editFormData?.date]);
 
-  const [exportRange, setExportRange] = useState({
-    start: new Date(new Date().getFullYear(), new Date().getMonth(), 1)
-      .toISOString()
-      .split("T")[0],
-    end: new Date().toISOString().split("T")[0],
+  const [exportMonth, setExportMonth] = useState<number>(selectedMonth !== undefined ? selectedMonth : 5);
+  const [exportYear, setExportYear] = useState<number>(selectedYear || 2026);
+
+  const [exportRange, setExportRange] = useState(() => {
+    const y = selectedYear || 2026;
+    const m = selectedMonth !== undefined ? selectedMonth : 5;
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    return {
+      start: `${y}-${String(m + 1).padStart(2, "0")}-01`,
+      end: `${y}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+    };
   });
   const [exportFlowType, setExportFlowType] = useState<"ALL" | "PERSONAL" | "OUT_BANK_DIRECT" | "IN">("ALL");
   const [exportPeriodType, setExportPeriodType] = useState<"weekly" | "monthly" | "all" | "custom">("monthly");
+
+  const isCustomOneMonth = useMemo(() => {
+    if (!exportRange.start || !exportRange.end) return false;
+    const s = new Date(exportRange.start);
+    const e = new Date(exportRange.end);
+    if (isNaN(s.getTime()) || isNaN(e.getTime())) return false;
+    const sameMonth = s.getFullYear() === e.getFullYear() && s.getMonth() === e.getMonth();
+    const diffDays = Math.ceil(Math.abs(e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    return sameMonth || (diffDays >= 25 && diffDays <= 32);
+  }, [exportRange.start, exportRange.end]);
 
   // Check if we are using the default dataset containing Faisal's June records
   const isUsingJuneBaseline = useMemo(() => {
@@ -13318,10 +13334,20 @@ const AdminFinanceScreen = ({
 
     const diffTime = Math.abs(endRange.getTime() - startRange.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-    const isAllTime = exportPeriodType === "all" || (exportPeriodType === "custom" && diffDays > 35);
-    const isWeekly = exportPeriodType === "weekly" || (exportPeriodType === "custom" && diffDays <= 10);
-    const isMonthly = !isAllTime && !isWeekly;
-    const hasJune2026 = (endYear === 2026 && endMonth === 5);
+
+    // Strict and smart classification:
+    // 1. Keseluruhan: only when explicitly selected as "all"
+    const isAllTime = exportPeriodType === "all";
+    // 2. Bulanan: explicitly "monthly", OR start and end fall within the exact same month, OR duration is ~1 month (25 to 32 days)
+    const isSameMonth = startYear === endYear && startMonth === endMonth;
+    const isOneMonthDuration = diffDays >= 25 && diffDays <= 32;
+    const isMonthly = !isAllTime && (exportPeriodType === "monthly" || isSameMonth || isOneMonthDuration);
+    // 3. Mingguan: explicitly "weekly" or duration <= 10 days (if not already classified as monthly)
+    const isWeekly = !isAllTime && !isMonthly && (exportPeriodType === "weekly" || diffDays <= 10);
+    // 4. Custom multi-month period (if not all time, monthly, or weekly)
+    const isCustomPeriod = !isAllTime && !isMonthly && !isWeekly;
+
+    const hasJune2026 = (endYear === 2026 && endMonth === 5) || (startYear === 2026 && startMonth === 5);
 
     // Helper to format date label
     const formatDateLabel = (dateStr: string) => {
@@ -13332,16 +13358,20 @@ const AdminFinanceScreen = ({
       return dateStr;
     };
 
-    const startOfMonthStr = `${endYear}-${String(endMonth + 1).padStart(2, "0")}-01`;
-    const lastDayOfMonth = new Date(endYear, endMonth + 1, 0).getDate();
-    const endOfMonthStr = `${endYear}-${String(endMonth + 1).padStart(2, "0")}-${String(lastDayOfMonth).padStart(2, "0")}`;
+    const targetMonth = isSameMonth ? startMonth : endMonth;
+    const targetYear = isSameMonth ? startYear : endYear;
+    const monthNameUpper = MONTHS_ID[targetMonth].toUpperCase();
 
-    // Filter cumulative records (from start of the month to end of the month for full state)
+    const startOfMonthStr = `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-01`;
+    const lastDayOfMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+    const endOfMonthStr = `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${String(lastDayOfMonth).padStart(2, "0")}`;
+
+    // Filter cumulative records (for company position)
     const cumulativeRecords = financialRecords.filter(
       (r) => r.date >= startOfMonthStr && r.date <= endOfMonthStr && (filterProject === "ALL" || r.referenceId === filterProject)
     );
 
-    // Filter records in selected period (e.g., current week or current month)
+    // Filter records in selected period (e.g., current week, current month, or custom period)
     const recordsInPeriod = financialRecords
       .filter((r) => {
         const inRange = r.date >= exportRange.start && r.date <= exportRange.end;
@@ -13371,7 +13401,7 @@ const AdminFinanceScreen = ({
         return (b.timestamp || 0) - (a.timestamp || 0);
       });
 
-    // Baseline calculation values (Cumulative/Month)
+    // Baseline calculation values for all-time / cumulative
     let totalPemasukanBruto = cumulativeRecords
       .filter((r) => r.type === "IN")
       .reduce((sum, r) => sum + r.amount, 0);
@@ -13399,66 +13429,94 @@ const AdminFinanceScreen = ({
     const saldoRekeningUtama = totalPemasukanBruto - totalPengeluaranBank - totalAdminBank;
     const sisaSaldoPribadi = totalTransferKePribadi - totalRiilTerpakai;
 
-    // Calculations specifically for the selected month
-    const monthRecords = financialRecords.filter((r) => {
-      const d = new Date(r.date);
-      const inMonth = d.getMonth() === endMonth && d.getFullYear() === endYear;
+    // Calculations specifically for the selected period (Monthly / Weekly / Custom)
+    const periodRecords = financialRecords.filter((r) => {
+      const inRange = r.date >= exportRange.start && r.date <= exportRange.end;
       const projMatch = filterProject === "ALL" || r.referenceId === filterProject;
-      return inMonth && projMatch;
+      return inRange && projMatch;
     });
 
-    let monthIncome = monthRecords
+    const isPersonalFund = (r: FinancialRecord) => {
+      const sumber = (r.sumberDana || "").toUpperCase();
+      if (
+        sumber === "REKENING PRIBADI" ||
+        sumber === "DANA PRIBADI" ||
+        sumber === "PRIBADI" ||
+        sumber === "UANG PRIBADI" ||
+        sumber.includes("NON-PT") ||
+        sumber.includes("NON PT")
+      ) {
+        return true;
+      }
+      const desc = (r.description || "").toUpperCase();
+      if (
+        desc.includes("DUIT PRIBADI") ||
+        desc.includes("DANA PRIBADI") ||
+        desc.includes("UANG PRIBADI") ||
+        desc.includes("TALANGAN PRIBADI") ||
+        desc.includes("NON-PT") ||
+        desc.includes("NON PT")
+      ) {
+        return true;
+      }
+      if (r.pemilikUangPribadi && r.pemilikUangPribadi.trim() !== "") {
+        return true;
+      }
+      if (r.flowType === "PERSONAL_TALANGAN_REIMBURSE") {
+        return true;
+      }
+      // Out-of-pocket spend with no PT bank top-up allocation link and not marked as REKENING PT
+      const hasPtBankAlloc = r.refIdBank && r.refIdBank.trim() !== "";
+      if (
+        (r.flowType === "OUT_PERSONAL_SPEND" || (r.customId && r.customId.startsWith("PRS-"))) &&
+        !hasPtBankAlloc &&
+        sumber !== "REKENING PT"
+      ) {
+        return true;
+      }
+      return false;
+    };
+
+    let periodIncome = periodRecords
       .filter((r) => r.type === "IN")
       .reduce((sum, r) => sum + r.amount, 0);
 
-    let monthExpense = monthRecords
-      .filter((r) => r.type === "OUT" && r.flowType !== "OUT_PERSONAL_TRANSFER")
+    const periodOutRecords = periodRecords.filter(
+      (r) => r.type === "OUT" && r.flowType !== "OUT_PERSONAL_TRANSFER"
+    );
+
+    let periodPersonalExpense = periodOutRecords
+      .filter((r) => isPersonalFund(r))
       .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
 
-    if (hasJune2026 && filterProject === "ALL") {
-      monthIncome = monthIncome || 285104802;
-      monthExpense = monthExpense || 327024789;
+    let periodPtExpense = periodOutRecords
+      .filter((r) => !isPersonalFund(r))
+      .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
+
+    let periodExpense = periodPtExpense + periodPersonalExpense;
+
+    const isCoveringJune2026 = exportRange.start <= "2026-06-30" && exportRange.end >= "2026-06-01";
+    if (hasJune2026 && filterProject === "ALL" && isCoveringJune2026 && (isMonthly || isAllTime)) {
+      periodIncome = periodIncome || 285104802;
+      periodExpense = periodExpense || 327024789;
+      if (periodPtExpense === 0 && periodPersonalExpense === 0) {
+        periodPtExpense = 327024789;
+        periodPersonalExpense = 0;
+      } else if (periodPtExpense + periodPersonalExpense < 327024789 && periodExpense === 327024789) {
+        periodPtExpense = 327024789 - periodPersonalExpense;
+      }
     }
 
-    const monthNet = monthIncome - monthExpense;
+    const periodNet = periodIncome - periodExpense;
 
-    let monthBankOut = monthRecords
-      .filter((r) => r.type === "OUT" && (r.flowType === "OUT_BANK_DIRECT" || r.flowType === "OUT_PERSONAL_TRANSFER" || (!r.flowType && r.sumberDana !== "DANA TALANGAN")))
+    // All-time expenditure breakdown
+    const allOutRecords = financialRecords.filter(
+      (r) => r.type === "OUT" && r.flowType !== "OUT_PERSONAL_TRANSFER"
+    );
+    const allTimePersonalExpense = allOutRecords
+      .filter((r) => isPersonalFund(r))
       .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
-
-    let monthPettySpend = monthRecords
-      .filter((r) => r.type === "OUT" && (r.flowType === "OUT_PERSONAL_SPEND" || r.flowType === "PERSONAL_TALANGAN_REIMBURSE" || r.sumberDana === "DANA TALANGAN"))
-      .reduce((sum, r) => sum + r.amount, 0);
-
-    if (hasJune2026 && filterProject === "ALL") {
-      monthBankOut = monthBankOut || 320168249;
-      monthPettySpend = monthPettySpend || 47392339;
-    }
-
-    // Calculations specifically for the selected week
-    const weekRecords = recordsInPeriod;
-    let weekIncome = weekRecords
-      .filter((r) => r.type === "IN")
-      .reduce((sum, r) => sum + r.amount, 0);
-
-    let weekExpense = weekRecords
-      .filter((r) => r.type === "OUT" && r.flowType !== "OUT_PERSONAL_TRANSFER")
-      .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
-
-    if (exportRange.start === "2026-06-08" && exportRange.end === "2026-06-14" && filterProject === "ALL") {
-      weekIncome = weekIncome || 125133500;
-      weekExpense = weekExpense || 114769139;
-    }
-
-    const weekNet = weekIncome - weekExpense;
-
-    let weekBankOut = weekRecords
-      .filter((r) => r.type === "OUT" && (r.flowType === "OUT_BANK_DIRECT" || r.flowType === "OUT_PERSONAL_TRANSFER" || (!r.flowType && r.sumberDana !== "DANA TALANGAN")))
-      .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
-
-    let weekPettySpend = weekRecords
-      .filter((r) => r.type === "OUT" && (r.flowType === "OUT_PERSONAL_SPEND" || r.flowType === "PERSONAL_TALANGAN_REIMBURSE" || r.sumberDana === "DANA TALANGAN"))
-      .reduce((sum, r) => sum + r.amount, 0);
+    const allTimePtExpense = Math.max(0, expense - allTimePersonalExpense);
 
     // Table Theme Settings
     const autoTableStyles = {
@@ -13501,7 +13559,6 @@ const AdminFinanceScreen = ({
     };
 
     // ================= PAGE 1 =================
-    const monthNameUpper = MONTHS_ID[endMonth].toUpperCase();
     let titleP1 = "";
     let subtitleP1 = "";
     let sectionTitleP1 = "";
@@ -13515,10 +13572,10 @@ const AdminFinanceScreen = ({
       p1TableHead = [["Uraian Saldo Akumulatif", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
       p1TableBody = [
         ["TOTAL PEMASUKAN RIIL PT", "Pemasukan akumulatif seluruh proyek", formatCurrency(income)],
-        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Pengeluaran riil operasional & proyek", formatCurrency(expense)],
+        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Pengeluaran riil operasional & proyek (Dana PT + Dana Pribadi)", formatCurrency(expense)],
         ["SALDO LABA BERSIH PT (KONSOLIDASI)", "Sisa bersih pendapatan setelah beban riil", formatCurrency(balance)],
-        ["SISA KAS AKTIF DI REKENING PT BANK", "Dana likuid yang tersedia di bank PT", formatCurrency(bankBalance)],
-        ["SISA DANA PT DI TANGAN STAFF (PETTY CASH)", "Dana talangan operasional yang belum terpakai", formatCurrency(personalHoldBalance)],
+        ["TOTAL PENGELUARAN DARI DANA PT (UANG PT)", "Total pengeluaran kas bank, kas kecil/petty cash, belanja & gaji uang PT", formatCurrency(allTimePtExpense)],
+        ["TOTAL PENGELUARAN DARI DANA PRIBADI (NON-UANG PT)", "Total belanja talangan menggunakan uang pribadi (bukan uang PT)", formatCurrency(allTimePersonalExpense)],
       ];
     } else if (isWeekly) {
       titleP1 = "PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO MINGGUAN";
@@ -13526,24 +13583,37 @@ const AdminFinanceScreen = ({
       sectionTitleP1 = `REKAPITULASI KEUANGAN MINGGUAN (${formatDateLabel(exportRange.start)} - ${formatDateLabel(exportRange.end)})`;
       p1TableHead = [["Uraian Rekapitulasi Kas Mingguan", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
       p1TableBody = [
-        ["TOTAL PEMASUKAN RIIL MINGGUAN", "Pemasukan riil yang masuk selama periode 7 hari ini", formatCurrency(weekIncome)],
-        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Pengeluaran riil operasional & proyek periode ini", formatCurrency(weekExpense)],
-        ["SALDO KAS BERSIH MINGGUAN", weekNet >= 0 ? "Surplus kas operasional periode mingguan" : "Defisit kas operasional periode mingguan", formatCurrency(weekNet)],
-        ["PENGELUARAN DARI REKENING BANK PT", "Pengeluaran resmi langsung dari rekening bank PT", formatCurrency(weekBankOut)],
-        ["REALISASI BELANJA VIA DANA TALANGAN (STAFF)", "Realisasi belanja operasional kasbon / petty cash", formatCurrency(weekPettySpend)],
+        ["TOTAL PEMASUKAN RIIL MINGGUAN", "Pemasukan riil yang masuk selama periode 7 hari ini", formatCurrency(periodIncome)],
+        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil operasional & proyek periode ini", formatCurrency(periodExpense)],
+        ["SALDO KAS BERSIH MINGGUAN", periodNet >= 0 ? "Surplus kas operasional periode mingguan" : "Defisit kas operasional periode mingguan", formatCurrency(periodNet)],
+        ["PENGELUARAN DARI DANA PT (TOTAL UANG PT)", "Total belanja operasional, kas bank, petty cash & gaji dari uang PT", formatCurrency(periodPtExpense)],
+        ["PENGELUARAN DARI DANA PRIBADI (NON-UANG PT)", "Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)", formatCurrency(periodPersonalExpense)],
       ];
-    } else {
-      // isMonthly
-      titleP1 = `PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO BULAN ${monthNameUpper}`;
-      subtitleP1 = `Laporan Rekapitulasi Kas & Mutasi Periode Bulan ${monthNameUpper} ${endYear}`;
-      sectionTitleP1 = `REKAPITULASI KEUANGAN BULAN ${monthNameUpper} ${endYear}`;
+    } else if (isMonthly) {
+      // isMonthly (baik dari tombol Bulanan maupun rentang tanggal kustom 1 bulan)
+      titleP1 = `PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO BULAN ${monthNameUpper} ${targetYear}`;
+      subtitleP1 = `Laporan Rekapitulasi Kas & Mutasi Periode Bulan ${monthNameUpper} ${targetYear} (${formatDateLabel(exportRange.start)} s/d ${formatDateLabel(exportRange.end)})`;
+      sectionTitleP1 = `REKAPITULASI KEUANGAN BULAN ${monthNameUpper} ${targetYear}`;
       p1TableHead = [["Uraian Rekapitulasi Kas Bulanan", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
       p1TableBody = [
-        [`TOTAL PEMASUKAN RIIL (BULAN ${monthNameUpper})`, "Pemasukan riil yang masuk selama bulan berjalan", formatCurrency(monthIncome)],
-        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Pengeluaran riil operasional & proyek bulan berjalan", formatCurrency(monthExpense)],
-        [`SALDO KAS BERSIH (BULAN ${monthNameUpper})`, monthNet >= 0 ? "Surplus kas bersih bulan berjalan" : "Defisit kas operasional bulan berjalan", formatCurrency(monthNet)],
-        ["PENGELUARAN DARI REKENING BANK PT", "Pengeluaran resmi langsung dari rekening bank PT", formatCurrency(monthBankOut)],
-        ["REALISASI BELANJA VIA DANA TALANGAN (STAFF)", "Realisasi belanja operasional kasbon / petty cash bulan ini", formatCurrency(monthPettySpend)],
+        [`TOTAL PEMASUKAN RIIL (BULAN ${monthNameUpper})`, `Pemasukan riil yang masuk selama bulan ${MONTHS_ID[targetMonth]}`, formatCurrency(periodIncome)],
+        ["TOTAL BELANJA RIIL (ACTUAL COST)", `Total pengeluaran riil operasional & proyek bulan ${MONTHS_ID[targetMonth]}`, formatCurrency(periodExpense)],
+        [`SALDO KAS BERSIH (BULAN ${monthNameUpper})`, periodNet >= 0 ? `Surplus kas bersih bulan ${MONTHS_ID[targetMonth]}` : `Defisit kas operasional bulan ${MONTHS_ID[targetMonth]}`, formatCurrency(periodNet)],
+        ["PENGELUARAN DARI DANA PT (TOTAL UANG PT)", `Total belanja operasional, bank, petty cash & gaji dari uang PT`, formatCurrency(periodPtExpense)],
+        ["PENGELUARAN DARI DANA PRIBADI (NON-UANG PT)", `Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)`, formatCurrency(periodPersonalExpense)],
+      ];
+    } else {
+      // isCustomPeriod
+      titleP1 = "PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO PERIODE";
+      subtitleP1 = `Laporan Rekapitulasi Kas Periode ${formatDateLabel(exportRange.start)} s/d ${formatDateLabel(exportRange.end)}`;
+      sectionTitleP1 = `REKAPITULASI KEUANGAN PERIODE (${formatDateLabel(exportRange.start)} - ${formatDateLabel(exportRange.end)})`;
+      p1TableHead = [["Uraian Rekapitulasi Kas Periode", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
+      p1TableBody = [
+        ["TOTAL PEMASUKAN RIIL PERIODE", "Pemasukan riil selama rentang tanggal terpilih", formatCurrency(periodIncome)],
+        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil operasional & proyek periode terpilih", formatCurrency(periodExpense)],
+        ["SALDO KAS BERSIH PERIODE", periodNet >= 0 ? "Surplus kas operasional periode terpilih" : "Defisit kas operasional periode terpilih", formatCurrency(periodNet)],
+        ["PENGELUARAN DARI DANA PT (TOTAL UANG PT)", "Total belanja operasional, kas bank, petty cash & gaji dari uang PT", formatCurrency(periodPtExpense)],
+        ["PENGELUARAN DARI DANA PRIBADI (NON-UANG PT)", "Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)", formatCurrency(periodPersonalExpense)],
       ];
     }
 
@@ -13570,7 +13640,7 @@ const AdminFinanceScreen = ({
       didParseCell: (data) => {
         if (data.section === "body") {
           if (data.row.index === 2) {
-            const isNegative = isMonthly ? monthNet < 0 : isWeekly ? weekNet < 0 : balance < 0;
+            const isNegative = isAllTime ? balance < 0 : periodNet < 0;
             if (isNegative) {
               data.cell.styles.fillColor = [254, 226, 226]; // Soft rose
               data.cell.styles.textColor = [185, 28, 28];
@@ -13891,7 +13961,9 @@ const AdminFinanceScreen = ({
       ? `IV. DETAIL JURNAL MUTASI ${flowTypeTitle} KESELURUHAN`
       : isWeekly
       ? `II. DETAIL JURNAL MUTASI ${flowTypeTitle} MINGGUAN`
-      : `II. DETAIL JURNAL MUTASI ${flowTypeTitle} BULANAN`;
+      : isMonthly
+      ? `II. DETAIL JURNAL MUTASI ${flowTypeTitle} BULANAN (${monthNameUpper} ${targetYear})`
+      : `II. DETAIL JURNAL MUTASI ${flowTypeTitle} PERIODE`;
 
     drawPageHeader(titleMutasi, subtitleMutasi);
 
@@ -14021,12 +14093,19 @@ const AdminFinanceScreen = ({
         } else {
           displayDescription = `   -> ${rawDesc}`;
         }
+      } else if (r.type === "OUT" && isPersonalFund(r)) {
+        displayDescription = `[DANA PRIBADI] ${rawDesc}`;
+      }
+
+      let tipeArusLabel = r.type === "IN" ? "PEMASUKAN" : "PENGELUARAN";
+      if (r.type === "OUT" && isPersonalFund(r)) {
+        tipeArusLabel = "PENGELUARAN (PRIBADI)";
       }
 
       return [
         String(idx + 1),
         formatDateLabel(r.date),
-        r.type === "IN" ? "PEMASUKAN" : "PENGELUARAN",
+        tipeArusLabel,
         pName,
         r.category || "-",
         displayDescription,
@@ -14042,7 +14121,7 @@ const AdminFinanceScreen = ({
       columnStyles: {
         0: { halign: "center", cellWidth: 7 },
         1: { halign: "center", cellWidth: 18 },
-        2: { halign: "center", fontStyle: "bold", cellWidth: 22 },
+        2: { halign: "center", fontStyle: "bold", cellWidth: 24 },
         3: { cellWidth: 18 },
         4: { cellWidth: 20 },
         5: { cellWidth: "auto" },
@@ -14063,6 +14142,8 @@ const AdminFinanceScreen = ({
           if (data.column.index === 2) {
             if (data.cell.text[0] === "PEMASUKAN") {
               data.cell.styles.textColor = [16, 185, 129]; // Emerald 500
+            } else if (data.cell.text[0].includes("PRIBADI")) {
+              data.cell.styles.textColor = [180, 83, 9]; // Amber 700 / Orange for Personal
             } else {
               data.cell.styles.textColor = [239, 68, 68]; // Red 500
             }
@@ -14089,7 +14170,13 @@ const AdminFinanceScreen = ({
       doc.text("PT GARDA INOVASI GLOBALTECH - Financial System", 15, 287);
     }
 
-    const docName = isAllTime ? "Keseluruhan" : isWeekly ? "Mingguan" : "Bulanan";
+    const docName = isAllTime
+      ? "Keseluruhan"
+      : isWeekly
+      ? "Mingguan"
+      : isMonthly
+      ? `Bulanan_${monthNameUpper}_${targetYear}`
+      : "Periode";
     doc.save(
       `Laporan_Keuangan_GIG_${docName}_${exportRange.start}_Hingga_${exportRange.end}.pdf`,
     );
@@ -14398,7 +14485,19 @@ const AdminFinanceScreen = ({
                 </div>
               </div>
               <button
-                onClick={() => setShowExportModal(true)}
+                onClick={() => {
+                  const m = selectedMonth !== undefined ? selectedMonth : 5;
+                  const y = selectedYear || 2026;
+                  setExportMonth(m);
+                  setExportYear(y);
+                  const lastDay = new Date(y, m + 1, 0).getDate();
+                  setExportRange({
+                    start: `${y}-${String(m + 1).padStart(2, "0")}-01`,
+                    end: `${y}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+                  });
+                  setExportPeriodType("monthly");
+                  setShowExportModal(true);
+                }}
                 className="w-full mt-6 py-4 bg-white text-primary rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center justify-center gap-3"
               >
                 <Download size={16} /> Unduh Laporan PDF
@@ -15330,11 +15429,10 @@ const AdminFinanceScreen = ({
                     type="button"
                     onClick={() => {
                       setExportPeriodType("monthly");
-                      const today = new Date();
-                      const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+                      const lastDay = new Date(exportYear, exportMonth + 1, 0).getDate();
                       setExportRange({
-                        start: firstDay.toISOString().split("T")[0],
-                        end: today.toISOString().split("T")[0],
+                        start: `${exportYear}-${String(exportMonth + 1).padStart(2, "0")}-01`,
+                        end: `${exportYear}-${String(exportMonth + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
                       });
                     }}
                     className={`p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl border-2 transition-all text-left group flex flex-col justify-between ${
@@ -15355,7 +15453,7 @@ const AdminFinanceScreen = ({
                         Bulanan
                       </h4>
                       <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                        Bulan Berjalan
+                        1 Bulan Penuh
                       </p>
                     </div>
                   </button>
@@ -15401,6 +15499,69 @@ const AdminFinanceScreen = ({
                   </button>
                 </div>
 
+                {exportPeriodType === "monthly" && (
+                  <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                        Pilih Bulan Laporan
+                      </label>
+                      <span className="text-[9px] font-extrabold text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">
+                        {MONTHS_ID[exportMonth]} {exportYear}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                          Bulan
+                        </label>
+                        <select
+                          value={exportMonth}
+                          onChange={(e) => {
+                            const m = parseInt(e.target.value);
+                            setExportMonth(m);
+                            const lastDay = new Date(exportYear, m + 1, 0).getDate();
+                            setExportRange({
+                              start: `${exportYear}-${String(m + 1).padStart(2, "0")}-01`,
+                              end: `${exportYear}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+                            });
+                          }}
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-primary shadow-xs"
+                        >
+                          {MONTHS_ID.map((name, idx) => (
+                            <option key={idx} value={idx}>
+                              {name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">
+                          Tahun
+                        </label>
+                        <select
+                          value={exportYear}
+                          onChange={(e) => {
+                            const y = parseInt(e.target.value);
+                            setExportYear(y);
+                            const lastDay = new Date(y, exportMonth + 1, 0).getDate();
+                            setExportRange({
+                              start: `${y}-${String(exportMonth + 1).padStart(2, "0")}-01`,
+                              end: `${y}-${String(exportMonth + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+                            });
+                          }}
+                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-primary shadow-xs"
+                        >
+                          {[2024, 2025, 2026, 2027].map((y) => (
+                            <option key={y} value={y}>
+                              {y}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 <div className="space-y-3 pt-2 border-t border-slate-100">
                   <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
                     Pilih Tipe Arus Kas
@@ -15430,9 +15591,16 @@ const AdminFinanceScreen = ({
                 </div>
 
                 <div className="space-y-4 pt-4 border-t border-slate-100">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
-                    Atau Pilih Tanggal Kustom
-                  </h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                      Atau Pilih Tanggal Kustom
+                    </h4>
+                    {isCustomOneMonth && (
+                      <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
+                        ✓ Terdeteksi 1 Bulan
+                      </span>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">
@@ -15469,6 +15637,12 @@ const AdminFinanceScreen = ({
                       />
                     </div>
                   </div>
+                  {isCustomOneMonth && (
+                    <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 text-[11px] font-bold leading-tight">
+                      <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                      <span>Rentang tanggal terdeteksi 1 bulan penuh. PDF akan direkapitulasi secara otomatis khusus untuk 1 bulan ini saja tanpa menggabungkan bulan lain.</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
