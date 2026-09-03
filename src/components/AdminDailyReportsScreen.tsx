@@ -67,6 +67,19 @@ export function AdminDailyReportsScreen({
   const [previewReport, setPreviewReport] = useState<DailyReport | null>(null);
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState<"projects" | "all-reports">("projects");
+  const [isLogoModalOpen, setIsLogoModalOpen] = useState(false);
+  const [logoTargetProject, setLogoTargetProject] = useState<string>("all");
+  const [contractorLogoState, setContractorLogoState] = useState<string>(() => {
+    return (
+      localStorage.getItem("custom_contractor_logo") ||
+      localStorage.getItem("custom_logo_image") ||
+      localStorage.getItem("company_logo") ||
+      ""
+    );
+  });
+  const [clientLogoState, setClientLogoState] = useState<string>(() => {
+    return localStorage.getItem("custom_client_logo") || "";
+  });
 
   // Group daily reports by project ID or project name
   const reportsByProject = useMemo(() => {
@@ -242,10 +255,19 @@ export function AdminDailyReportsScreen({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setIsLogoModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-3 bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 hover:text-slate-900 rounded-2xl font-bold text-sm shadow-xs active:scale-[0.98] transition-all cursor-pointer"
+          >
+            <ImageIcon size={18} className="text-indigo-600" />
+            <span>Kelola Logo Kop Surat</span>
+          </button>
+
           {onOpenCreateReport ? (
             <button
               onClick={() => onOpenCreateReport(selectedProjectId || undefined)}
-              className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-2xl font-bold text-sm shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+              className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-2xl font-bold text-sm shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
             >
               <Plus size={18} />
               <span>Buat Laporan Harian</span>
@@ -253,7 +275,7 @@ export function AdminDailyReportsScreen({
           ) : (
             <button
               onClick={() => onNavigate("laporan-lapangan")}
-              className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-2xl font-bold text-sm shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+              className="flex items-center gap-2 px-5 py-3 bg-primary text-white rounded-2xl font-bold text-sm shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
             >
               <Plus size={18} />
               <span>Buat Laporan Harian</span>
@@ -1085,6 +1107,230 @@ export function AdminDailyReportsScreen({
               >
                 <Download size={16} />
                 <span>Download PDF Laporan Ini</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: KELOLA LOGO KOP SURAT (ADMIN) ================= */}
+      {isLogoModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+          <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 border border-slate-100 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="p-6 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <ImageIcon size={20} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 tracking-tight">
+                    Kelola Logo Kop Surat Laporan
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium">
+                    Atur Logo Vendor (Kiri) dan Logo Klien (Kanan) untuk cetak PDF Laporan Harian
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsLogoModalOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto space-y-6">
+              {/* 1. Logo Vendor / Kontraktor */}
+              <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[9px] font-black rounded uppercase">
+                      Kiri Kop Surat
+                    </span>
+                    <h4 className="text-sm font-black text-slate-800">
+                      1. Logo Perusahaan / Vendor (Kontraktor)
+                    </h4>
+                  </div>
+                  {contractorLogoState && (
+                    <button
+                      onClick={() => {
+                        localStorage.removeItem("custom_contractor_logo");
+                        localStorage.removeItem("custom_logo_image");
+                        localStorage.removeItem("company_logo");
+                        setContractorLogoState("");
+                      }}
+                      className="text-xs font-bold text-rose-500 hover:text-rose-700 hover:underline cursor-pointer"
+                    >
+                      Hapus Logo
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-4 rounded-xl border border-slate-200">
+                  <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
+                    {contractorLogoState ? (
+                      <img
+                        src={contractorLogoState}
+                        alt="Logo Vendor"
+                        className="w-full h-full object-contain p-1"
+                      />
+                    ) : (
+                      <span className="text-[10px] font-bold text-slate-400 text-center px-1">
+                        Belum ada logo
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1 text-center sm:text-left space-y-2">
+                    <p className="text-xs text-slate-600 font-medium">
+                      Logo ini otomatis muncul di sudut kiri atas setiap cetak PDF Laporan Harian.
+                    </p>
+                    <label className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold cursor-pointer transition-all">
+                      <UploadCloud size={16} />
+                      <span>{contractorLogoState ? "Ganti Logo Vendor" : "Unggah Logo Vendor"}</span>
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onloadend = () => {
+                              const base64 = reader.result as string;
+                              localStorage.setItem("custom_contractor_logo", base64);
+                              localStorage.setItem("custom_logo_image", base64);
+                              localStorage.setItem("company_logo", base64);
+                              setContractorLogoState(base64);
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. Logo Klien / Pemilik Proyek */}
+              <div className="p-5 rounded-2xl border border-slate-200 bg-slate-50/50 space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-black rounded uppercase">
+                      Kanan Kop Surat
+                    </span>
+                    <h4 className="text-sm font-black text-slate-800">
+                      2. Logo Klien / Pemilik Proyek (Owner)
+                    </h4>
+                  </div>
+                  {clientLogoState && (
+                    <button
+                      onClick={() => {
+                        if (logoTargetProject === "all") {
+                          localStorage.removeItem("custom_client_logo");
+                        } else {
+                          localStorage.removeItem(`custom_client_logo_${logoTargetProject}`);
+                        }
+                        setClientLogoState("");
+                      }}
+                      className="text-xs font-bold text-rose-500 hover:text-rose-700 hover:underline cursor-pointer"
+                    >
+                      Hapus Logo
+                    </button>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">
+                      Pilih Lingkup Proyek untuk Logo Klien
+                    </label>
+                    <select
+                      className="input-field text-xs font-bold w-full bg-white"
+                      value={logoTargetProject}
+                      onChange={(e) => {
+                        const target = e.target.value;
+                        setLogoTargetProject(target);
+                        if (target === "all") {
+                          setClientLogoState(localStorage.getItem("custom_client_logo") || "");
+                        } else {
+                          const specific =
+                            localStorage.getItem(`custom_client_logo_${target}`) ||
+                            localStorage.getItem("custom_client_logo") ||
+                            "";
+                          setClientLogoState(specific);
+                        }
+                      }}
+                    >
+                      <option value="all">Default (Semua Proyek yang Belum Memiliki Logo Khusus)</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          Khusus Proyek: {p.name} ({p.client || "Owner"})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-4 rounded-xl border border-slate-200">
+                    <div className="w-20 h-20 rounded-xl border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center overflow-hidden shrink-0">
+                      {clientLogoState ? (
+                        <img
+                          src={clientLogoState}
+                          alt="Logo Klien"
+                          className="w-full h-full object-contain p-1"
+                        />
+                      ) : (
+                        <span className="text-[10px] font-bold text-slate-400 text-center px-1">
+                          Belum ada logo
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex-1 text-center sm:text-left space-y-2">
+                      <p className="text-xs text-slate-600 font-medium">
+                        {logoTargetProject === "all"
+                          ? "Logo klien umum ini otomatis muncul di sudut kanan atas kop laporan."
+                          : `Logo klien ini khusus berlaku untuk proyek ${projects.find((p) => p.id === logoTargetProject)?.name || ""}.`}
+                      </p>
+                      <label className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl text-xs font-bold cursor-pointer transition-all">
+                        <UploadCloud size={16} />
+                        <span>{clientLogoState ? "Ganti Logo Klien" : "Unggah Logo Klien"}</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onloadend = () => {
+                                const base64 = reader.result as string;
+                                if (logoTargetProject === "all") {
+                                  localStorage.setItem("custom_client_logo", base64);
+                                } else {
+                                  localStorage.setItem(`custom_client_logo_${logoTargetProject}`, base64);
+                                  localStorage.setItem("custom_client_logo", base64);
+                                }
+                                setClientLogoState(base64);
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-end">
+              <button
+                onClick={() => setIsLogoModalOpen(false)}
+                className="px-6 py-2.5 bg-slate-900 text-white rounded-xl text-xs font-bold shadow-md hover:bg-slate-800 transition-all cursor-pointer"
+              >
+                Selesai & Simpan
               </button>
             </div>
           </div>

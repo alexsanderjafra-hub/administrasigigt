@@ -15,6 +15,7 @@ import {
   AlertCircle,
   Building,
 } from "lucide-react";
+import { extractCleanAddress } from "../lib/utils";
 
 export interface GeotagData {
   projectName?: string;
@@ -92,7 +93,7 @@ export const GeotagCameraModal: React.FC<GeotagCameraModalProps> = ({
       setJobTitle(initialData.jobTitle || initialData.projectName || "Pekerjaan Lapangan");
     }
     if (initialData?.address && initialData.address.trim() !== "") {
-      setAddress(initialData.address);
+      setAddress(extractCleanAddress(initialData.address));
     }
     if (initialData?.latitude && initialData?.longitude) {
       setCoords({ lat: initialData.latitude, lng: initialData.longitude });
@@ -262,22 +263,22 @@ export const GeotagCameraModal: React.FC<GeotagCameraModalProps> = ({
     const timeStr = formatClock(stampTime);
     const dateStr = formatDayDate(stampTime);
 
-    // Scale factors relative to 1080p
-    const scale = Math.max(width / 1080, 0.6);
+    // Scale factors relative to 1080p - increased minimum scale for high legibility
+    const scale = Math.max(width / 1080, 0.78);
 
-    // Box dimensions
-    const boxWidth = Math.min(width * 0.85, 480 * scale);
-    const padding = 20 * scale;
+    // Box dimensions - enlarged for prominent, ultra-readable display
+    const boxWidth = Math.min(width * 0.92, 580 * scale);
+    const padding = 24 * scale;
     const boxX = 24 * scale;
-    const boxY = height - 260 * scale - 24 * scale;
-    const boxHeight = 260 * scale;
-    const cornerRadius = 16 * scale;
+    const boxHeight = 295 * scale;
+    const boxY = height - boxHeight - 24 * scale;
+    const cornerRadius = 20 * scale;
 
     // 1. Draw Tag Box Background with Rounded Corners
     ctx.save();
-    ctx.fillStyle = selectedTheme.hex + "EE"; // with 93% opacity
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.25)";
-    ctx.lineWidth = 2 * scale;
+    ctx.fillStyle = selectedTheme.hex + "F2"; // with 95% opacity
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.lineWidth = 2.5 * scale;
 
     ctx.beginPath();
     ctx.roundRect(boxX, boxY, boxWidth, boxHeight, cornerRadius);
@@ -285,72 +286,72 @@ export const GeotagCameraModal: React.FC<GeotagCameraModalProps> = ({
     ctx.stroke();
 
     // 2. Upper Header Section (Job Title & Subtitle + Verification Badge)
-    let curY = boxY + padding + 16 * scale;
+    let curY = boxY + padding + 18 * scale;
 
     if (showLogo || showTitle) {
       // Shield Icon / Logo Badge
       if (showLogo) {
-        const iconSize = 28 * scale;
+        const iconSize = 34 * scale;
         const iconX = boxX + padding;
-        const iconY = curY - 14 * scale;
+        const iconY = curY - 16 * scale;
 
         // Draw badge background
         ctx.fillStyle = selectedTheme.accentHex;
         ctx.beginPath();
-        ctx.roundRect(iconX, iconY, iconSize, iconSize, 6 * scale);
+        ctx.roundRect(iconX, iconY, iconSize, iconSize, 8 * scale);
         ctx.fill();
 
         // Draw checkmark / shield symbol
         ctx.fillStyle = "#0f172a";
-        ctx.font = `bold ${16 * scale}px sans-serif`;
+        ctx.font = `bold ${20 * scale}px sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText("✓", iconX + iconSize / 2, iconY + iconSize / 2);
       }
 
       // Title & Subtitle text
-      const textX = showLogo ? boxX + padding + 36 * scale : boxX + padding;
+      const textX = showLogo ? boxX + padding + 44 * scale : boxX + padding;
       ctx.textAlign = "left";
 
       if (showTitle) {
         ctx.fillStyle = "#ffffff";
-        ctx.font = `bold ${16 * scale}px sans-serif`;
+        ctx.font = `bold ${19 * scale}px sans-serif`;
         // Truncate if too long
         let displayTitle = jobTitle;
-        if (displayTitle.length > 30) displayTitle = displayTitle.slice(0, 28) + "...";
+        if (displayTitle.length > 32) displayTitle = displayTitle.slice(0, 30) + "...";
         ctx.fillText(displayTitle, textX, curY);
-        curY += 18 * scale;
+        curY += 22 * scale;
       }
 
       if (showSubtitle) {
         ctx.fillStyle = "#cbd5e1";
-        ctx.font = `500 ${12 * scale}px sans-serif`;
+        ctx.font = `600 ${14 * scale}px sans-serif`;
         let displaySub = subtitle;
-        if (displaySub.length > 35) displaySub = displaySub.slice(0, 33) + "...";
+        if (displaySub.length > 38) displaySub = displaySub.slice(0, 36) + "...";
         ctx.fillText(displaySub, textX, curY);
-        curY += 16 * scale;
+        curY += 18 * scale;
       }
     }
 
     // 3. Decorative Divider Line (`>>>>>>>>>>>>>>>>>>`)
     curY += 6 * scale;
     ctx.fillStyle = selectedTheme.accentHex;
-    ctx.font = `bold ${10 * scale}px monospace`;
+    ctx.font = `bold ${12 * scale}px monospace`;
     ctx.fillText(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", boxX + padding, curY);
-    curY += 16 * scale;
+    curY += 18 * scale;
 
     // 4. Time & Date Display
     if (showTime) {
       // Big bold Time in accent color (e.g. 18:31)
       ctx.fillStyle = selectedTheme.accentHex;
-      ctx.font = `900 ${36 * scale}px sans-serif`;
-      ctx.fillText(timeStr, boxX + padding, curY + 18 * scale);
+      ctx.font = `900 ${44 * scale}px sans-serif`;
+      ctx.fillText(timeStr, boxX + padding, curY + 22 * scale);
 
       // Date alongside
       ctx.fillStyle = "#ffffff";
-      ctx.font = `600 ${13 * scale}px sans-serif`;
-      ctx.fillText(dateStr, boxX + padding + 110 * scale, curY + 14 * scale);
-      curY += 38 * scale;
+      ctx.font = `700 ${16 * scale}px sans-serif`;
+      ctx.fillText(dateStr, boxX + padding + 130 * scale, curY + 18 * scale);
+      curY += 46 * scale;
     }
 
     // 5. Address & Location
@@ -358,15 +359,16 @@ export const GeotagCameraModal: React.FC<GeotagCameraModalProps> = ({
       // Red locator pin square
       ctx.fillStyle = "#ef4444";
       ctx.beginPath();
-      ctx.roundRect(boxX + padding, curY - 2 * scale, 6 * scale, 14 * scale, 2 * scale);
+      ctx.roundRect(boxX + padding, curY - 2 * scale, 7 * scale, 17 * scale, 3 * scale);
       ctx.fill();
 
-      ctx.fillStyle = "#f1f5f9";
-      ctx.font = `500 ${11 * scale}px sans-serif`;
+      ctx.fillStyle = "#f8fafc";
+      ctx.font = `600 ${13 * scale}px sans-serif`;
 
       // Multi-line address wrapping
-      const maxTextWidth = boxWidth - padding * 2 - 16 * scale;
-      const words = address.split(" ");
+      const maxTextWidth = boxWidth - padding * 2 - 20 * scale;
+      const cleanAddr = extractCleanAddress(address);
+      const words = cleanAddr.split(" ");
       let line = "";
       let lineCount = 0;
 
@@ -374,9 +376,9 @@ export const GeotagCameraModal: React.FC<GeotagCameraModalProps> = ({
         const testLine = line + words[n] + " ";
         const metrics = ctx.measureText(testLine);
         if (metrics.width > maxTextWidth && n > 0) {
-          ctx.fillText(line, boxX + padding + 14 * scale, curY + 8 * scale);
+          ctx.fillText(line, boxX + padding + 18 * scale, curY + 10 * scale);
           line = words[n] + " ";
-          curY += 15 * scale;
+          curY += 18 * scale;
           lineCount++;
           if (lineCount >= 3) break; // max 3 lines
         } else {
@@ -384,7 +386,7 @@ export const GeotagCameraModal: React.FC<GeotagCameraModalProps> = ({
         }
       }
       if (lineCount < 3) {
-        ctx.fillText(line, boxX + padding + 14 * scale, curY + 8 * scale);
+        ctx.fillText(line, boxX + padding + 18 * scale, curY + 10 * scale);
       }
     }
 
@@ -549,24 +551,24 @@ export const GeotagCameraModal: React.FC<GeotagCameraModalProps> = ({
 
             {/* LIVE ON-SCREEN GEOTAG STAMP (Mirrors Output) */}
             <div
-              className={`absolute bottom-6 left-4 right-4 max-w-sm sm:max-w-md ${selectedTheme.bg} ${selectedTheme.border} border backdrop-blur-md p-4 rounded-2xl shadow-2xl text-white pointer-events-none transition-all`}
+              className={`absolute bottom-6 left-3 right-3 sm:left-6 sm:right-auto max-w-none sm:max-w-lg ${selectedTheme.bg} ${selectedTheme.border} border-2 backdrop-blur-md p-4 sm:p-5 rounded-3xl shadow-2xl text-white pointer-events-none transition-all`}
             >
               {/* Header: Logo & Title */}
               {(showLogo || showTitle) && (
-                <div className="flex items-start gap-3 mb-2">
+                <div className="flex items-start gap-3.5 mb-2.5">
                   {showLogo && (
-                    <div className="w-8 h-8 rounded-lg bg-amber-400 text-slate-950 flex items-center justify-center font-black text-sm shrink-0 shadow-sm">
+                    <div className="w-9 h-9 rounded-xl bg-amber-400 text-slate-950 flex items-center justify-center font-black text-base shrink-0 shadow-md">
                       ✓
                     </div>
                   )}
                   <div className="min-w-0">
                     {showTitle && (
-                      <h4 className="text-sm font-black tracking-tight leading-tight truncate text-white">
+                      <h4 className="text-base sm:text-lg font-black tracking-tight leading-tight truncate text-white">
                         {jobTitle || "Pekerjaan Lapangan"}
                       </h4>
                     )}
                     {showSubtitle && (
-                      <p className="text-[10px] font-bold text-slate-300 tracking-wide truncate">
+                      <p className="text-xs sm:text-sm font-semibold text-slate-200 tracking-wide truncate mt-0.5">
                         {subtitle || "Catatan Kerja"}
                       </p>
                     )}
@@ -575,17 +577,17 @@ export const GeotagCameraModal: React.FC<GeotagCameraModalProps> = ({
               )}
 
               {/* Chevron Divider */}
-              <div className="text-[9px] font-mono font-black text-amber-400 opacity-80 tracking-tighter mb-2 truncate">
+              <div className="text-[10px] sm:text-xs font-mono font-black text-amber-400 opacity-90 tracking-tight mb-2.5 truncate">
                 &gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;
               </div>
 
               {/* Time and Date */}
               {showTime && (
-                <div className="flex items-baseline gap-3 mb-2">
-                  <span className="text-2xl font-black text-amber-400 font-mono tracking-tight">
+                <div className="flex items-baseline gap-3.5 mb-2.5">
+                  <span className="text-3xl sm:text-4xl font-black text-amber-400 font-mono tracking-tight leading-none">
                     {formatClock(currentTime)}
                   </span>
-                  <span className="text-xs font-bold text-white">
+                  <span className="text-sm sm:text-base font-bold text-white">
                     {formatDayDate(currentTime)}
                   </span>
                 </div>
@@ -593,9 +595,9 @@ export const GeotagCameraModal: React.FC<GeotagCameraModalProps> = ({
 
               {/* Location and Address */}
               {showAddress && (
-                <div className="flex items-start gap-2 text-[11px] font-medium text-slate-100 leading-snug">
-                  <div className="w-1.5 h-3.5 bg-rose-500 rounded-xs mt-0.5 shrink-0" />
-                  <p className="line-clamp-2">{address}</p>
+                <div className="flex items-start gap-2.5 text-xs sm:text-sm font-medium text-slate-100 leading-snug">
+                  <div className="w-2 h-4 bg-rose-500 rounded-xs mt-0.5 shrink-0" />
+                  <p className="line-clamp-2">{extractCleanAddress(address)}</p>
                 </div>
               )}
             </div>

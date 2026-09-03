@@ -7,7 +7,7 @@ import React, {
   useCallback,
 } from "react";
 import Webcam from "react-webcam";
-import { compressImage } from "./lib/utils";
+import { compressImage, extractCleanAddress } from "./lib/utils";
 
 const WebcamComponent = Webcam as any;
 import html2canvas from "html2canvas";
@@ -11449,6 +11449,7 @@ const AdminFinanceScreen = ({
     end: new Date().toISOString().split("T")[0],
   });
   const [exportFlowType, setExportFlowType] = useState<"ALL" | "PERSONAL" | "OUT_BANK_DIRECT" | "IN">("ALL");
+  const [exportPeriodType, setExportPeriodType] = useState<"weekly" | "monthly" | "all" | "custom">("monthly");
 
   // Check if we are using the default dataset containing Faisal's June records
   const isUsingJuneBaseline = useMemo(() => {
@@ -13317,8 +13318,19 @@ const AdminFinanceScreen = ({
 
     const diffTime = Math.abs(endRange.getTime() - startRange.getTime());
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
-    const isWeekly = diffDays <= 10;
+    const isAllTime = exportPeriodType === "all" || (exportPeriodType === "custom" && diffDays > 35);
+    const isWeekly = exportPeriodType === "weekly" || (exportPeriodType === "custom" && diffDays <= 10);
+    const isMonthly = !isAllTime && !isWeekly;
     const hasJune2026 = (endYear === 2026 && endMonth === 5);
+
+    // Helper to format date label
+    const formatDateLabel = (dateStr: string) => {
+      const parts = dateStr.split("-");
+      if (parts.length === 3) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      }
+      return dateStr;
+    };
 
     const startOfMonthStr = `${endYear}-${String(endMonth + 1).padStart(2, "0")}-01`;
     const lastDayOfMonth = new Date(endYear, endMonth + 1, 0).getDate();
@@ -13359,7 +13371,7 @@ const AdminFinanceScreen = ({
         return (b.timestamp || 0) - (a.timestamp || 0);
       });
 
-    // Baseline calculation values
+    // Baseline calculation values (Cumulative/Month)
     let totalPemasukanBruto = cumulativeRecords
       .filter((r) => r.type === "IN")
       .reduce((sum, r) => sum + r.amount, 0);
@@ -13373,7 +13385,6 @@ const AdminFinanceScreen = ({
       .reduce((sum, r) => sum + (r.adminFee || 0), 0);
 
     let totalTransferKePribadi = totalTransferKePribadiGlobal;
-
     let totalRiilTerpakai = totalRiilTerpakaiGlobal;
 
     // Fallback inject for June 2026 when filterProject === "ALL" and reporting June 2026
@@ -13388,21 +13399,66 @@ const AdminFinanceScreen = ({
     const saldoRekeningUtama = totalPemasukanBruto - totalPengeluaranBank - totalAdminBank;
     const sisaSaldoPribadi = totalTransferKePribadi - totalRiilTerpakai;
 
-    // Period values (for weekly summary table)
-    let weeklyPemasukan = recordsInPeriod
+    // Calculations specifically for the selected month
+    const monthRecords = financialRecords.filter((r) => {
+      const d = new Date(r.date);
+      const inMonth = d.getMonth() === endMonth && d.getFullYear() === endYear;
+      const projMatch = filterProject === "ALL" || r.referenceId === filterProject;
+      return inMonth && projMatch;
+    });
+
+    let monthIncome = monthRecords
       .filter((r) => r.type === "IN")
       .reduce((sum, r) => sum + r.amount, 0);
 
-    let weeklyPengeluaran = recordsInPeriod
-      .filter((r) => r.type === "OUT")
+    let monthExpense = monthRecords
+      .filter((r) => r.type === "OUT" && r.flowType !== "OUT_PERSONAL_TRANSFER")
       .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
 
-    if (isWeekly && exportRange.start === "2026-06-08" && exportRange.end === "2026-06-14" && filterProject === "ALL") {
-      weeklyPemasukan = 125133500;
-      weeklyPengeluaran = 114769139;
+    if (hasJune2026 && filterProject === "ALL") {
+      monthIncome = monthIncome || 285104802;
+      monthExpense = monthExpense || 327024789;
     }
 
-    const weeklySaldo = weeklyPemasukan - weeklyPengeluaran;
+    const monthNet = monthIncome - monthExpense;
+
+    let monthBankOut = monthRecords
+      .filter((r) => r.type === "OUT" && (r.flowType === "OUT_BANK_DIRECT" || r.flowType === "OUT_PERSONAL_TRANSFER" || (!r.flowType && r.sumberDana !== "DANA TALANGAN")))
+      .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
+
+    let monthPettySpend = monthRecords
+      .filter((r) => r.type === "OUT" && (r.flowType === "OUT_PERSONAL_SPEND" || r.flowType === "PERSONAL_TALANGAN_REIMBURSE" || r.sumberDana === "DANA TALANGAN"))
+      .reduce((sum, r) => sum + r.amount, 0);
+
+    if (hasJune2026 && filterProject === "ALL") {
+      monthBankOut = monthBankOut || 320168249;
+      monthPettySpend = monthPettySpend || 47392339;
+    }
+
+    // Calculations specifically for the selected week
+    const weekRecords = recordsInPeriod;
+    let weekIncome = weekRecords
+      .filter((r) => r.type === "IN")
+      .reduce((sum, r) => sum + r.amount, 0);
+
+    let weekExpense = weekRecords
+      .filter((r) => r.type === "OUT" && r.flowType !== "OUT_PERSONAL_TRANSFER")
+      .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
+
+    if (exportRange.start === "2026-06-08" && exportRange.end === "2026-06-14" && filterProject === "ALL") {
+      weekIncome = weekIncome || 125133500;
+      weekExpense = weekExpense || 114769139;
+    }
+
+    const weekNet = weekIncome - weekExpense;
+
+    let weekBankOut = weekRecords
+      .filter((r) => r.type === "OUT" && (r.flowType === "OUT_BANK_DIRECT" || r.flowType === "OUT_PERSONAL_TRANSFER" || (!r.flowType && r.sumberDana !== "DANA TALANGAN")))
+      .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
+
+    let weekPettySpend = weekRecords
+      .filter((r) => r.type === "OUT" && (r.flowType === "OUT_PERSONAL_SPEND" || r.flowType === "PERSONAL_TALANGAN_REIMBURSE" || r.sumberDana === "DANA TALANGAN"))
+      .reduce((sum, r) => sum + r.amount, 0);
 
     // Table Theme Settings
     const autoTableStyles = {
@@ -13446,33 +13502,67 @@ const AdminFinanceScreen = ({
 
     // ================= PAGE 1 =================
     const monthNameUpper = MONTHS_ID[endMonth].toUpperCase();
-    const titleP1 = isWeekly 
-      ? "PT GARDA INOVASI GLOBALTECH"
-      : `PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO UTAMA BULAN ${monthNameUpper}`;
-    const subtitleP1 = `Laporan Internal Buku Kas Utama & Posisi Saldo Per ${startYear}`;
+    let titleP1 = "";
+    let subtitleP1 = "";
+    let sectionTitleP1 = "";
+    let p1TableHead: string[][] = [];
+    let p1TableBody: (string | any)[][] = [];
 
-    drawPageHeader(titleP1, subtitleP1);
-
-    let currentY = 36;
-
-    // Section: POSISI SALDO TERKINI PERUSAHAAN (REAL-TIME)
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(27, 42, 74);
-    doc.text("POSISI SALDO TERKINI PERUSAHAAN (REAL-TIME)", 15, currentY);
-    currentY += 4;
-
-    autoTable(doc, {
-      ...autoTableStyles,
-      startY: currentY,
-      head: [["Uraian Saldo Terkini", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]],
-      body: [
+    if (isAllTime) {
+      titleP1 = "PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO KESELURUHAN";
+      subtitleP1 = `Laporan Internal Buku Kas Utama & Posisi Saldo Akumulatif (s/d ${new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })})`;
+      sectionTitleP1 = "POSISI SALDO TERKINI PERUSAHAAN (REAL-TIME KONSOLIDASI)";
+      p1TableHead = [["Uraian Saldo Akumulatif", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
+      p1TableBody = [
         ["TOTAL PEMASUKAN RIIL PT", "Pemasukan akumulatif seluruh proyek", formatCurrency(income)],
         ["TOTAL BELANJA RIIL (ACTUAL COST)", "Pengeluaran riil operasional & proyek", formatCurrency(expense)],
         ["SALDO LABA BERSIH PT (KONSOLIDASI)", "Sisa bersih pendapatan setelah beban riil", formatCurrency(balance)],
         ["SISA KAS AKTIF DI REKENING PT BANK", "Dana likuid yang tersedia di bank PT", formatCurrency(bankBalance)],
         ["SISA DANA PT DI TANGAN STAFF (PETTY CASH)", "Dana talangan operasional yang belum terpakai", formatCurrency(personalHoldBalance)],
-      ],
+      ];
+    } else if (isWeekly) {
+      titleP1 = "PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO MINGGUAN";
+      subtitleP1 = `Laporan Rekapitulasi Kas Periode ${formatDateLabel(exportRange.start)} s/d ${formatDateLabel(exportRange.end)}`;
+      sectionTitleP1 = `REKAPITULASI KEUANGAN MINGGUAN (${formatDateLabel(exportRange.start)} - ${formatDateLabel(exportRange.end)})`;
+      p1TableHead = [["Uraian Rekapitulasi Kas Mingguan", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
+      p1TableBody = [
+        ["TOTAL PEMASUKAN RIIL MINGGUAN", "Pemasukan riil yang masuk selama periode 7 hari ini", formatCurrency(weekIncome)],
+        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Pengeluaran riil operasional & proyek periode ini", formatCurrency(weekExpense)],
+        ["SALDO KAS BERSIH MINGGUAN", weekNet >= 0 ? "Surplus kas operasional periode mingguan" : "Defisit kas operasional periode mingguan", formatCurrency(weekNet)],
+        ["PENGELUARAN DARI REKENING BANK PT", "Pengeluaran resmi langsung dari rekening bank PT", formatCurrency(weekBankOut)],
+        ["REALISASI BELANJA VIA DANA TALANGAN (STAFF)", "Realisasi belanja operasional kasbon / petty cash", formatCurrency(weekPettySpend)],
+      ];
+    } else {
+      // isMonthly
+      titleP1 = `PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO BULAN ${monthNameUpper}`;
+      subtitleP1 = `Laporan Rekapitulasi Kas & Mutasi Periode Bulan ${monthNameUpper} ${endYear}`;
+      sectionTitleP1 = `REKAPITULASI KEUANGAN BULAN ${monthNameUpper} ${endYear}`;
+      p1TableHead = [["Uraian Rekapitulasi Kas Bulanan", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
+      p1TableBody = [
+        [`TOTAL PEMASUKAN RIIL (BULAN ${monthNameUpper})`, "Pemasukan riil yang masuk selama bulan berjalan", formatCurrency(monthIncome)],
+        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Pengeluaran riil operasional & proyek bulan berjalan", formatCurrency(monthExpense)],
+        [`SALDO KAS BERSIH (BULAN ${monthNameUpper})`, monthNet >= 0 ? "Surplus kas bersih bulan berjalan" : "Defisit kas operasional bulan berjalan", formatCurrency(monthNet)],
+        ["PENGELUARAN DARI REKENING BANK PT", "Pengeluaran resmi langsung dari rekening bank PT", formatCurrency(monthBankOut)],
+        ["REALISASI BELANJA VIA DANA TALANGAN (STAFF)", "Realisasi belanja operasional kasbon / petty cash bulan ini", formatCurrency(monthPettySpend)],
+      ];
+    }
+
+    drawPageHeader(titleP1, subtitleP1);
+
+    let currentY = 36;
+
+    // Section title
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "bold");
+    doc.setTextColor(27, 42, 74);
+    doc.text(sectionTitleP1, 15, currentY);
+    currentY += 4;
+
+    autoTable(doc, {
+      ...autoTableStyles,
+      startY: currentY,
+      head: p1TableHead,
+      body: p1TableBody,
       columnStyles: {
         0: { fontStyle: "bold" },
         2: { halign: "right", fontStyle: "bold" }
@@ -13480,11 +13570,17 @@ const AdminFinanceScreen = ({
       didParseCell: (data) => {
         if (data.section === "body") {
           if (data.row.index === 2) {
+            const isNegative = isMonthly ? monthNet < 0 : isWeekly ? weekNet < 0 : balance < 0;
+            if (isNegative) {
+              data.cell.styles.fillColor = [254, 226, 226]; // Soft rose
+              data.cell.styles.textColor = [185, 28, 28];
+            } else {
+              data.cell.styles.fillColor = [209, 250, 229]; // Soft green
+              data.cell.styles.textColor = [6, 95, 70];
+            }
+          } else if (data.row.index === 3) {
             data.cell.styles.fillColor = [219, 234, 254]; // Soft blue
             data.cell.styles.textColor = [27, 42, 74];
-          } else if (data.row.index === 3) {
-            data.cell.styles.fillColor = [209, 250, 229]; // Soft green
-            data.cell.styles.textColor = [6, 95, 70];
           } else if (data.row.index === 4) {
             data.cell.styles.fillColor = [254, 243, 199]; // Soft yellow
             data.cell.styles.textColor = [146, 64, 14];
@@ -13495,36 +13591,8 @@ const AdminFinanceScreen = ({
 
     currentY = (doc as any).lastAutoTable.finalY + 10;
 
-    // Table 3 (Only for Weekly Report): RINGKASAN KAS MINGGUAN PERIODE TANGGAL
-    if (isWeekly) {
-      doc.setFontSize(10);
-      doc.setFont("helvetica", "bold");
-      doc.setTextColor(27, 42, 74);
-      doc.text("RINGKASAN KAS MINGGUAN PERIODE TANGGAL", 15, currentY);
-      
-      doc.setFontSize(8);
-      doc.setFont("helvetica", "italic");
-      doc.setTextColor(100, 116, 139);
-      doc.text(`${new Date(exportRange.start).toLocaleDateString("id-ID")} S/D ${new Date(exportRange.end).toLocaleDateString("id-ID")}`, 15, currentY + 4);
-      currentY += 8;
-
-      autoTable(doc, {
-        ...autoTableStyles,
-        startY: currentY,
-        head: [["Total Pemasukan (Rp)", "Total Pengeluaran (Rp)", "Saldo Kas Bersih (Rp)"]],
-        body: [
-          [formatCurrency(weeklyPemasukan), formatCurrency(weeklyPengeluaran), formatCurrency(weeklySaldo)]
-        ],
-        columnStyles: {
-          0: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129] },
-          1: { halign: "right", fontStyle: "bold", textColor: [239, 68, 68] },
-          2: { halign: "right", fontStyle: "bold", textColor: [27, 42, 74], fillColor: [241, 245, 249] }
-        }
-      });
-    }
-
-    // ================= PAGE 2 (For Monthly Only) =================
-    if (!isWeekly) {
+    // ================= PAGE 2 & PAGE 3 (Only for Keseluruhan / All-Time Report) =================
+    if (isAllTime) {
       doc.addPage();
       drawPageHeader(
         "PT GIGT - IKHTISAR & MARGIN KEUNTUNGAN BULANAN",
@@ -13819,9 +13887,11 @@ const AdminFinanceScreen = ({
     }
 
     const titleMutasi = "PT GARDA INOVASI GLOBALTECH";
-    const subtitleMutasi = isWeekly
+    const subtitleMutasi = isAllTime
+      ? `IV. DETAIL JURNAL MUTASI ${flowTypeTitle} KESELURUHAN`
+      : isWeekly
       ? `II. DETAIL JURNAL MUTASI ${flowTypeTitle} MINGGUAN`
-      : `III. DETAIL JURNAL MUTASI ${flowTypeTitle} BULANAN`;
+      : `II. DETAIL JURNAL MUTASI ${flowTypeTitle} BULANAN`;
 
     drawPageHeader(titleMutasi, subtitleMutasi);
 
@@ -14008,15 +14078,6 @@ const AdminFinanceScreen = ({
       }
     });
 
-    // Helper to format date label
-    function formatDateLabel(dateStr: string) {
-      const parts = dateStr.split("-");
-      if (parts.length === 3) {
-        return `${parts[2]}/${parts[1]}/${parts[0]}`;
-      }
-      return dateStr;
-    }
-
     // Footers & Page numbers across all pages
     const pageCount = doc.getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
@@ -14028,7 +14089,7 @@ const AdminFinanceScreen = ({
       doc.text("PT GARDA INOVASI GLOBALTECH - Financial System", 15, 287);
     }
 
-    const docName = isWeekly ? "Mingguan" : "Bulanan";
+    const docName = isAllTime ? "Keseluruhan" : isWeekly ? "Mingguan" : "Bulanan";
     doc.save(
       `Laporan_Keuangan_GIG_${docName}_${exportRange.start}_Hingga_${exportRange.end}.pdf`,
     );
@@ -15229,9 +15290,11 @@ const AdminFinanceScreen = ({
                   PDF.
                 </p>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-3 gap-2 sm:gap-3">
                   <button
+                    type="button"
                     onClick={() => {
+                      setExportPeriodType("weekly");
                       const today = new Date();
                       const sevenDaysAgo = new Date();
                       sevenDaysAgo.setDate(today.getDate() - 7);
@@ -15240,25 +15303,33 @@ const AdminFinanceScreen = ({
                         end: today.toISOString().split("T")[0],
                       });
                     }}
-                    className={`p-6 rounded-3xl border-2 transition-all text-left group ${
-                      exportRange.start === new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split("T")[0] &&
-                      exportRange.end === new Date().toISOString().split("T")[0]
-                        ? "border-primary bg-primary/5"
-                        : "border-slate-100 hover:border-primary"
+                    className={`p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl border-2 transition-all text-left group flex flex-col justify-between ${
+                      exportPeriodType === "weekly"
+                        ? "border-primary bg-primary/5 shadow-xs"
+                        : "border-slate-100 hover:border-slate-300 bg-slate-50/40"
                     }`}
                   >
-                    <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center mb-4 group-hover:bg-primary/10 group-hover:text-primary transition-all">
-                      <Calendar size={20} />
+                    <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center mb-2 sm:mb-3 transition-all ${
+                      exportPeriodType === "weekly"
+                        ? "bg-primary text-white"
+                        : "bg-white text-slate-500 border border-slate-200"
+                    }`}>
+                      <Calendar size={18} />
                     </div>
-                    <h4 className="font-black text-slate-900 leading-none mb-1">
-                      Mingguan
-                    </h4>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                      7 Hari Terakhir
-                    </p>
+                    <div>
+                      <h4 className="font-black text-slate-900 text-xs sm:text-sm leading-none mb-1">
+                        Mingguan
+                      </h4>
+                      <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                        7 Hari Terakhir
+                      </p>
+                    </div>
                   </button>
+
                   <button
+                    type="button"
                     onClick={() => {
+                      setExportPeriodType("monthly");
                       const today = new Date();
                       const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
                       setExportRange({
@@ -15266,22 +15337,67 @@ const AdminFinanceScreen = ({
                         end: today.toISOString().split("T")[0],
                       });
                     }}
-                    className={`p-6 rounded-3xl border-2 transition-all text-left group ${
-                      exportRange.start === new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split("T")[0] &&
-                      exportRange.end === new Date().toISOString().split("T")[0]
-                        ? "border-primary bg-primary/5"
-                        : "border-slate-100 hover:border-primary"
+                    className={`p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl border-2 transition-all text-left group flex flex-col justify-between ${
+                      exportPeriodType === "monthly"
+                        ? "border-primary bg-primary/5 shadow-xs"
+                        : "border-slate-100 hover:border-slate-300 bg-slate-50/40"
                     }`}
                   >
-                    <div className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center mb-4 group-hover:bg-primary/10 group-hover:text-primary transition-all">
-                      <CalendarRange size={20} />
+                    <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center mb-2 sm:mb-3 transition-all ${
+                      exportPeriodType === "monthly"
+                        ? "bg-primary text-white"
+                        : "bg-white text-slate-500 border border-slate-200"
+                    }`}>
+                      <CalendarRange size={18} />
                     </div>
-                    <h4 className="font-black text-slate-900 leading-none mb-1">
-                      Bulanan
-                    </h4>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
-                      Bulan Berjalan
-                    </p>
+                    <div>
+                      <h4 className="font-black text-slate-900 text-xs sm:text-sm leading-none mb-1">
+                        Bulanan
+                      </h4>
+                      <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                        Bulan Berjalan
+                      </p>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExportPeriodType("all");
+                      const today = new Date();
+                      let earliestDate = "2026-01-01";
+                      if (financialRecords.length > 0) {
+                        const minDate = financialRecords.reduce((min, r) => {
+                          return (r.date && r.date < min) ? r.date : min;
+                        }, financialRecords[0].date || "2026-01-01");
+                        if (minDate) earliestDate = minDate;
+                      }
+                      setExportRange({
+                        start: earliestDate,
+                        end: today.toISOString().split("T")[0],
+                      });
+                    }}
+                    className={`p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl border-2 transition-all text-left group flex flex-col justify-between ${
+                      exportPeriodType === "all"
+                        ? "border-primary bg-primary/5 shadow-xs"
+                        : "border-slate-100 hover:border-slate-300 bg-slate-50/40"
+                    }`}
+                  >
+                    <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center mb-2 sm:mb-3 transition-all ${
+                      exportPeriodType === "all"
+                        ? "bg-primary text-white"
+                        : "bg-white text-slate-500 border border-slate-200"
+                    }`}>
+                      <Layers size={18} />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-900 text-xs sm:text-sm leading-none mb-1">
+                        Keseluruhan
+                      </h4>
+                      <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                        Sampai Hari Ini
+                      </p>
+                    </div>
                   </button>
                 </div>
 
@@ -15325,12 +15441,13 @@ const AdminFinanceScreen = ({
                       <input
                         type="date"
                         value={exportRange.start}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          setExportPeriodType("custom");
                           setExportRange({
                             ...exportRange,
                             start: e.target.value,
-                          })
-                        }
+                          });
+                        }}
                         className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-primary transition-all"
                       />
                     </div>
@@ -15341,12 +15458,13 @@ const AdminFinanceScreen = ({
                       <input
                         type="date"
                         value={exportRange.end}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          setExportPeriodType("custom");
                           setExportRange({
                             ...exportRange,
                             end: e.target.value,
-                          })
-                        }
+                          });
+                        }}
                         className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-primary transition-all"
                       />
                     </div>
@@ -20768,13 +20886,14 @@ const DailyReportForm = ({
                       localStorage.getItem("custom_logo_image") ||
                       localStorage.getItem("company_logo") ||
                       "";
+                    const cleanLoc = extractCleanAddress(p.location);
                     setDraft({
                       ...draft,
                       projectId: p.id,
                       projectName: p.name,
-                      clientName: p.client || "",
-                      location: p.location || "",
-                      workType: p.category || "Konstruksi & Sipil",
+                      clientName: p.client || draft.clientName || "",
+                      location: cleanLoc || draft.location || "",
+                      workType: p.category || draft.workType || "Konstruksi & Sipil",
                       clientLogo: cLogo,
                       contractorLogo: vLogo,
                     });
@@ -20785,7 +20904,7 @@ const DailyReportForm = ({
                 <option value="">-- Pilih Projek --</option>
                 {projects.map((p: any) => (
                   <option key={p.id} value={p.id}>
-                    {p.name} ({p.client || "No Client"})
+                    {p.name} {p.client ? `(${p.client})` : ""}
                   </option>
                 ))}
               </select>
@@ -20805,143 +20924,142 @@ const DailyReportForm = ({
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-50">
-            <div>
-              <span className="text-[9px] font-bold text-slate-400 uppercase block">
-                Klien / Pemilik
-              </span>
-              <span className="text-xs font-bold text-slate-700">
-                {draft.clientName || "-"}
-              </span>
+          {/* Editable Klien, Lokasi, Kategori Pekerjaan */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-100">
+            <div className="flex flex-col">
+              <label className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest pl-1">
+                Klien / Pemilik Proyek
+              </label>
+              <input
+                type="text"
+                className="input-field text-xs font-bold"
+                placeholder="Ketik Nama Klien / Owner Proyek"
+                value={draft.clientName || ""}
+                onChange={(e) =>
+                  setDraft({ ...draft, clientName: e.target.value })
+                }
+              />
             </div>
-            <div>
-              <span className="text-[9px] font-bold text-slate-400 uppercase block">
-                Lokasi Pekerjaan
-              </span>
-              <span className="text-xs font-bold text-slate-700">
-                {draft.location || "-"}
-              </span>
+            <div className="flex flex-col">
+              <label className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest pl-1">
+                Lokasi Pekerjaan / Alamat
+              </label>
+              <input
+                type="text"
+                className="input-field text-xs font-bold"
+                placeholder="Ketik Alamat / Lokasi Pengerjaan"
+                value={draft.location || ""}
+                onChange={(e) =>
+                  setDraft({ ...draft, location: extractCleanAddress(e.target.value) })
+                }
+              />
             </div>
-            <div>
-              <span className="text-[9px] font-bold text-slate-400 uppercase block">
+            <div className="flex flex-col">
+              <label className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest pl-1">
                 Kategori Pekerjaan
-              </span>
-              <span className="text-xs font-bold text-slate-700">
-                {draft.workType || "-"}
-              </span>
+              </label>
+              <input
+                type="text"
+                className="input-field text-xs font-bold"
+                placeholder="Contoh: Konstruksi & Sipil"
+                value={draft.workType || ""}
+                onChange={(e) =>
+                  setDraft({ ...draft, workType: e.target.value })
+                }
+              />
             </div>
           </div>
 
-          {/* Dual Logo Management: Vendor (Kiri) & Klien (Kanan) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-slate-100">
-            {/* Logo 1: Vendor / Kontraktor (Kiri Kop) */}
-            <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-2xl">
-              <div className="flex items-center gap-3">
+          {/* Dual Logo Info / Admin Management */}
+          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50/80 border border-slate-100 rounded-2xl">
+            <div className="flex items-center gap-3">
+              <div className="flex -space-x-2 overflow-hidden">
                 {draft.contractorLogo ? (
                   <img
                     src={draft.contractorLogo}
                     alt="Logo Vendor"
-                    className="w-10 h-10 object-contain rounded-xl border border-slate-200 p-0.5 bg-white shadow-2xs"
+                    className="inline-block h-8 w-8 rounded-lg object-contain bg-white border border-slate-200 p-0.5 shadow-2xs"
                   />
                 ) : (
-                  <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-600 font-black text-xs flex items-center justify-center">
+                  <div className="inline-flex h-8 w-8 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 font-black text-[10px] items-center justify-center">
                     GT
                   </div>
                 )}
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="px-1.5 py-0.5 bg-indigo-100 text-indigo-700 text-[8px] font-black rounded uppercase">Kiri</span>
-                    <p className="text-[11px] font-black text-slate-800 uppercase tracking-wider">
-                      Logo Vendor / Kontraktor
-                    </p>
-                  </div>
-                  <p className="text-[9px] text-slate-500 font-semibold">
-                    {draft.contractorLogo ? "Terpasang (Kop Kiri)" : "Default Kontraktor"}
-                  </p>
-                </div>
-              </div>
-              <label className="px-3 py-1.5 bg-white hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 text-[10px] font-black rounded-xl transition-all cursor-pointer flex items-center gap-1.5 border border-slate-200 shadow-2xs">
-                <Upload size={12} />
-                <span>Upload</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        const base64 = reader.result as string;
-                        localStorage.setItem("custom_contractor_logo", base64);
-                        localStorage.setItem("custom_logo_image", base64);
-                        localStorage.setItem("company_logo", base64);
-                        setDraft((prev: any) => ({
-                          ...prev,
-                          contractorLogo: base64,
-                        }));
-                      };
-                      reader.readAsDataURL(file);
-                    }
-                  }}
-                />
-              </label>
-            </div>
-
-            {/* Logo 2: Klien / Owner Proyek (Kanan Kop) */}
-            <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-2xl">
-              <div className="flex items-center gap-3">
                 {draft.clientLogo ? (
                   <img
                     src={draft.clientLogo}
                     alt="Logo Klien"
-                    className="w-10 h-10 object-contain rounded-xl border border-slate-200 p-0.5 bg-white shadow-2xs"
+                    className="inline-block h-8 w-8 rounded-lg object-contain bg-white border border-slate-200 p-0.5 shadow-2xs"
                   />
                 ) : (
-                  <div className="w-10 h-10 rounded-xl bg-emerald-50 border border-emerald-100 text-emerald-600 font-black text-xs flex items-center justify-center">
+                  <div className="inline-flex h-8 w-8 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 font-black text-[10px] items-center justify-center">
                     KL
                   </div>
                 )}
-                <div>
-                  <div className="flex items-center gap-1.5">
-                    <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 text-[8px] font-black rounded uppercase">Kanan</span>
-                    <p className="text-[11px] font-black text-slate-800 uppercase tracking-wider">
-                      Logo Klien / Owner
-                    </p>
-                  </div>
-                  <p className="text-[9px] text-slate-500 font-semibold truncate max-w-[130px]">
-                    {draft.clientLogo ? "Terpasang (Kop Kanan)" : (draft.clientName || "Belum Ada Logo")}
-                  </p>
-                </div>
               </div>
-              <label className="px-3 py-1.5 bg-white hover:bg-emerald-50 hover:text-emerald-600 text-slate-700 text-[10px] font-black rounded-xl transition-all cursor-pointer flex items-center gap-1.5 border border-slate-200 shadow-2xs">
-                <Upload size={12} />
-                <span>Upload</span>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onloadend = () => {
-                        const base64 = reader.result as string;
-                        if (draft.projectId) {
-                          localStorage.setItem(`custom_client_logo_${draft.projectId}`, base64);
-                        }
-                        localStorage.setItem("custom_client_logo", base64);
-                        setDraft((prev: any) => ({
-                          ...prev,
-                          clientLogo: base64,
-                        }));
-                      };
-                      reader.readAsDataURL(file);
-                    }
-                  }}
-                />
-              </label>
+              <div className="text-[11px] font-bold text-slate-600">
+                <span className="text-slate-900 font-black">Logo Kop Laporan: </span>
+                {draft.contractorLogo ? "Vendor Terpasang" : "Default Vendor"} • {draft.clientLogo ? "Klien Terpasang" : (draft.clientName ? `${draft.clientName}` : "Logo Klien Otomatis")}
+              </div>
             </div>
+
+            {(currentUser?.role === "admin" || currentUser?.role === "direktur") && (
+              <div className="flex items-center gap-2">
+                <label className="px-2.5 py-1 bg-white hover:bg-indigo-50 text-indigo-600 border border-slate-200 text-[10px] font-bold rounded-lg cursor-pointer transition-all flex items-center gap-1 shadow-2xs">
+                  <Upload size={11} />
+                  <span>Logo Vendor</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          const base64 = reader.result as string;
+                          localStorage.setItem("custom_contractor_logo", base64);
+                          localStorage.setItem("custom_logo_image", base64);
+                          localStorage.setItem("company_logo", base64);
+                          setDraft((prev: any) => ({
+                            ...prev,
+                            contractorLogo: base64,
+                          }));
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                </label>
+                <label className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-600 border border-slate-200 text-[10px] font-bold rounded-lg cursor-pointer transition-all flex items-center gap-1 shadow-2xs">
+                  <Upload size={11} />
+                  <span>Logo Klien</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          const base64 = reader.result as string;
+                          if (draft.projectId) {
+                            localStorage.setItem(`custom_client_logo_${draft.projectId}`, base64);
+                          }
+                          localStorage.setItem("custom_client_logo", base64);
+                          setDraft((prev: any) => ({
+                            ...prev,
+                            clientLogo: base64,
+                          }));
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+            )}
           </div>
         </div>
 
@@ -20961,37 +21079,40 @@ const DailyReportForm = ({
           </div>
           <div className="space-y-3">
             {draft.staff.map((s: any, idx: number) => (
-              <div key={idx} className="flex gap-3 items-center">
+              <div key={idx} className="flex gap-2 items-center w-full min-w-0">
                 <input
                   type="text"
                   placeholder="Jabatan / Keahlian (Contoh: Mandor, Tukang Las)"
-                  className="input-field text-xs flex-2"
+                  className="input-field text-xs flex-1 min-w-0"
                   value={s.jabatan}
                   onChange={(e) =>
                     handleFieldChange("staff", idx, "jabatan", e.target.value)
                   }
                   required
                 />
-                <input
-                  type="number"
-                  placeholder="Jumlah"
-                  className="input-field text-xs flex-1"
-                  value={s.jumlah || ""}
-                  onChange={(e) =>
-                    handleFieldChange(
-                      "staff",
-                      idx,
-                      "jumlah",
-                      Number(e.target.value),
-                    )
-                  }
-                  required
-                />
+                <div className="w-20 sm:w-28 shrink-0">
+                  <input
+                    type="number"
+                    placeholder="Jumlah"
+                    min="1"
+                    className="input-field text-xs text-center font-bold w-full"
+                    value={s.jumlah || ""}
+                    onChange={(e) =>
+                      handleFieldChange(
+                        "staff",
+                        idx,
+                        "jumlah",
+                        Number(e.target.value),
+                      )
+                    }
+                    required
+                  />
+                </div>
                 {draft.staff.length > 1 && (
                   <button
                     type="button"
                     onClick={() => handleRemoveField("staff", idx)}
-                    className="p-2.5 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer"
+                    className="p-2.5 text-rose-500 hover:bg-rose-50 rounded-xl transition-colors cursor-pointer shrink-0"
                   >
                     <Trash2 size={16} />
                   </button>

@@ -1,6 +1,7 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { DailyReport } from "../types";
+import { extractCleanAddress } from "../lib/utils";
 
 export const formatIndonesianDateUpper = (ts: number | string | Date | undefined): string => {
   if (!ts) return "HARI INI";
@@ -113,7 +114,7 @@ export const renderDailyReportContentToPDF = (
       "Nama Projek",
       `: ${report.projectName || "-"}`,
       "Lokasi",
-      `: ${report.location || "-"}`,
+      `: ${extractCleanAddress(report.location) || "-"}`,
     ],
     [
       "Klien / Pemilik",
