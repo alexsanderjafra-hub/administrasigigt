@@ -285,6 +285,13 @@ export interface FinancialRecord {
   refPiutang?: string; // Reference client receivable link
   refHutang?: string; // Reference supplier debt link
   linkedDebtId?: string; // Explicitly stored reference to the linked debt/receivable ID
+  debtAllocations?: {
+    debtId: string;
+    customId?: string;
+    title?: string;
+    contactName?: string;
+    amount: number;
+  }[];
   totalGaji?: number; // Total gross salary
   potonganKasbon?: number; // Kasbon deduction
   penerimaKasbon?: string; // Who receives the kasbon

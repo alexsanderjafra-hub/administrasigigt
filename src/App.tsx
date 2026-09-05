@@ -142,6 +142,9 @@ import {
   FileSpreadsheet,
   Percent,
   Power,
+  RotateCcw,
+  ArrowUpDown,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   BarChart,
@@ -6660,6 +6663,64 @@ const getEffectiveDebtRecords = (
   return list;
 };
 
+const getOriginFinanceQueryAndRecord = (
+  r: DebtRecord,
+  finList: FinancialRecord[] = []
+): { originRecord: FinancialRecord | null; query: string } => {
+  if (!r) return { originRecord: null, query: "" };
+
+  const originId = ((r as any).originFinancialRecordId as string) || "";
+  const originCustom = (((r as any).originCustomId as string) || "").trim();
+
+  // 1. Explicit origin references
+  if (originId) {
+    const match = finList.find((f) => f.id === originId);
+    if (match) return { originRecord: match, query: match.customId || match.id };
+  }
+  if (originCustom) {
+    const match = finList.find((f) => f.customId && f.customId.toUpperCase() === originCustom.toUpperCase());
+    if (match) return { originRecord: match, query: match.customId || originCustom };
+  }
+
+  // 2. CustomId clean prefix: e.g. HTG-PRS-030526-001 -> PRS-030526-001 or HTG-BNK-... -> BNK-...
+  const cleanId = (r.customId || "").replace(/^HTG-/i, "").replace(/^PTG-/i, "").trim();
+  if (cleanId && cleanId !== r.customId) {
+    const match = finList.find((f) => f.customId && f.customId.toUpperCase() === cleanId.toUpperCase());
+    if (match) return { originRecord: match, query: match.customId || cleanId };
+  }
+
+  // 3. Exact customId match in financialRecords
+  if (r.customId) {
+    const match = finList.find((f) => f.customId && f.customId.toUpperCase() === r.customId.toUpperCase());
+    if (match) return { originRecord: match, query: match.customId || r.customId };
+  }
+
+  // 4. Linked debt record (non-payment)
+  const linkedNonPay = finList.find((f) => {
+    const matchesId = f.linkedDebtId === r.id || f.linkedDebtId === r.customId;
+    const catLower = (f.category || "").toLowerCase();
+    const descLower = (f.description || "").toLowerCase();
+    const isPayment = catLower.includes("pembayaran") || descLower.includes("cicilan") || descLower.includes("pelunasan");
+    return matchesId && !isPayment;
+  });
+  if (linkedNonPay) return { originRecord: linkedNonPay, query: linkedNonPay.customId || linkedNonPay.id };
+
+  // 5. Description or Title containing cleanId or customId (non-payment)
+  const textMatch = finList.find((f) => {
+    const catLower = (f.category || "").toLowerCase();
+    const isPayment = catLower.includes("pembayaran");
+    if (isPayment) return false;
+    const fDesc = (f.description || "").toLowerCase();
+    return (
+      (cleanId && fDesc.includes(cleanId.toLowerCase())) ||
+      (r.customId && fDesc.includes(r.customId.toLowerCase()))
+    );
+  });
+  if (textMatch) return { originRecord: textMatch, query: textMatch.customId || textMatch.id };
+
+  return { originRecord: null, query: cleanId || r.customId || r.title || "" };
+};
+
 const getScheduleForRecord = (
   record: DebtRecord,
   projectsList: Project[] = [],
@@ -7041,11 +7102,13 @@ const AdminDebtScreen = ({
   isImportingFinanceData,
   setDebtRecords,
   setFinancialRecords,
+  onNavigateToFinance,
 }: {
   debtRecords: DebtRecord[];
   financialRecords?: FinancialRecord[];
   projects: Project[];
   onNavigate: (s: ScreenId) => void;
+  onNavigateToFinance?: (query: string) => void;
   user: any;
   roles: RoleConfig[];
   logActivity: (m: string, a: string, d: string) => Promise<void>;
@@ -7056,6 +7119,17 @@ const AdminDebtScreen = ({
 }) => {
   const [activeTab, setActiveTab] = useState<"HUTANG" | "PIUTANG">("HUTANG");
   const [searchQuery, setSearchQuery] = useState("");
+  const [filterStatus, setFilterStatus] = useState<"ALL" | "UNPAID" | "PAID">("ALL");
+  const [showExportReportModal, setShowExportReportModal] = useState(false);
+  const [exportReportConfig, setExportReportConfig] = useState<{
+    type: "HUTANG" | "PIUTANG" | "GABUNGAN";
+    statusFilter: "ALL" | "UNPAID" | "PAID";
+    projectFilter: string;
+  }>({
+    type: "HUTANG",
+    statusFilter: "ALL",
+    projectFilter: "ALL",
+  });
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPaymentModal, setShowPaymentModal] = useState<DebtRecord | null>(
     null,
@@ -7119,6 +7193,26 @@ const AdminDebtScreen = ({
 
   const [showPdfConfigModal, setShowPdfConfigModal] = useState(false);
   const [pdfConfigRecord, setPdfConfigRecord] = useState<DebtRecord | null>(null);
+  const [showStatusChangeModal, setShowStatusChangeModal] = useState<{
+    record: DebtRecord;
+    targetStatus: "PAID" | "UNPAID";
+    remaining: number;
+    totalPaid: number;
+    contractValue: number;
+  } | null>(null);
+
+  const [selectedTransactionDetailRecord, setSelectedTransactionDetailRecord] = useState<DebtRecord | null>(null);
+
+  const [statusChangeForm, setStatusChangeForm] = useState({
+    status: "PAID" as "PAID" | "UNPAID",
+    paymentAmount: "",
+    date: new Date().toISOString().split("T")[0],
+    note: "",
+    paymentMethod: "TRANSFER" as "TRANSFER" | "CASH",
+    sumberDana: "REKENING PT",
+    createFinancialRecord: false,
+  });
+
   const [pdfOptions, setPdfOptions] = useState({
     companyName: "PT GARDA INOVASI GLOBALTECH",
     includeAddress: true,
@@ -7185,20 +7279,247 @@ const AdminDebtScreen = ({
     return effectiveDebtRecords.find((d) => d.id === showEditModal.id) || showEditModal;
   }, [showEditModal, effectiveDebtRecords]);
 
-  const filteredRecords = useMemo(() => {
+  const statusCounts = useMemo(() => {
+    const filterByProj = (r: DebtRecord) => filterProject === "ALL" || r.projectId === filterProject;
     const records = effectiveDebtRecords.filter(
       (r) =>
         r.type === activeTab &&
+        filterByProj(r) &&
         (r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.contactName.toLowerCase().includes(searchQuery.toLowerCase())) &&
-        (filterProject === "ALL" || r.projectId === filterProject),
+          r.contactName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (r.customId || "").toLowerCase().includes(searchQuery.toLowerCase()))
     );
+
+    let unpaid = 0;
+    let paid = 0;
+    records.forEach((r) => {
+      const sched = getScheduleForRecord(r, projects, financialRecords);
+      const rem = Math.max(0, (sched.contractValue || r.amount || 0) - sched.totalPaid);
+      if (rem > 0) unpaid++;
+      else paid++;
+    });
+
+    return { all: records.length, unpaid, paid };
+  }, [effectiveDebtRecords, activeTab, filterProject, searchQuery, projects, financialRecords]);
+
+  const filteredRecords = useMemo(() => {
+    const records = effectiveDebtRecords.filter((r) => {
+      if (r.type !== activeTab) return false;
+      const matchesSearch =
+        r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        r.contactName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (r.customId || "").toLowerCase().includes(searchQuery.toLowerCase());
+      if (!matchesSearch) return false;
+
+      const matchesProject = filterProject === "ALL" || r.projectId === filterProject;
+      if (!matchesProject) return false;
+
+      const sched = getScheduleForRecord(r, projects, financialRecords);
+      const remaining = Math.max(0, (sched.contractValue || r.amount || 0) - sched.totalPaid);
+
+      if (filterStatus === "UNPAID") {
+        return remaining > 0;
+      }
+      if (filterStatus === "PAID") {
+        return remaining <= 0;
+      }
+      return true;
+    });
+
     return [...records].sort((a, b) => {
       const idA = a.customId || "";
       const idB = b.customId || "";
-      return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: 'base' });
+      return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: "base" });
     });
-  }, [effectiveDebtRecords, activeTab, searchQuery, filterProject]);
+  }, [effectiveDebtRecords, activeTab, searchQuery, filterProject, filterStatus, projects, financialRecords]);
+
+  const handleQuickMarkPaid = (record: DebtRecord) => {
+    const sched = getScheduleForRecord(record, projects, financialRecords);
+    const totalPaidBefore = sched.totalPaid;
+    const initialAmt = sched.contractValue || record.amount || 0;
+    const remaining = Math.max(0, initialAmt - totalPaidBefore);
+
+    if (remaining <= 0) {
+      alert("Catatan ini sudah lunas sepenuhnya.");
+      return;
+    }
+
+    setShowPaymentModal(record);
+    setPaymentForm({
+      amount: remaining.toString(),
+      date: new Date().toISOString().split("T")[0],
+      note: `Pelunasan Penuh (${record.type === "HUTANG" ? "Hutang" : "Piutang"})`,
+      paymentMethod: "TRANSFER",
+      sumberDana: "REKENING PT",
+    });
+  };
+
+  const handleOpenStatusModal = (record: DebtRecord, preferredStatus?: "PAID" | "UNPAID") => {
+    const sched = getScheduleForRecord(record, projects, financialRecords);
+    const contractVal = sched.contractValue || record.amount || 0;
+    const paid = sched.totalPaid;
+    const rem = Math.max(0, contractVal - paid);
+    const currentIsPaid = rem === 0;
+
+    const target = preferredStatus || (currentIsPaid ? "UNPAID" : "PAID");
+
+    setShowStatusChangeModal({
+      record,
+      targetStatus: target,
+      remaining: rem,
+      totalPaid: paid,
+      contractValue: contractVal,
+    });
+
+    setStatusChangeForm({
+      status: target,
+      paymentAmount: (rem > 0 ? rem : contractVal).toString(),
+      date: new Date().toISOString().split("T")[0],
+      note: `Pelunasan ${record.type === "HUTANG" ? "Hutang" : "Piutang"} (${record.contactName})`,
+      paymentMethod: "TRANSFER",
+      sumberDana: "REKENING PT",
+      createFinancialRecord: false,
+    });
+  };
+
+  const handleConfirmStatusChange = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!showStatusChangeModal) return;
+
+    const { record, remaining, contractValue } = showStatusChangeModal;
+    const targetStatus = statusChangeForm.status;
+
+    if (targetStatus === "PAID") {
+      const payAmt = Number(statusChangeForm.paymentAmount) || remaining || contractValue;
+      if (payAmt <= 0) {
+        alert("Nominal pelunasan harus lebih dari 0.");
+        return;
+      }
+
+      let finId: string | undefined = undefined;
+
+      if (statusChangeForm.createFinancialRecord) {
+        const parts = statusChangeForm.date.split("-");
+        const dd = parts[2] || "01";
+        const mm = parts[1] || "01";
+        const yy = (parts[0] || "2026").substring(2);
+        const dateFormatted = `${dd}${mm}${yy}`;
+
+        let prefix = record.type === "HUTANG" ? "BNK" : "INC";
+        if (record.type === "HUTANG" && statusChangeForm.paymentMethod === "CASH") {
+          prefix = "PRS";
+        }
+
+        let nextNum = financialRecords.filter((r) => (r.customId || "").startsWith(`${prefix}-${dateFormatted}-`)).length + 1;
+        let nextNumStr = String(nextNum).padStart(3, "0");
+        while (financialRecords.some((r) => r.customId === `${prefix}-${dateFormatted}-${nextNumStr}`)) {
+          nextNum++;
+          nextNumStr = String(nextNum).padStart(3, "0");
+        }
+        const chosenCustomId = `${prefix}-${dateFormatted}-${nextNumStr}`;
+
+        const finRecord: any = {
+          type: record.type === "HUTANG" ? "OUT" : "IN",
+          flowType: statusChangeForm.paymentMethod === "CASH" ? "KAS BESAR" : "REKENING PT",
+          customId: chosenCustomId,
+          category: record.type === "HUTANG" ? "Pembayaran Hutang" : "Penerimaan Piutang",
+          amount: payAmt,
+          date: statusChangeForm.date,
+          description: statusChangeForm.note || `Pelunasan ${record.type} [${record.customId || record.id}] - ${record.contactName}`,
+          recordedBy: user.name,
+          timestamp: Date.now(),
+          ...(record.type === "HUTANG" ? { refHutang: record.customId || record.id } : { refPiutang: record.customId || record.id }),
+        };
+
+        finId = await dbService.createDocument("financialRecords", finRecord);
+        setFinancialRecords?.((prev) => [{ id: finId, ...finRecord } as FinancialRecord, ...prev]);
+      }
+
+      const newPaymentEntry: DebtPayment = {
+        id: Math.random().toString(36).substr(2, 9),
+        amount: payAmt,
+        date: statusChangeForm.date,
+        note: statusChangeForm.note || `Pelunasan ${record.type === "HUTANG" ? "Hutang" : "Piutang"} (Ditandai Lunas)`,
+        financialRecordId: finId,
+        recordedBy: user.name,
+        status: "LUNAS",
+      };
+
+      const existingPayments = record.payments || [];
+      const updatedPayments = [...existingPayments, newPaymentEntry];
+
+      const updatedTerms = (record.terms || []).map((t) => ({
+        ...t,
+        status: "LUNAS" as const,
+        amount: t.expectedAmount || t.amount,
+        paymentDate: statusChangeForm.date,
+      }));
+
+      const updatedRecord: DebtRecord = {
+        ...record,
+        payments: updatedPayments,
+        status: "PAID",
+        ...(updatedTerms.length > 0 ? { terms: updatedTerms } : {}),
+      };
+
+      await dbService.setDocument("debtRecords", record.id, updatedRecord);
+
+      setDebtRecords?.((prev) => {
+        const exists = prev.some((d) => d.id === record.id);
+        if (exists) {
+          return prev.map((d) => (d.id === record.id ? updatedRecord : d));
+        }
+        return [updatedRecord, ...prev];
+      });
+
+      if (selectedTerminRecord && selectedTerminRecord.id === record.id) {
+        setSelectedTerminRecord(updatedRecord);
+      }
+
+      await logActivity(
+        "DEBT",
+        "UPDATE",
+        `Mengubah status menjadi LUNAS pada ${record.type} [${record.customId || record.id}] (${record.contactName})`
+      );
+    } else {
+      // Set to UNPAID (Belum Lunas / Gak Lunas)
+      const resetTerms = (record.terms || []).map((t) => ({
+        ...t,
+        status: "BELUM BAYAR" as const,
+        amount: 0,
+        paymentDate: "-",
+      }));
+
+      const updatedRecord: DebtRecord = {
+        ...record,
+        payments: [],
+        status: "UNPAID",
+        ...(resetTerms.length > 0 ? { terms: resetTerms } : {}),
+      };
+
+      await dbService.setDocument("debtRecords", record.id, updatedRecord);
+
+      setDebtRecords?.((prev) => {
+        const exists = prev.some((d) => d.id === record.id);
+        if (exists) {
+          return prev.map((d) => (d.id === record.id ? updatedRecord : d));
+        }
+        return [updatedRecord, ...prev];
+      });
+
+      if (selectedTerminRecord && selectedTerminRecord.id === record.id) {
+        setSelectedTerminRecord(updatedRecord);
+      }
+
+      await logActivity(
+        "DEBT",
+        "UPDATE",
+        `Mengubah status menjadi BELUM LUNAS (Gak Lunas) pada ${record.type} [${record.customId || record.id}] (${record.contactName})`
+      );
+    }
+
+    setShowStatusChangeModal(null);
+  };
 
   const totalHutang = useMemo(() => {
     return effectiveDebtRecords
@@ -7941,88 +8262,1179 @@ const AdminDebtScreen = ({
   };
 
   const downloadPDF = () => {
+    setExportReportConfig((prev) => ({
+      ...prev,
+      type: activeTab,
+      projectFilter: filterProject,
+      statusFilter: filterStatus,
+    }));
+    setShowExportReportModal(true);
+  };
+
+  const executeExportPDF = (config: {
+    type: "HUTANG" | "PIUTANG" | "GABUNGAN";
+    statusFilter: "ALL" | "UNPAID" | "PAID";
+    projectFilter: string;
+  }) => {
     setIsExporting(true);
-    const doc = new jsPDF();
+    try {
+      const doc = new jsPDF("landscape", "mm", "a4");
+      let currentY = 16;
 
-    // Improved Header matching Finance style
-    doc.setFontSize(18);
-    doc.setTextColor(26, 43, 73);
-    doc.setFont("helvetica", "bold");
-    doc.text(`LAPORAN ${activeTab} - PT GARDA INOVASI GLOBALTECH`, 105, 20, {
-      align: "center",
-    });
+      const projectNameLabel =
+        config.projectFilter === "ALL"
+          ? "Semua Proyek (Global)"
+          : projects.find((p) => p.id === config.projectFilter)?.name || config.projectFilter;
 
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(100);
-    doc.text(`Dicetak pada: ${new Date().toLocaleString("id-ID")}`, 105, 27, {
-      align: "center",
-    });
+      const statusFilterLabel =
+        config.statusFilter === "ALL"
+          ? "Semua Status (Lunas & Belum Lunas)"
+          : config.statusFilter === "UNPAID"
+          ? "Hanya Belum Lunas (Outstanding)"
+          : "Hanya yang Sudah Lunas";
 
-    // Summary Box like Finance
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(14, 35, 182, 25, 5, 5, "F");
-    doc.setFontSize(10);
-    doc.setTextColor(51, 65, 85);
-    
-    const activeAwal = activeTab === "HUTANG" ? debtTotals.hutangAwal : debtTotals.piutangAwal;
-    const activeTerbayar = activeTab === "HUTANG" ? debtTotals.hutangTerbayar : debtTotals.piutangTerbayar;
-    const activeSisa = activeTab === "HUTANG" ? debtTotals.hutangSisa : debtTotals.piutangSisa;
+      // Helper to process records by type
+      const processRecords = (targetType: "HUTANG" | "PIUTANG") => {
+        const records = effectiveDebtRecords.filter((r) => {
+          if (r.type !== targetType) return false;
+          if (config.projectFilter !== "ALL" && r.projectId !== config.projectFilter) return false;
 
-    doc.text(
-      `Total Awal (Rp): ${formatCurrencyIDR(activeAwal).replace("Rp ", "")}`,
-      20,
-      44,
-    );
-    doc.text(
-      `Total Terbayar (Rp): ${formatCurrencyIDR(activeTerbayar).replace("Rp ", "")}`,
-      20,
-      52,
-    );
-    doc.text(
-      `Sisa Saldo (Rp): ${formatCurrencyIDR(activeSisa).replace("Rp ", "")}`,
-      110,
-      44,
-    );
-    doc.text(`Status: Aktif`, 110, 52);
+          const sched = getScheduleForRecord(r, projects, financialRecords);
+          const totalPaid = sched.totalPaid;
+          const initialAmt = sched.contractValue || r.amount || 0;
+          const remaining = Math.max(0, initialAmt - totalPaid);
 
-    const tableData = filteredRecords.map((r) => {
-      const paid = (r.payments || []).reduce((a, b) => a + b.amount, 0);
-      const remaining = r.amount - paid;
-      return [
-        new Date(r.timestamp).toLocaleDateString("id-ID"),
-        r.title,
-        r.contactName,
-        formatCurrencyIDR(r.amount).replace("Rp ", ""),
-        formatCurrencyIDR(paid).replace("Rp ", ""),
-        formatCurrencyIDR(remaining).replace("Rp ", ""),
-        r.status,
-      ];
-    });
+          if (config.statusFilter === "UNPAID") return remaining > 0;
+          if (config.statusFilter === "PAID") return remaining <= 0;
+          return true;
+        });
 
-    autoTable(doc, {
-      startY: 70,
-      head: [
-        [
-          "Tanggal",
-          "Judul",
-          "Kontak",
-          "Total (Rp)",
-          "Dibayar (Rp)",
-          "Sisa (Rp)",
-          "Status",
-        ],
-      ],
-      body: tableData,
-      theme: "grid",
-      headStyles: { fillColor: [26, 43, 73], textColor: 255 },
-      styles: { fontSize: 7 },
-    });
+        let totalAwal = 0;
+        let totalTerbayar = 0;
+        let totalSisa = 0;
 
-    doc.save(
-      `Laporan_${activeTab}_GIG_${new Date().toISOString().split("T")[0]}.pdf`,
-    );
-    setIsExporting(false);
+        const groups: {
+          [key: string]: {
+            name: string;
+            count: number;
+            totalAmount: number;
+            totalPaid: number;
+            totalRemaining: number;
+          };
+        } = {};
+
+        records.forEach((r) => {
+          const sched = getScheduleForRecord(r, projects, financialRecords);
+          const paid = sched.totalPaid;
+          const initial = sched.contractValue || r.amount || 0;
+          const rem = Math.max(0, initial - paid);
+
+          totalAwal += initial;
+          totalTerbayar += paid;
+          totalSisa += rem;
+
+          const rawName = (r.contactName || "Tanpa Nama").trim();
+          const displayName = normalizeContactName(rawName);
+          const groupKey = displayName.toUpperCase();
+
+          if (!groups[groupKey]) {
+            groups[groupKey] = {
+              name: displayName,
+              count: 0,
+              totalAmount: 0,
+              totalPaid: 0,
+              totalRemaining: 0,
+            };
+          }
+          groups[groupKey].count += 1;
+          groups[groupKey].totalAmount += initial;
+          groups[groupKey].totalPaid += paid;
+          groups[groupKey].totalRemaining += rem;
+        });
+
+        const contactList = Object.values(groups).sort(
+          (a, b) => b.totalRemaining - a.totalRemaining || a.name.localeCompare(b.name)
+        );
+
+        const sortedRecords = [...records].sort((a, b) => {
+          const idA = a.customId || "";
+          const idB = b.customId || "";
+          return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: "base" });
+        });
+
+        return {
+          records: sortedRecords,
+          totalAwal,
+          totalTerbayar,
+          totalSisa,
+          contactList,
+        };
+      };
+
+      const hutangData = processRecords("HUTANG");
+      const piutangData = processRecords("PIUTANG");
+
+      const drawHeader = (title: string, subtitle: string) => {
+        doc.setFillColor(17, 42, 70);
+        doc.rect(14, 12, 269, 3, "F");
+
+        doc.setFontSize(14);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(17, 42, 70);
+        doc.text("PT GARDA INOVASI GLOBALTECH", 14, 21);
+
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(30, 41, 59);
+        doc.text(title, 14, 27);
+
+        doc.setFontSize(8);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(100, 116, 139);
+        doc.text(
+          `${subtitle} | Lingkup Proyek: ${projectNameLabel} | Filter: ${statusFilterLabel} | Dicetak: ${new Date().toLocaleString("id-ID")}`,
+          14,
+          32
+        );
+
+        doc.setDrawColor(226, 232, 240);
+        doc.line(14, 35, 283, 35);
+        currentY = 40;
+      };
+
+      if (config.type === "HUTANG") {
+        drawHeader(
+          "LAPORAN KEWAJIBAN HUTANG USAHA & REKAPITULASI KREDITUR",
+          "Daftar Rekapitulasi Kewajiban Hutang ke Masing-Masing Pihak yang Dihutangi & Rincian Transaksi"
+        );
+
+        // Summary KPI Box
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(14, currentY, 269, 22, 3, 3, "F");
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(14, currentY, 269, 22, 3, 3, "S");
+
+        const colW = 269 / 4;
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(100, 116, 139);
+        doc.text("TOTAL HUTANG AWAL", 14 + 6, currentY + 6.5);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(15, 23, 42);
+        doc.text(formatCurrencyIDR(hutangData.totalAwal), 14 + 6, currentY + 14);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(148, 163, 184);
+        doc.text("Nilai Pokok / Kontrak", 14 + 6, currentY + 18.5);
+
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(16, 185, 129);
+        doc.text("TOTAL TELAH DIBAYAR", 14 + colW + 6, currentY + 6.5);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(16, 185, 129);
+        doc.text(formatCurrencyIDR(hutangData.totalTerbayar), 14 + colW + 6, currentY + 14);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(148, 163, 184);
+        doc.text(
+          `Realisasi: ${hutangData.totalAwal > 0 ? ((hutangData.totalTerbayar / hutangData.totalAwal) * 100).toFixed(1) : 0}%`,
+          14 + colW + 6,
+          currentY + 18.5
+        );
+
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(225, 29, 72);
+        doc.text("SISA HUTANG PERUSAHAAN", 14 + colW * 2 + 6, currentY + 6.5);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(225, 29, 72);
+        doc.text(formatCurrencyIDR(hutangData.totalSisa), 14 + colW * 2 + 6, currentY + 14);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(148, 163, 184);
+        doc.text("Kewajiban Belum Lunas", 14 + colW * 2 + 6, currentY + 18.5);
+
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(100, 116, 139);
+        doc.text("TOTAL PIHAK / KREDITUR", 14 + colW * 3 + 6, currentY + 6.5);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(15, 23, 42);
+        doc.text(`${hutangData.contactList.length} Pihak`, 14 + colW * 3 + 6, currentY + 14);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(148, 163, 184);
+        doc.text(`${hutangData.records.length} Catatan Tagihan`, 14 + colW * 3 + 6, currentY + 18.5);
+
+        currentY += 28;
+
+        // TABLE 1: TOTAL HUTANG PERUSAHAAN KE MASING-MASING ORANG YANG DIHUTANGI
+        doc.setFontSize(9.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(17, 42, 70);
+        doc.text("1. REKAPITULASI TOTAL HUTANG PERUSAHAAN KE MASING-MASING ORANG YANG DIHUTANGI", 14, currentY);
+        currentY += 3;
+
+        const groupRows = hutangData.contactList.map((c, idx) => {
+          const isLunas = c.totalRemaining <= 0;
+          const statusStr = isLunas ? "LUNAS" : c.totalPaid > 0 ? "DICICIL" : "BELUM LUNAS";
+          const pct = c.totalAmount > 0 ? ((c.totalPaid / c.totalAmount) * 100).toFixed(0) + "%" : "0%";
+          return [
+            (idx + 1).toString(),
+            c.name,
+            `${c.count} Rekam`,
+            formatCurrencyIDR(c.totalAmount).replace("Rp ", ""),
+            formatCurrencyIDR(c.totalPaid).replace("Rp ", ""),
+            formatCurrencyIDR(c.totalRemaining).replace("Rp ", ""),
+            statusStr,
+            pct,
+          ];
+        });
+
+        groupRows.push([
+          "",
+          "TOTAL KESELURUHAN REKAPITULASI",
+          `${hutangData.contactList.length} Pihak`,
+          formatCurrencyIDR(hutangData.totalAwal).replace("Rp ", ""),
+          formatCurrencyIDR(hutangData.totalTerbayar).replace("Rp ", ""),
+          formatCurrencyIDR(hutangData.totalSisa).replace("Rp ", ""),
+          hutangData.totalSisa <= 0 ? "LUNAS" : "BELUM LUNAS",
+          hutangData.totalAwal > 0 ? ((hutangData.totalTerbayar / hutangData.totalAwal) * 100).toFixed(0) + "%" : "0%",
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: 14, right: 14 },
+          head: [
+            [
+              "NO",
+              "NAMA PIHAK / ORANG YANG DIHUTANGI (KREDITUR / VENDOR)",
+              "JML CATATAN",
+              "TOTAL AWAL (RP)",
+              "TELAH DIBAYAR (RP)",
+              "SISA HUTANG (RP)",
+              "STATUS",
+              "% LUNAS",
+            ],
+          ],
+          body: groupRows,
+          theme: "grid",
+          headStyles: {
+            fillColor: [17, 42, 70],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            halign: "center",
+          },
+          bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { halign: "center", cellWidth: 10 },
+            1: { fontStyle: "bold", cellWidth: 70 },
+            2: { halign: "center", cellWidth: 22 },
+            3: { halign: "right", fontStyle: "bold", cellWidth: 42 },
+            4: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 42 },
+            5: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 45 },
+            6: { halign: "center", fontStyle: "bold", cellWidth: 22 },
+            7: { halign: "center", cellWidth: 16 },
+          },
+          didParseCell: (data) => {
+            if (data.row.index === groupRows.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+            }
+          },
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 9;
+
+        if (currentY > 165) {
+          doc.addPage();
+          currentY = 16;
+        }
+
+        // TABLE 2: RINCIAN LENGKAP TRANSAKSI HUTANG USAHA
+        doc.setFontSize(9.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(17, 42, 70);
+        doc.text("2. RINCIAN LENGKAP SELURUH CATATAN TRANSAKSI HUTANG USAHA", 14, currentY);
+        currentY += 3;
+
+        const detailRows = hutangData.records.map((r, idx) => {
+          const sched = getScheduleForRecord(r, projects, financialRecords);
+          const paid = sched.totalPaid;
+          const initial = sched.contractValue || r.amount || 0;
+          const remaining = Math.max(0, initial - paid);
+          const projName = projects.find((p) => p.id === r.projectId)?.name || "-";
+          const statusStr = remaining <= 0 ? "LUNAS" : paid > 0 ? "DICICIL" : "BELUM LUNAS";
+
+          return [
+            (idx + 1).toString(),
+            r.customId || r.id,
+            r.contactName || "-",
+            r.title + (r.description ? ` (${r.description})` : ""),
+            projName,
+            r.dueDate ? new Date(r.dueDate).toLocaleDateString("id-ID") : "-",
+            formatCurrencyIDR(initial).replace("Rp ", ""),
+            formatCurrencyIDR(paid).replace("Rp ", ""),
+            formatCurrencyIDR(remaining).replace("Rp ", ""),
+            statusStr,
+          ];
+        });
+
+        detailRows.push([
+          "",
+          "TOTAL SELURUH CATATAN",
+          "",
+          "",
+          "",
+          `${hutangData.records.length} Item`,
+          formatCurrencyIDR(hutangData.totalAwal).replace("Rp ", ""),
+          formatCurrencyIDR(hutangData.totalTerbayar).replace("Rp ", ""),
+          formatCurrencyIDR(hutangData.totalSisa).replace("Rp ", ""),
+          hutangData.totalSisa <= 0 ? "LUNAS" : "BELUM LUNAS",
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: 14, right: 14 },
+          head: [
+            [
+              "NO",
+              "KODE REF",
+              "PIHAK DIHUTANGI",
+              "KETERANGAN / PERUNTUKAN",
+              "PROYEK",
+              "JATUH TEMPO",
+              "AWAL (RP)",
+              "DIBAYAR (RP)",
+              "SISA (RP)",
+              "STATUS",
+            ],
+          ],
+          body: detailRows,
+          theme: "grid",
+          headStyles: {
+            fillColor: [17, 42, 70],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            halign: "center",
+          },
+          bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { halign: "center", cellWidth: 9 },
+            1: { fontStyle: "bold", cellWidth: 26 },
+            2: { fontStyle: "bold", cellWidth: 38 },
+            3: { cellWidth: 55 },
+            4: { cellWidth: 32 },
+            5: { halign: "center", cellWidth: 22 },
+            6: { halign: "right", fontStyle: "bold", cellWidth: 25 },
+            7: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 25 },
+            8: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 25 },
+            9: { halign: "center", fontStyle: "bold", cellWidth: 12 },
+          },
+          didParseCell: (data) => {
+            if (data.row.index === detailRows.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+            }
+          },
+        });
+      } else if (config.type === "PIUTANG") {
+        drawHeader(
+          "LAPORAN TAGIHAN PIUTANG USAHA & REKAPITULASI KLIEN",
+          "Daftar Rekapitulasi Tagihan Piutang Perusahaan per Klien / Proyek & Rincian Termin"
+        );
+
+        // Summary KPI Box
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(14, currentY, 269, 22, 3, 3, "F");
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(14, currentY, 269, 22, 3, 3, "S");
+
+        const colW = 269 / 4;
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(100, 116, 139);
+        doc.text("TOTAL NILAI KONTRAK / PIUTANG", 14 + 6, currentY + 6.5);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(15, 23, 42);
+        doc.text(formatCurrencyIDR(piutangData.totalAwal), 14 + 6, currentY + 14);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(148, 163, 184);
+        doc.text("Hak Tagih Perusahaan", 14 + 6, currentY + 18.5);
+
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(16, 185, 129);
+        doc.text("TOTAL TELAH DITERIMA", 14 + colW + 6, currentY + 6.5);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(16, 185, 129);
+        doc.text(formatCurrencyIDR(piutangData.totalTerbayar), 14 + colW + 6, currentY + 14);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(148, 163, 184);
+        doc.text(
+          `Realisasi Kas Masuk: ${piutangData.totalAwal > 0 ? ((piutangData.totalTerbayar / piutangData.totalAwal) * 100).toFixed(1) : 0}%`,
+          14 + colW + 6,
+          currentY + 18.5
+        );
+
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(217, 119, 6);
+        doc.text("SISA PIUTANG MENUNGGU", 14 + colW * 2 + 6, currentY + 6.5);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(217, 119, 6);
+        doc.text(formatCurrencyIDR(piutangData.totalSisa), 14 + colW * 2 + 6, currentY + 14);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(148, 163, 184);
+        doc.text("Belum Dilunasi Klien", 14 + colW * 2 + 6, currentY + 18.5);
+
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(100, 116, 139);
+        doc.text("TOTAL KLIEN / DEBITUR", 14 + colW * 3 + 6, currentY + 6.5);
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(15, 23, 42);
+        doc.text(`${piutangData.contactList.length} Pihak`, 14 + colW * 3 + 6, currentY + 14);
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(148, 163, 184);
+        doc.text(`${piutangData.records.length} Invoice / Termin`, 14 + colW * 3 + 6, currentY + 18.5);
+
+        currentY += 28;
+
+        // TABLE 1: REKAPITULASI PIUTANG PER KLIEN
+        doc.setFontSize(9.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(17, 42, 70);
+        doc.text("1. REKAPITULASI TOTAL PIUTANG PERUSAHAAN PER KLIEN / DEBITUR", 14, currentY);
+        currentY += 3;
+
+        const groupRows = piutangData.contactList.map((c, idx) => {
+          const isLunas = c.totalRemaining <= 0;
+          const statusStr = isLunas ? "LUNAS" : c.totalPaid > 0 ? "DICICIL" : "BELUM LUNAS";
+          const pct = c.totalAmount > 0 ? ((c.totalPaid / c.totalAmount) * 100).toFixed(0) + "%" : "0%";
+          return [
+            (idx + 1).toString(),
+            c.name,
+            `${c.count} Rekam`,
+            formatCurrencyIDR(c.totalAmount).replace("Rp ", ""),
+            formatCurrencyIDR(c.totalPaid).replace("Rp ", ""),
+            formatCurrencyIDR(c.totalRemaining).replace("Rp ", ""),
+            statusStr,
+            pct,
+          ];
+        });
+
+        groupRows.push([
+          "",
+          "TOTAL KESELURUHAN REKAPITULASI",
+          `${piutangData.contactList.length} Klien`,
+          formatCurrencyIDR(piutangData.totalAwal).replace("Rp ", ""),
+          formatCurrencyIDR(piutangData.totalTerbayar).replace("Rp ", ""),
+          formatCurrencyIDR(piutangData.totalSisa).replace("Rp ", ""),
+          piutangData.totalSisa <= 0 ? "LUNAS" : "BELUM LUNAS",
+          piutangData.totalAwal > 0 ? ((piutangData.totalTerbayar / piutangData.totalAwal) * 100).toFixed(0) + "%" : "0%",
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: 14, right: 14 },
+          head: [
+            [
+              "NO",
+              "NAMA KLIEN / DEBITUR (INSTANSI / OWNER PROYEK)",
+              "JML TERMIN",
+              "TOTAL KONTRAK (RP)",
+              "DITERIMA KAS (RP)",
+              "SISA PIUTANG (RP)",
+              "STATUS",
+              "% TERBAYAR",
+            ],
+          ],
+          body: groupRows,
+          theme: "grid",
+          headStyles: {
+            fillColor: [17, 42, 70],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            halign: "center",
+          },
+          bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { halign: "center", cellWidth: 10 },
+            1: { fontStyle: "bold", cellWidth: 70 },
+            2: { halign: "center", cellWidth: 22 },
+            3: { halign: "right", fontStyle: "bold", cellWidth: 42 },
+            4: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 42 },
+            5: { halign: "right", fontStyle: "bold", textColor: [217, 119, 6], cellWidth: 45 },
+            6: { halign: "center", fontStyle: "bold", cellWidth: 22 },
+            7: { halign: "center", cellWidth: 16 },
+          },
+          didParseCell: (data) => {
+            if (data.row.index === groupRows.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+            }
+          },
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 9;
+
+        if (currentY > 165) {
+          doc.addPage();
+          currentY = 16;
+        }
+
+        // TABLE 2: RINCIAN DETAIL PIUTANG
+        doc.setFontSize(9.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(17, 42, 70);
+        doc.text("2. RINCIAN LENGKAP SELURUH CATATAN INVOICE & TERMIN PIUTANG USAHA", 14, currentY);
+        currentY += 3;
+
+        const detailRows = piutangData.records.map((r, idx) => {
+          const sched = getScheduleForRecord(r, projects, financialRecords);
+          const paid = sched.totalPaid;
+          const initial = sched.contractValue || r.amount || 0;
+          const remaining = Math.max(0, initial - paid);
+          const projName = projects.find((p) => p.id === r.projectId)?.name || "-";
+          const statusStr = remaining <= 0 ? "LUNAS" : paid > 0 ? "DICICIL" : "BELUM LUNAS";
+
+          return [
+            (idx + 1).toString(),
+            r.customId || r.id,
+            r.contactName || "-",
+            r.title + (r.description ? ` (${r.description})` : ""),
+            projName,
+            r.dueDate ? new Date(r.dueDate).toLocaleDateString("id-ID") : "-",
+            formatCurrencyIDR(initial).replace("Rp ", ""),
+            formatCurrencyIDR(paid).replace("Rp ", ""),
+            formatCurrencyIDR(remaining).replace("Rp ", ""),
+            statusStr,
+          ];
+        });
+
+        detailRows.push([
+          "",
+          "TOTAL SELURUH CATATAN",
+          "",
+          "",
+          "",
+          `${piutangData.records.length} Item`,
+          formatCurrencyIDR(piutangData.totalAwal).replace("Rp ", ""),
+          formatCurrencyIDR(piutangData.totalTerbayar).replace("Rp ", ""),
+          formatCurrencyIDR(piutangData.totalSisa).replace("Rp ", ""),
+          piutangData.totalSisa <= 0 ? "LUNAS" : "BELUM LUNAS",
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: 14, right: 14 },
+          head: [
+            [
+              "NO",
+              "KODE REF",
+              "KLIEN / DEBITUR",
+              "KETERANGAN / INVOICE",
+              "PROYEK",
+              "JATUH TEMPO",
+              "KONTRAK (RP)",
+              "DITERIMA (RP)",
+              "SISA (RP)",
+              "STATUS",
+            ],
+          ],
+          body: detailRows,
+          theme: "grid",
+          headStyles: {
+            fillColor: [17, 42, 70],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            halign: "center",
+          },
+          bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { halign: "center", cellWidth: 9 },
+            1: { fontStyle: "bold", cellWidth: 26 },
+            2: { fontStyle: "bold", cellWidth: 38 },
+            3: { cellWidth: 55 },
+            4: { cellWidth: 32 },
+            5: { halign: "center", cellWidth: 22 },
+            6: { halign: "right", fontStyle: "bold", cellWidth: 25 },
+            7: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 25 },
+            8: { halign: "right", fontStyle: "bold", textColor: [217, 119, 6], cellWidth: 25 },
+            9: { halign: "center", fontStyle: "bold", cellWidth: 12 },
+          },
+          didParseCell: (data) => {
+            if (data.row.index === detailRows.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+            }
+          },
+        });
+      } else {
+        // GABUNGAN (HUTANG & PIUTANG KONSOLIDASI PROFESIONAL)
+        drawHeader(
+          "LAPORAN KONSOLIDASI NERACA POSISI HUTANG & PIUTANG USAHA",
+          "Ringkasan Eksekutif Konsolidasi Tagihan Piutang, Kewajiban Hutang, dan Posisi Likuiditas Bersih"
+        );
+
+        const netPosition = piutangData.totalSisa - hutangData.totalSisa;
+        const isSurplus = netPosition >= 0;
+        const cardW = (269 - 9) / 4;
+
+        // Card 1: TOTAL PIUTANG
+        doc.setFillColor(240, 253, 250);
+        doc.roundedRect(14, currentY, cardW, 23, 3, 3, "F");
+        doc.setDrawColor(204, 251, 241);
+        doc.roundedRect(14, currentY, cardW, 23, 3, 3, "S");
+
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(15, 118, 110);
+        doc.text("TOTAL PIUTANG USAHA (TAGIHAN)", 14 + 5, currentY + 6);
+        doc.setFontSize(10.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(13, 148, 136);
+        doc.text(formatCurrencyIDR(piutangData.totalSisa), 14 + 5, currentY + 13.5);
+        doc.setFontSize(6.5);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(100, 116, 139);
+        doc.text(
+          `Kontrak: ${formatCurrencyIDR(piutangData.totalAwal)} | In: ${formatCurrencyIDR(piutangData.totalTerbayar)}`,
+          14 + 5,
+          currentY + 19
+        );
+
+        // Card 2: TOTAL HUTANG
+        const c2X = 14 + cardW + 3;
+        doc.setFillColor(255, 241, 242);
+        doc.roundedRect(c2X, currentY, cardW, 23, 3, 3, "F");
+        doc.setDrawColor(254, 205, 211);
+        doc.roundedRect(c2X, currentY, cardW, 23, 3, 3, "S");
+
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(190, 18, 60);
+        doc.text("TOTAL HUTANG USAHA (KEWAJIBAN)", c2X + 5, currentY + 6);
+        doc.setFontSize(10.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(225, 29, 72);
+        doc.text(formatCurrencyIDR(hutangData.totalSisa), c2X + 5, currentY + 13.5);
+        doc.setFontSize(6.5);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(100, 116, 139);
+        doc.text(
+          `Pokok: ${formatCurrencyIDR(hutangData.totalAwal)} | Out: ${formatCurrencyIDR(hutangData.totalTerbayar)}`,
+          c2X + 5,
+          currentY + 19
+        );
+
+        // Card 3: POSISI SALDO BERSIH
+        const c3X = c2X + cardW + 3;
+        if (isSurplus) {
+          doc.setFillColor(240, 253, 244);
+          doc.roundedRect(c3X, currentY, cardW, 23, 3, 3, "F");
+          doc.setDrawColor(187, 247, 208);
+          doc.roundedRect(c3X, currentY, cardW, 23, 3, 3, "S");
+          doc.setFontSize(7);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(22, 101, 52);
+          doc.text("POSISI BERSIH (PIUTANG - HUTANG)", c3X + 5, currentY + 6);
+          doc.setFontSize(10.5);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(22, 163, 74);
+        } else {
+          doc.setFillColor(254, 242, 242);
+          doc.roundedRect(c3X, currentY, cardW, 23, 3, 3, "F");
+          doc.setDrawColor(254, 202, 202);
+          doc.roundedRect(c3X, currentY, cardW, 23, 3, 3, "S");
+          doc.setFontSize(7);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(153, 27, 27);
+          doc.text("POSISI BERSIH (PIUTANG - HUTANG)", c3X + 5, currentY + 6);
+          doc.setFontSize(10.5);
+          doc.setFont("helvetica", "bold");
+          doc.setTextColor(220, 38, 38);
+        }
+        doc.text(
+          `${isSurplus ? "+" : "-"} ${formatCurrencyIDR(Math.abs(netPosition))}`,
+          c3X + 5,
+          currentY + 13.5
+        );
+        doc.setFontSize(6.5);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(100, 116, 139);
+        doc.text(
+          isSurplus ? "Surplus Tagihan (Kas Sehat)" : "Defisit Kewajiban (Waspada)",
+          c3X + 5,
+          currentY + 19
+        );
+
+        // Card 4: RASIO SOLVABILITAS
+        const c4X = c3X + cardW + 3;
+        doc.setFillColor(248, 250, 252);
+        doc.roundedRect(c4X, currentY, cardW, 23, 3, 3, "F");
+        doc.setDrawColor(226, 232, 240);
+        doc.roundedRect(c4X, currentY, cardW, 23, 3, 3, "S");
+
+        const coverageRatio =
+          hutangData.totalSisa > 0
+            ? ((piutangData.totalSisa / hutangData.totalSisa) * 100).toFixed(0) + "%"
+            : "Aman (100%+)";
+
+        doc.setFontSize(7);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(100, 116, 139);
+        doc.text("RASIO COVERAGE & REKAM", c4X + 5, currentY + 6);
+        doc.setFontSize(10.5);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(15, 23, 42);
+        doc.text(coverageRatio, c4X + 5, currentY + 13.5);
+        doc.setFontSize(6.5);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(100, 116, 139);
+        doc.text(
+          `${hutangData.records.length} Catatan Hutang | ${piutangData.records.length} Catatan Piutang`,
+          c4X + 5,
+          currentY + 19
+        );
+
+        currentY += 29;
+
+        // SECTION 1: REKAPITULASI TOTAL HUTANG PER ORANG YANG DIHUTANGI
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(17, 42, 70);
+        doc.text("1. REKAPITULASI TOTAL KEWAJIBAN HUTANG KE MASING-MASING ORANG YANG DIHUTANGI", 14, currentY);
+        currentY += 3;
+
+        const hutangGroupRows = hutangData.contactList.map((c, idx) => {
+          const isLunas = c.totalRemaining <= 0;
+          const statusStr = isLunas ? "LUNAS" : c.totalPaid > 0 ? "DICICIL" : "BELUM LUNAS";
+          return [
+            (idx + 1).toString(),
+            c.name,
+            `${c.count} Rekam`,
+            formatCurrencyIDR(c.totalAmount).replace("Rp ", ""),
+            formatCurrencyIDR(c.totalPaid).replace("Rp ", ""),
+            formatCurrencyIDR(c.totalRemaining).replace("Rp ", ""),
+            statusStr,
+          ];
+        });
+
+        hutangGroupRows.push([
+          "",
+          "SUBTOTAL HUTANG KE KREDITUR / VENDOR",
+          `${hutangData.contactList.length} Pihak`,
+          formatCurrencyIDR(hutangData.totalAwal).replace("Rp ", ""),
+          formatCurrencyIDR(hutangData.totalTerbayar).replace("Rp ", ""),
+          formatCurrencyIDR(hutangData.totalSisa).replace("Rp ", ""),
+          hutangData.totalSisa <= 0 ? "LUNAS" : "BELUM LUNAS",
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: 14, right: 14 },
+          head: [
+            [
+              "NO",
+              "NAMA PIHAK / ORANG YANG DIHUTANGI (VENDOR / KREDITUR)",
+              "JML CATATAN",
+              "TOTAL HUTANG AWAL (RP)",
+              "TELAH DIBAYAR (RP)",
+              "SISA HUTANG PERUSAHAAN (RP)",
+              "STATUS",
+            ],
+          ],
+          body: hutangGroupRows,
+          theme: "grid",
+          headStyles: {
+            fillColor: [17, 42, 70],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            halign: "center",
+          },
+          bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { halign: "center", cellWidth: 10 },
+            1: { fontStyle: "bold", cellWidth: 79 },
+            2: { halign: "center", cellWidth: 24 },
+            3: { halign: "right", fontStyle: "bold", cellWidth: 44 },
+            4: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 44 },
+            5: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 44 },
+            6: { halign: "center", fontStyle: "bold", cellWidth: 24 },
+          },
+          didParseCell: (data) => {
+            if (data.row.index === hutangGroupRows.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+            }
+          },
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 8;
+
+        if (currentY > 165) {
+          doc.addPage();
+          currentY = 16;
+        }
+
+        // SECTION 2: REKAPITULASI PIUTANG PER KLIEN / DEBITUR
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(17, 42, 70);
+        doc.text("2. REKAPITULASI TOTAL HAK TAGIH PIUTANG PERUSAHAAN PER KLIEN / DEBITUR", 14, currentY);
+        currentY += 3;
+
+        const piutangGroupRows = piutangData.contactList.map((c, idx) => {
+          const isLunas = c.totalRemaining <= 0;
+          const statusStr = isLunas ? "LUNAS" : c.totalPaid > 0 ? "DICICIL" : "BELUM LUNAS";
+          return [
+            (idx + 1).toString(),
+            c.name,
+            `${c.count} Rekam`,
+            formatCurrencyIDR(c.totalAmount).replace("Rp ", ""),
+            formatCurrencyIDR(c.totalPaid).replace("Rp ", ""),
+            formatCurrencyIDR(c.totalRemaining).replace("Rp ", ""),
+            statusStr,
+          ];
+        });
+
+        piutangGroupRows.push([
+          "",
+          "SUBTOTAL PIUTANG DARI KLIEN / OWNER",
+          `${piutangData.contactList.length} Pihak`,
+          formatCurrencyIDR(piutangData.totalAwal).replace("Rp ", ""),
+          formatCurrencyIDR(piutangData.totalTerbayar).replace("Rp ", ""),
+          formatCurrencyIDR(piutangData.totalSisa).replace("Rp ", ""),
+          piutangData.totalSisa <= 0 ? "LUNAS" : "BELUM LUNAS",
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: 14, right: 14 },
+          head: [
+            [
+              "NO",
+              "NAMA KLIEN / DEBITUR (INSTANSI / OWNER PROYEK)",
+              "JML TERMIN",
+              "TOTAL KONTRAK (RP)",
+              "DITERIMA KAS (RP)",
+              "SISA PIUTANG (RP)",
+              "STATUS",
+            ],
+          ],
+          body: piutangGroupRows,
+          theme: "grid",
+          headStyles: {
+            fillColor: [17, 42, 70],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            halign: "center",
+          },
+          bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { halign: "center", cellWidth: 10 },
+            1: { fontStyle: "bold", cellWidth: 79 },
+            2: { halign: "center", cellWidth: 24 },
+            3: { halign: "right", fontStyle: "bold", cellWidth: 44 },
+            4: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 44 },
+            5: { halign: "right", fontStyle: "bold", textColor: [217, 119, 6], cellWidth: 44 },
+            6: { halign: "center", fontStyle: "bold", cellWidth: 24 },
+          },
+          didParseCell: (data) => {
+            if (data.row.index === piutangGroupRows.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+            }
+          },
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 8;
+
+        if (currentY > 165) {
+          doc.addPage();
+          currentY = 16;
+        }
+
+        // SECTION 3: RINCIAN DETAIL CATATAN HUTANG USAHA
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(17, 42, 70);
+        doc.text("3. RINCIAN LENGKAP SELURUH TRANSAKSI KEWAJIBAN HUTANG USAHA", 14, currentY);
+        currentY += 3;
+
+        const hutangDetailRows = hutangData.records.map((r, idx) => {
+          const sched = getScheduleForRecord(r, projects, financialRecords);
+          const paid = sched.totalPaid;
+          const initial = sched.contractValue || r.amount || 0;
+          const remaining = Math.max(0, initial - paid);
+          const projName = projects.find((p) => p.id === r.projectId)?.name || "-";
+          const statusStr = remaining <= 0 ? "LUNAS" : paid > 0 ? "DICICIL" : "BELUM LUNAS";
+
+          return [
+            (idx + 1).toString(),
+            r.customId || r.id,
+            r.contactName || "-",
+            r.title + (r.description ? ` (${r.description})` : ""),
+            projName,
+            r.dueDate ? new Date(r.dueDate).toLocaleDateString("id-ID") : "-",
+            formatCurrencyIDR(initial).replace("Rp ", ""),
+            formatCurrencyIDR(paid).replace("Rp ", ""),
+            formatCurrencyIDR(remaining).replace("Rp ", ""),
+            statusStr,
+          ];
+        });
+
+        hutangDetailRows.push([
+          "",
+          "TOTAL SELURUH HUTANG",
+          "",
+          "",
+          "",
+          `${hutangData.records.length} Item`,
+          formatCurrencyIDR(hutangData.totalAwal).replace("Rp ", ""),
+          formatCurrencyIDR(hutangData.totalTerbayar).replace("Rp ", ""),
+          formatCurrencyIDR(hutangData.totalSisa).replace("Rp ", ""),
+          hutangData.totalSisa <= 0 ? "LUNAS" : "BELUM LUNAS",
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: 14, right: 14 },
+          head: [
+            [
+              "NO",
+              "KODE REF",
+              "PIHAK DIHUTANGI",
+              "KETERANGAN / PERUNTUKAN",
+              "PROYEK",
+              "JATUH TEMPO",
+              "AWAL (RP)",
+              "DIBAYAR (RP)",
+              "SISA (RP)",
+              "STATUS",
+            ],
+          ],
+          body: hutangDetailRows,
+          theme: "grid",
+          headStyles: {
+            fillColor: [17, 42, 70],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            halign: "center",
+          },
+          bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { halign: "center", cellWidth: 9 },
+            1: { fontStyle: "bold", cellWidth: 26 },
+            2: { fontStyle: "bold", cellWidth: 38 },
+            3: { cellWidth: 55 },
+            4: { cellWidth: 32 },
+            5: { halign: "center", cellWidth: 22 },
+            6: { halign: "right", fontStyle: "bold", cellWidth: 25 },
+            7: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 25 },
+            8: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 25 },
+            9: { halign: "center", fontStyle: "bold", cellWidth: 12 },
+          },
+          didParseCell: (data) => {
+            if (data.row.index === hutangDetailRows.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+            }
+          },
+        });
+
+        currentY = (doc as any).lastAutoTable.finalY + 8;
+
+        if (currentY > 165) {
+          doc.addPage();
+          currentY = 16;
+        }
+
+        // SECTION 4: RINCIAN DETAIL CATATAN PIUTANG USAHA
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "bold");
+        doc.setTextColor(17, 42, 70);
+        doc.text("4. RINCIAN LENGKAP SELURUH CATATAN INVOICE & TERMIN PIUTANG USAHA", 14, currentY);
+        currentY += 3;
+
+        const piutangDetailRows = piutangData.records.map((r, idx) => {
+          const sched = getScheduleForRecord(r, projects, financialRecords);
+          const paid = sched.totalPaid;
+          const initial = sched.contractValue || r.amount || 0;
+          const remaining = Math.max(0, initial - paid);
+          const projName = projects.find((p) => p.id === r.projectId)?.name || "-";
+          const statusStr = remaining <= 0 ? "LUNAS" : paid > 0 ? "DICICIL" : "BELUM LUNAS";
+
+          return [
+            (idx + 1).toString(),
+            r.customId || r.id,
+            r.contactName || "-",
+            r.title + (r.description ? ` (${r.description})` : ""),
+            projName,
+            r.dueDate ? new Date(r.dueDate).toLocaleDateString("id-ID") : "-",
+            formatCurrencyIDR(initial).replace("Rp ", ""),
+            formatCurrencyIDR(paid).replace("Rp ", ""),
+            formatCurrencyIDR(remaining).replace("Rp ", ""),
+            statusStr,
+          ];
+        });
+
+        piutangDetailRows.push([
+          "",
+          "TOTAL SELURUH PIUTANG",
+          "",
+          "",
+          "",
+          `${piutangData.records.length} Item`,
+          formatCurrencyIDR(piutangData.totalAwal).replace("Rp ", ""),
+          formatCurrencyIDR(piutangData.totalTerbayar).replace("Rp ", ""),
+          formatCurrencyIDR(piutangData.totalSisa).replace("Rp ", ""),
+          piutangData.totalSisa <= 0 ? "LUNAS" : "BELUM LUNAS",
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: 14, right: 14 },
+          head: [
+            [
+              "NO",
+              "KODE REF",
+              "KLIEN / DEBITUR",
+              "KETERANGAN / INVOICE",
+              "PROYEK",
+              "JATUH TEMPO",
+              "KONTRAK (RP)",
+              "DITERIMA (RP)",
+              "SISA (RP)",
+              "STATUS",
+            ],
+          ],
+          body: piutangDetailRows,
+          theme: "grid",
+          headStyles: {
+            fillColor: [17, 42, 70],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            halign: "center",
+          },
+          bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+          columnStyles: {
+            0: { halign: "center", cellWidth: 9 },
+            1: { fontStyle: "bold", cellWidth: 26 },
+            2: { fontStyle: "bold", cellWidth: 38 },
+            3: { cellWidth: 55 },
+            4: { cellWidth: 32 },
+            5: { halign: "center", cellWidth: 22 },
+            6: { halign: "right", fontStyle: "bold", cellWidth: 25 },
+            7: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 25 },
+            8: { halign: "right", fontStyle: "bold", textColor: [217, 119, 6], cellWidth: 25 },
+            9: { halign: "center", fontStyle: "bold", cellWidth: 12 },
+          },
+          didParseCell: (data) => {
+            if (data.row.index === piutangDetailRows.length - 1) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+            }
+          },
+        });
+      }
+
+      // Lembar Pengesahan (Signature Block)
+      let lastY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 10 : currentY + 10;
+      if (lastY > 155) {
+        doc.addPage();
+        lastY = 22;
+      }
+
+      doc.setFontSize(8.5);
+      doc.setTextColor(100, 116, 139);
+      doc.setFont("helvetica", "normal");
+
+      // Left Signature (Pembuat)
+      doc.text("Dibuat Oleh,", 26, lastY);
+      doc.text("Staf Administrasi Keuangan", 26, lastY + 4.5);
+      doc.line(26, lastY + 23, 90, lastY + 23);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(17, 42, 70);
+      doc.text("FAISAL MUSTOPA", 26, lastY + 27.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 116, 139);
+      doc.text("Staf Administrasi Keuangan", 26, lastY + 31.5);
+
+      // Right Signature (Penyetuju)
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 116, 139);
+      doc.text("Disetujui & Disahkan Oleh,", 206, lastY);
+      doc.text("Direktur Utama PT GIG", 206, lastY + 4.5);
+      doc.line(206, lastY + 23, 270, lastY + 23);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(17, 42, 70);
+      doc.text("MUHAMMAD YASIN", 206, lastY + 27.5);
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(100, 116, 139);
+      doc.text("Direktur Utama", 206, lastY + 31.5);
+
+      // Footer across all pages
+      const pageCount = doc.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        doc.setPage(i);
+        doc.setDrawColor(226, 232, 240);
+        doc.line(14, 198, 283, 198);
+        doc.setFontSize(7.5);
+        doc.setTextColor(148, 163, 184);
+        doc.setFont("helvetica", "normal");
+        doc.text("PT GARDA INOVASI GLOBALTECH - Sistem Informasi Manajemen Hutang & Piutang", 14, 203);
+        doc.text(`Halaman ${i} dari ${pageCount}`, 148.5, 203, { align: "center" });
+        doc.text(`Waktu Cetak: ${new Date().toLocaleString("id-ID")}`, 283, 203, { align: "right" });
+      }
+
+      const dateStr = new Date().toISOString().split("T")[0];
+      const filename =
+        config.type === "GABUNGAN"
+          ? `Laporan_Konsolidasi_Hutang_Piutang_GIG_${dateStr}.pdf`
+          : config.type === "HUTANG"
+          ? `Laporan_Hutang_Usaha_GIG_${dateStr}.pdf`
+          : `Laporan_Piutang_Usaha_GIG_${dateStr}.pdf`;
+
+      doc.save(filename);
+      setShowExportReportModal(false);
+    } catch (err) {
+      console.error("Gagal mengekspor PDF:", err);
+      alert("Terjadi kesalahan saat memproses laporan PDF: " + err);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const downloadContactSummaryPDF = (
@@ -8838,34 +10250,81 @@ const AdminDebtScreen = ({
         </div>
 
         <div className="bg-white rounded-[3rem] border border-slate-100 shadow-sm overflow-hidden">
-          <div className="p-8 border-b border-slate-50 flex flex-col md:flex-row items-center gap-4">
-            <div className="relative flex-1 w-full">
-              <Search
-                size={18}
-                className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300"
-              />
-              <input
-                type="text"
-                placeholder="Cari berdasarkan judul atau nama kontak..."
-                className="w-full pl-14 pr-6 py-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 ring-primary/10 border border-slate-100 text-sm font-bold transition-all"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
+          <div className="p-8 border-b border-slate-50 flex flex-col gap-5">
+            <div className="flex flex-col md:flex-row items-center gap-4">
+              <div className="relative flex-1 w-full">
+                <Search
+                  size={18}
+                  className="absolute left-6 top-1/2 -translate-y-1/2 text-slate-300"
+                />
+                <input
+                  type="text"
+                  placeholder="Cari berdasarkan judul, nama kontak, atau kode ID..."
+                  className="w-full pl-14 pr-6 py-4 bg-slate-50 rounded-2xl outline-none focus:ring-2 ring-primary/10 border border-slate-100 text-sm font-bold transition-all"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-2 w-full md:w-auto">
+                <Filter size={16} className="text-slate-400" />
+                <select
+                  value={filterProject}
+                  onChange={(e) => setFilterProject(e.target.value)}
+                  className="w-full md:w-64 pl-4 pr-10 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 ring-primary/10 transition-all appearance-none cursor-pointer"
+                >
+                  <option value="ALL">Semua Proyek (Global)</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
-            <div className="flex items-center gap-2 w-full md:w-auto">
-              <Filter size={16} className="text-slate-400" />
-              <select
-                value={filterProject}
-                onChange={(e) => setFilterProject(e.target.value)}
-                className="w-full md:w-64 pl-4 pr-10 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-2 ring-primary/10 transition-all appearance-none cursor-pointer"
-              >
-                <option value="ALL">Semua Proyek (Global)</option>
-                {projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+
+            {/* Filter Status Lunas / Belum Lunas */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-100/70">
+              <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-2xl">
+                <button
+                  type="button"
+                  onClick={() => setFilterStatus("ALL")}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                    filterStatus === "ALL"
+                      ? "bg-white text-slate-900 shadow-xs"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Semua ({statusCounts.all})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterStatus("UNPAID")}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                    filterStatus === "UNPAID"
+                      ? "bg-rose-600 text-white shadow-xs"
+                      : "text-slate-500 hover:text-rose-600"
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-rose-400" />
+                  Belum Lunas ({statusCounts.unpaid})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFilterStatus("PAID")}
+                  className={`px-4 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                    filterStatus === "PAID"
+                      ? "bg-emerald-600 text-white shadow-xs"
+                      : "text-slate-500 hover:text-emerald-700"
+                  }`}
+                >
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  Lunas ({statusCounts.paid})
+                </button>
+              </div>
+
+              <div className="text-xs font-semibold text-slate-400">
+                Menampilkan <span className="font-bold text-slate-700">{filteredRecords.length}</span> dari {statusCounts.all} rekam {activeTab === "HUTANG" ? "hutang" : "piutang"}
+              </div>
             </div>
           </div>
 
@@ -8913,25 +10372,35 @@ const AdminDebtScreen = ({
                         if (target.closest('button') || target.closest('a') || target.closest('select') || target.closest('input')) {
                           return;
                         }
-                        if (activeTab === "PIUTANG") {
-                          setSelectedTerminRecord(r);
-                        }
+                        setSelectedTransactionDetailRecord(r);
                       }}
-                      className={`transition-colors group border-b border-slate-100 ${
-                        activeTab === "PIUTANG" ? "cursor-pointer hover:bg-indigo-50/30" : "hover:bg-slate-50/55"
-                      }`}
+                      className="transition-colors group border-b border-slate-100 cursor-pointer hover:bg-indigo-50/40"
+                      title="Klik untuk melihat data transaksi & riwayat pembayaran"
                     >
                       {/* ID Hutang / Piutang */}
                       <td className="p-5 align-top">
-                        <span className="px-3 py-1.5 bg-slate-100 text-slate-800 font-mono text-[11px] font-black rounded-lg border border-slate-200 uppercase tracking-wider block w-fit">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedTransactionDetailRecord(r);
+                          }}
+                          className="px-3 py-1.5 bg-slate-100 hover:bg-indigo-100 hover:text-indigo-800 text-slate-800 font-mono text-[11px] font-black rounded-lg border border-slate-200 hover:border-indigo-300 uppercase tracking-wider block w-fit transition-all cursor-pointer text-left"
+                          title="Klik untuk melihat rincian & transaksi pembayaran"
+                        >
                           {r.customId || `${activeTab === "HUTANG" ? "HTG" : "PTG"}-${r.id.substring(0, 6).toUpperCase()}`}
-                        </span>
-                        {activeTab === "PIUTANG" && (
-                          <span className="text-[9px] text-indigo-600 font-black mt-2 hover:underline flex items-center gap-1 cursor-pointer select-none">
-                            <Calendar size={10} />
-                            Lihat Rincian Termin
-                          </span>
-                        )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedTransactionDetailRecord(r);
+                          }}
+                          className="text-[9px] text-indigo-600 font-bold mt-2 hover:underline flex items-center gap-1 cursor-pointer select-none"
+                        >
+                          <Eye size={10} />
+                          <span>Data Transaksi {remaining === 0 ? "(Lunas)" : ""}</span>
+                        </button>
                       </td>
 
                       {/* Nama Vendor/Kreditur atau Client/Debitur */}
@@ -9012,21 +10481,39 @@ const AdminDebtScreen = ({
 
                       {/* Status */}
                       <td className="p-5 align-top text-center">
-                        <span
-                          className={`inline-block px-3 py-1.5 rounded-full text-[9px] font-black tracking-wider uppercase border ${
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleOpenStatusModal(r);
+                          }}
+                          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[9px] font-black tracking-wider uppercase border transition-all cursor-pointer shadow-xs hover:scale-105 active:scale-95 ${
                             remaining === 0
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                              ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100 hover:border-emerald-400"
                               : totalPaid > 0
-                                ? "bg-amber-50 text-amber-700 border-amber-200"
-                                : "bg-rose-50 text-rose-700 border-rose-200"
+                                ? "bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100 hover:border-amber-400"
+                                : "bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100 hover:border-rose-400"
                           }`}
+                          title={`Status: ${remaining === 0 ? "LUNAS" : "BELUM LUNAS"}. Klik untuk ganti status.`}
                         >
-                          {remaining === 0
-                            ? "LUNAS"
-                            : totalPaid > 0
-                              ? "DICICIL"
-                              : "BELUM BAYAR"}
-                        </span>
+                          {remaining === 0 ? (
+                            <>
+                              <CheckCircle2 size={11} className="text-emerald-600" />
+                              <span>LUNAS</span>
+                            </>
+                          ) : totalPaid > 0 ? (
+                            <>
+                              <Clock size={11} className="text-amber-600" />
+                              <span>DICICIL</span>
+                            </>
+                          ) : (
+                            <>
+                              <XCircle size={11} className="text-rose-600" />
+                              <span>BELUM BAYAR</span>
+                            </>
+                          )}
+                          <SlidersHorizontal size={9} className="opacity-50 ml-0.5" />
+                        </button>
                       </td>
 
                       {/* Aksi */}
@@ -9034,21 +10521,23 @@ const AdminDebtScreen = ({
                         <div className="flex items-center justify-center gap-1.5">
                           {remaining > 0 && (
                             <button
-                              onClick={() => {
+                              onClick={(e) => {
+                                e.stopPropagation();
                                 setShowPaymentModal(r);
                                 setPaymentForm((prev) => ({
                                   ...prev,
                                   amount: remaining.toString(),
                                 }));
                               }}
-                              className="p-2.5 bg-[#112a46] hover:bg-slate-800 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-slate-100 flex items-center justify-center"
+                              className="p-2.5 bg-[#112a46] hover:bg-slate-800 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-slate-100 flex items-center justify-center cursor-pointer"
                               title="Cicil / Bayar"
                             >
                               <DollarSign size={14} />
                             </button>
                           )}
                           <button
-                            onClick={() => {
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setShowEditModal(r);
                               setEditForm({
                                 title: r.title,
@@ -9060,30 +10549,44 @@ const AdminDebtScreen = ({
                                 type: r.type,
                               });
                             }}
-                            className="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-indigo-100 flex items-center justify-center"
+                            className="p-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-indigo-100 flex items-center justify-center cursor-pointer"
                             title="Edit Catatan & Cicilan"
                           >
                             <Edit size={14} />
                           </button>
-                           {activeTab === "PIUTANG" && (
+                          {activeTab === "PIUTANG" && (
                             <button
-                              onClick={() => setSelectedTerminRecord(r)}
-                              className="p-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-sky-100 flex items-center justify-center"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedTerminRecord(r);
+                              }}
+                              className="p-2.5 bg-sky-600 hover:bg-sky-700 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-sky-100 flex items-center justify-center cursor-pointer"
                               title="Lihat Rincian Termin"
                             >
                               <Calendar size={14} />
                             </button>
                           )}
                           <button
-                            onClick={() => onNavigate("admin-finance")}
-                            className="p-2.5 bg-white border border-slate-200 text-slate-400 rounded-xl hover:border-slate-800 hover:text-slate-800 transition-all flex items-center justify-center shadow-xs"
-                            title="Ke Menu Keuangan"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const { query } = getOriginFinanceQueryAndRecord(r, financialRecords);
+                              if (onNavigateToFinance) {
+                                onNavigateToFinance(query);
+                              } else {
+                                onNavigate("admin-finance");
+                              }
+                            }}
+                            className="p-2.5 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-600 hover:text-white rounded-xl hover:scale-105 transition-all flex items-center justify-center shadow-xs cursor-pointer"
+                            title="Buka Catatan Transaksi di Data Keuangan Keseluruhan"
                           >
                             <ArrowRightLeft size={14} />
                           </button>
                           <button
-                            onClick={() => handleDeleteDebt(r.id, r.customId, r.type)}
-                            className="p-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-rose-100 flex items-center justify-center"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteDebt(r.id, r.customId, r.type);
+                            }}
+                            className="p-2.5 bg-rose-600 hover:bg-rose-700 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-rose-100 flex items-center justify-center cursor-pointer"
                             title="Hapus Catatan"
                           >
                             <Trash2 size={14} />
@@ -9407,6 +10910,856 @@ const AdminDebtScreen = ({
             </motion.div>
           </div>
         )}
+
+        {/* Modal Ganti Status Lunas / Gak Lunas */}
+        {showStatusChangeModal && (
+          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-start justify-center p-4 sm:p-6 overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white w-full max-w-xl rounded-[2.5rem] shadow-2xl p-6 sm:p-8 my-auto space-y-6 text-slate-800 border border-slate-100"
+            >
+              <div className="flex justify-between items-start border-b border-slate-100 pb-4">
+                <div>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className="px-2.5 py-0.5 bg-indigo-50 border border-indigo-100 text-indigo-700 font-mono text-[9px] font-black rounded uppercase">
+                      {showStatusChangeModal.record.customId || showStatusChangeModal.record.id}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${
+                      showStatusChangeModal.record.type === "HUTANG" ? "bg-rose-50 text-rose-700 border border-rose-100" : "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                    }`}>
+                      {showStatusChangeModal.record.type}
+                    </span>
+                  </div>
+                  <h3 className="text-xl font-black text-slate-900">
+                    Ganti Status Pembayaran
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5">
+                    {showStatusChangeModal.record.contactName} &bull; {showStatusChangeModal.record.title}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowStatusChangeModal(null)}
+                  className="w-10 h-10 bg-slate-50 hover:bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 hover:text-slate-700 cursor-pointer transition-colors"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Ringkasan Saldo Saat Ini */}
+              <div className="grid grid-cols-3 gap-2.5 p-4 bg-slate-50 rounded-2xl border border-slate-100 text-center">
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Total Pokok</p>
+                  <p className="text-xs font-black font-mono text-slate-800 mt-0.5">
+                    {formatCurrencyIDR(showStatusChangeModal.contractValue)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Sudah Dibayar</p>
+                  <p className="text-xs font-black font-mono text-emerald-600 mt-0.5">
+                    {formatCurrencyIDR(showStatusChangeModal.totalPaid)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-wider text-slate-400">Sisa Tagihan</p>
+                  <p className={`text-xs font-black font-mono mt-0.5 ${showStatusChangeModal.remaining > 0 ? "text-rose-600" : "text-emerald-600"}`}>
+                    {formatCurrencyIDR(showStatusChangeModal.remaining)}
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handleConfirmStatusChange} className="space-y-5">
+                {/* Pilihan 2 Tombol Status Utama: LUNAS vs BELUM LUNAS */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest block">
+                    Pilih Status Baru:
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    {/* Opsi 1: LUNAS */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setStatusChangeForm((prev) => ({
+                          ...prev,
+                          status: "PAID",
+                          paymentAmount: (showStatusChangeModal.remaining > 0
+                            ? showStatusChangeModal.remaining
+                            : showStatusChangeModal.contractValue
+                          ).toString(),
+                        }))
+                      }
+                      className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2.5 ${
+                        statusChangeForm.status === "PAID"
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-lg shadow-emerald-600/20"
+                          : "bg-white text-slate-700 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/40"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black tracking-wider uppercase flex items-center gap-1.5">
+                          <CheckCircle2 size={18} className={statusChangeForm.status === "PAID" ? "text-white" : "text-emerald-600"} />
+                          LUNAS
+                        </span>
+                        {statusChangeForm.status === "PAID" && (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-700 text-[8.5px] font-black uppercase tracking-wider text-white">
+                            Aktif
+                          </span>
+                        )}
+                      </div>
+                      <p className={`text-[10px] leading-tight font-medium ${
+                        statusChangeForm.status === "PAID" ? "text-emerald-100" : "text-slate-500"
+                      }`}>
+                        Tandai lunas penuh. Sisa saldo tagihan menjadi Rp 0.
+                      </p>
+                    </button>
+
+                    {/* Opsi 2: BELUM LUNAS / GAK LUNAS */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setStatusChangeForm((prev) => ({
+                          ...prev,
+                          status: "UNPAID",
+                        }))
+                      }
+                      className={`p-4 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between gap-2.5 ${
+                        statusChangeForm.status === "UNPAID"
+                          ? "bg-rose-600 text-white border-rose-600 shadow-lg shadow-rose-600/20"
+                          : "bg-white text-slate-700 border-slate-200 hover:border-rose-300 hover:bg-rose-50/40"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-black tracking-wider uppercase flex items-center gap-1.5">
+                          <XCircle size={18} className={statusChangeForm.status === "UNPAID" ? "text-white" : "text-rose-600"} />
+                          BELUM LUNAS
+                        </span>
+                        {statusChangeForm.status === "UNPAID" && (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-700 text-[8.5px] font-black uppercase tracking-wider text-white">
+                            Aktif
+                          </span>
+                        )}
+                      </div>
+                      <p className={`text-[10px] leading-tight font-medium ${
+                        statusChangeForm.status === "UNPAID" ? "text-rose-100" : "text-slate-500"
+                      }`}>
+                        Tandai belum lunas (gak lunas). Sisa tagihan kembali utuh.
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Form Rincian jika LUNAS */}
+                {statusChangeForm.status === "PAID" && (
+                  <div className="p-4 bg-emerald-50/60 border border-emerald-200/80 rounded-2xl space-y-3.5">
+                    <div className="text-[10px] font-black uppercase text-emerald-800 tracking-wider flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-600" />
+                      Rincian Pelunasan
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                          Nominal Dilunasi (Rp)
+                        </label>
+                        <input
+                          type="number"
+                          required
+                          value={statusChangeForm.paymentAmount}
+                          onChange={(e) =>
+                            setStatusChangeForm({ ...statusChangeForm, paymentAmount: e.target.value })
+                          }
+                          className="w-full px-3.5 py-2.5 bg-white border border-emerald-300 rounded-xl text-xs font-bold font-mono text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                          Tanggal Pelunasan
+                        </label>
+                        <input
+                          type="date"
+                          required
+                          value={statusChangeForm.date}
+                          onChange={(e) =>
+                            setStatusChangeForm({ ...statusChangeForm, date: e.target.value })
+                          }
+                          className="w-full px-3.5 py-2.5 bg-white border border-emerald-300 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                        Keterangan Pelunasan
+                      </label>
+                      <input
+                        type="text"
+                        value={statusChangeForm.note}
+                        onChange={(e) =>
+                          setStatusChangeForm({ ...statusChangeForm, note: e.target.value })
+                        }
+                        placeholder="Pelunasan Hutang / Piutang"
+                        className="w-full px-3.5 py-2.5 bg-white border border-emerald-300 rounded-xl text-xs font-medium text-slate-800 outline-none focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+
+                    <div className="pt-1">
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <input
+                          type="checkbox"
+                          checked={statusChangeForm.createFinancialRecord}
+                          onChange={(e) =>
+                            setStatusChangeForm({ ...statusChangeForm, createFinancialRecord: e.target.checked })
+                          }
+                          className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500 cursor-pointer"
+                        />
+                        <span className="text-[11px] font-bold text-slate-700">
+                          Catat transaksi ke Buku Kas Keuangan PT
+                        </span>
+                      </label>
+                    </div>
+
+                    {statusChangeForm.createFinancialRecord && (
+                      <div className="grid grid-cols-2 gap-3 pt-1">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                            Metode Pembayaran
+                          </label>
+                          <select
+                            value={statusChangeForm.paymentMethod}
+                            onChange={(e) =>
+                              setStatusChangeForm({
+                                ...statusChangeForm,
+                                paymentMethod: e.target.value as any,
+                                sumberDana: e.target.value === "CASH" ? "KAS BESAR" : "REKENING PT",
+                              })
+                            }
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
+                          >
+                            <option value="TRANSFER">TRANSFER BANK</option>
+                            <option value="CASH">TUNAI (CASH)</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                            Sumber / Alur Dana
+                          </label>
+                          <select
+                            value={statusChangeForm.sumberDana}
+                            onChange={(e) =>
+                              setStatusChangeForm({ ...statusChangeForm, sumberDana: e.target.value })
+                            }
+                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
+                          >
+                            <option value="REKENING PT">REKENING PT</option>
+                            <option value="KAS BESAR">KAS BESAR</option>
+                            <option value="REKENING PRIBADI">REKENING PRIBADI</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Form Rincian jika BELUM LUNAS */}
+                {statusChangeForm.status === "UNPAID" && (
+                  <div className="p-4 bg-rose-50/70 border border-rose-200/80 rounded-2xl space-y-2">
+                    <div className="text-[10px] font-black uppercase text-rose-800 tracking-wider flex items-center gap-1.5">
+                      <AlertCircle size={14} className="text-rose-600" />
+                      Konfirmasi Kembalikan ke Status Belum Lunas
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed">
+                      Status catatan ini akan diubah menjadi <b>BELUM LUNAS (Gak Lunas)</b>. Riwayat cicilan/pembayaran pada catatan ini akan direset kembali sehingga sisa tagihan menjadi utuh senilai <b>{formatCurrencyIDR(showStatusChangeModal.contractValue)}</b>.
+                    </p>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowStatusChangeModal(null)}
+                    className="px-5 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 font-bold text-xs uppercase tracking-wider transition-colors cursor-pointer"
+                  >
+                    Batal
+                  </button>
+                  <button
+                    type="submit"
+                    className={`px-6 py-3 rounded-xl text-white font-black text-xs uppercase tracking-wider shadow-lg transition-all cursor-pointer flex items-center gap-2 ${
+                      statusChangeForm.status === "PAID"
+                        ? "bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20"
+                        : "bg-rose-600 hover:bg-rose-700 shadow-rose-600/20"
+                    }`}
+                  >
+                    {statusChangeForm.status === "PAID" ? (
+                      <>
+                        <CheckCircle2 size={16} />
+                        Simpan Status: LUNAS
+                      </>
+                    ) : (
+                      <>
+                        <XCircle size={16} />
+                        Simpan Status: BELUM LUNAS
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+
+        {/* Modal Data Transaksi & Riwayat Pembayaran */}
+        {selectedTransactionDetailRecord && (() => {
+          const rec = selectedTransactionDetailRecord;
+          const sched = getScheduleForRecord(rec, projects, financialRecords);
+          const contractValue = sched.contractValue || rec.amount || 0;
+          const totalPaid = sched.totalPaid || 0;
+          const remaining = Math.max(0, contractValue - totalPaid);
+          const isFullyPaid = remaining === 0;
+
+          // Temukan catatan transaksi asal di buku keuangan (financialRecords)
+          const { originRecord, query: originQuery } = getOriginFinanceQueryAndRecord(rec, financialRecords);
+
+          // Temukan transaksi keuangan terkait di financialRecords
+          const relatedFin = financialRecords.filter((f) => {
+            const isRefHutang = f.refHutang && (f.refHutang === rec.customId || f.refHutang === rec.id);
+            const isRefPiutang = f.refPiutang && (f.refPiutang === rec.customId || f.refPiutang === rec.id);
+            const descMatch = (rec.customId && f.description && f.description.toLowerCase().includes(rec.customId.toLowerCase()));
+            return isRefHutang || isRefPiutang || descMatch;
+          });
+
+          // Daftar pembayaran eksplisit
+          const paymentsList = rec.payments || [];
+
+          type UnifiedPaymentItem = {
+            id: string;
+            date: string;
+            amount: number;
+            note: string;
+            recordedBy: string;
+            source: string;
+            refNumber?: string;
+            status: string;
+          };
+
+          const unifiedPayments: UnifiedPaymentItem[] = [];
+
+          // 1. Dari payments array di record
+          paymentsList.forEach((p, idx) => {
+            unifiedPayments.push({
+              id: p.id || `pay-${idx}`,
+              date: p.date,
+              amount: p.amount,
+              note: p.note || `Pembayaran ${rec.type === "HUTANG" ? "Hutang" : "Piutang"}`,
+              recordedBy: p.recordedBy || rec.recordedBy || "Admin",
+              source: p.financialRecordId ? "Buku Kas PT" : "Pembayaran Langsung",
+              refNumber: p.financialRecordId,
+              status: "LUNAS",
+            });
+          });
+
+          // 2. Dari related financial records yang belum ada di unifiedPayments
+          relatedFin.forEach((f) => {
+            const alreadyExists = unifiedPayments.some((u) => u.refNumber === f.id || u.refNumber === f.customId);
+            if (!alreadyExists) {
+              unifiedPayments.push({
+                id: f.id,
+                date: f.date,
+                amount: f.amount,
+                note: f.description || `Transaksi Kas ${f.category || ""}`,
+                recordedBy: f.recordedBy || "Kasir / Admin Keuangan",
+                source: f.paymentMethod || f.type || "Rekening Kas",
+                refNumber: f.customId || f.id,
+                status: "LUNAS",
+              });
+            }
+          });
+
+          // 3. Dari termin terbayar jika belum tercakup
+          (sched.terms || []).forEach((t, idx) => {
+            if ((t.status === "LUNAS" || t.status === "PAID") && t.paymentDate && t.paymentDate !== "-") {
+              const matchesUnified = unifiedPayments.some((u) => u.date === t.paymentDate && Math.abs(u.amount - (t.amount || 0)) < 100);
+              if (!matchesUnified && (t.amount || 0) > 0) {
+                unifiedPayments.push({
+                  id: `term-${idx}`,
+                  date: t.paymentDate,
+                  amount: t.amount || 0,
+                  note: `Pelunasan ${t.name || `Termin ke-${idx + 1}`}`,
+                  recordedBy: rec.recordedBy || "Finance",
+                  source: "Jadwal Termin",
+                  refNumber: t.invoiceNo || undefined,
+                  status: "LUNAS",
+                });
+              }
+            }
+          });
+
+          // 4. Jika statusnya LUNAS tapi tidak ada record pembayaran eksplisit (misal ditandai lunas langsung):
+          if (isFullyPaid && unifiedPayments.length === 0) {
+            unifiedPayments.push({
+              id: "auto-settlement",
+              date: rec.dueDate || new Date().toISOString().split("T")[0],
+              amount: contractValue,
+              note: `Pelunasan Penuh ${rec.type === "HUTANG" ? "Hutang" : "Piutang"} [${rec.customId || rec.id}]`,
+              recordedBy: rec.recordedBy || "Staf Keuangan",
+              source: "Pelunasan Status Penuh",
+              refNumber: rec.customId,
+              status: "LUNAS",
+            });
+          }
+
+          // Urutkan dari transaksi terbaru
+          unifiedPayments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+          return (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[220] flex items-start justify-center p-4 sm:p-6 overflow-y-auto">
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 20 }}
+                className="bg-white w-full max-w-3xl rounded-[2.5rem] shadow-2xl p-6 sm:p-8 my-auto space-y-6 text-slate-800 border border-slate-100"
+              >
+                {/* Header */}
+                <div className="flex justify-between items-start border-b border-slate-100 pb-5">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2.5 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 font-mono text-xs font-black rounded-lg uppercase tracking-wider">
+                        {rec.customId || `${rec.type === "HUTANG" ? "HTG" : "PTG"}-${rec.id.substring(0, 6).toUpperCase()}`}
+                      </span>
+                      <span className={`px-2.5 py-1 rounded-lg text-xs font-black uppercase tracking-wider ${
+                        rec.type === "HUTANG" ? "bg-rose-50 text-rose-700 border border-rose-200" : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                      }`}>
+                        {rec.type === "HUTANG" ? "Kewajiban Hutang" : "Tagihan Piutang"}
+                      </span>
+                      {rec.projectId && (
+                        <span className="px-2.5 py-1 bg-slate-100 text-slate-700 text-xs font-bold rounded-lg">
+                          Proyek: {projects.find((p) => p.id === rec.projectId)?.name || "Umum"}
+                        </span>
+                      )}
+                    </div>
+                    <h3 className="text-2xl font-black text-slate-900 pt-1">
+                      Catatan Data Transaksi di Buku Keuangan
+                    </h3>
+                    <p className="text-xs font-medium text-slate-500">
+                      Pihak: <span className="font-bold text-slate-800">{originRecord?.personalHolder || rec.contactName}</span> • Uraian: <span className="font-bold text-slate-800">{originRecord?.description || rec.title}</span>
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setSelectedTransactionDetailRecord(null)}
+                    className="p-2.5 hover:bg-slate-100 rounded-full text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                    title="Tutup Modal"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+
+                {/* KARTU UTAMA: DATA CATATAN TRANSAKSI DI BUKU KAS / TRANSAKSI */}
+                <div className="p-5 bg-gradient-to-br from-indigo-50/90 via-slate-50 to-indigo-50/50 border-2 border-indigo-200/80 rounded-3xl space-y-4 shadow-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-b border-indigo-100 pb-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black shadow-xs">
+                        <FileText size={18} />
+                      </div>
+                      <div>
+                        <h4 className="text-sm font-black text-indigo-950 uppercase tracking-wide">
+                          Catatan Data Transaksi di Buku Keuangan
+                        </h4>
+                        <p className="text-[11px] text-indigo-700 font-medium">
+                          {originRecord ? "Data transaksi asli yang tercatat pada Buku Kas / Keuangan PT" : "Data awal pencatatan hutang/piutang pada sistem keuangan"}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedTransactionDetailRecord(null);
+                        if (onNavigateToFinance) {
+                          onNavigateToFinance(originQuery);
+                        } else {
+                          onNavigate("admin-finance");
+                        }
+                      }}
+                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-xs hover:scale-105 active:scale-95"
+                      title="Buka data transaksi ini di Data Keuangan Keseluruhan"
+                    >
+                      <ArrowRightLeft size={14} />
+                      <span>Buka di Keuangan Keseluruhan</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                    <div className="p-3 bg-white rounded-2xl border border-indigo-100 shadow-2xs">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">ID / Kode Transaksi</p>
+                      <p className="font-mono font-black text-indigo-700 text-sm mt-0.5">
+                        {originRecord?.customId || rec.originCustomId || rec.customId || "-"}
+                      </p>
+                      {rec.customId && originRecord?.customId && rec.customId !== originRecord.customId && (
+                        <p className="text-[10px] font-mono text-slate-400 mt-0.5">Ref Buku: {rec.customId}</p>
+                      )}
+                    </div>
+
+                    <div className="p-3 bg-white rounded-2xl border border-indigo-100 shadow-2xs">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Tanggal Transaksi</p>
+                      <p className="font-bold text-slate-800 text-sm mt-0.5">
+                        {originRecord?.date || rec.dueDate || "-"}
+                      </p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">Jatuh Tempo: {rec.dueDate || "-"}</p>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-2xl border border-indigo-100 shadow-2xs">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Nominal Transaksi Asal</p>
+                      <p className="font-mono font-black text-slate-900 text-sm mt-0.5">
+                        {formatCurrencyIDR(originRecord?.amount || rec.amount || 0)}
+                      </p>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Nilai transaksi asli buku</p>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-2xl border border-indigo-100 shadow-2xs">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Tipe Arus Kas</p>
+                      <div className="mt-0.5">
+                        {originRecord ? (
+                          originRecord.type === "IN" ? (
+                            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-black uppercase tracking-wider">
+                              Pemasukan (IN)
+                            </span>
+                          ) : originRecord.flowType === "OUT_PERSONAL_SPEND" ? (
+                            <span className="px-2 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded text-[10px] font-black uppercase tracking-wider">
+                              Talangan Pribadi (PRS)
+                            </span>
+                          ) : originRecord.flowType === "OUT_BANK_DIRECT" ? (
+                            <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded text-[10px] font-black uppercase tracking-wider">
+                              Pengeluaran Bank PT (BNK)
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 bg-rose-50 text-rose-700 border border-rose-200 rounded text-[10px] font-black uppercase tracking-wider">
+                              Pengeluaran Kas (OUT)
+                            </span>
+                          )
+                        ) : (
+                          <span className="px-2 py-0.5 bg-slate-100 text-slate-700 border border-slate-200 rounded text-[10px] font-black uppercase tracking-wider">
+                            {rec.type === "HUTANG" ? "Kewajiban Hutang" : "Tagihan Piutang"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-2xl border border-indigo-100 shadow-2xs">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Kategori Transaksi</p>
+                      <p className="font-bold text-slate-800 mt-0.5">
+                        {originRecord?.category || (rec.type === "HUTANG" ? "Hutang / Talangan Operasional" : "Piutang Usaha Proyek")}
+                      </p>
+                    </div>
+
+                    <div className="p-3 bg-white rounded-2xl border border-indigo-100 shadow-2xs">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Pihak Terkait / PIC</p>
+                      <p className="font-bold text-slate-800 mt-0.5">
+                        {originRecord?.personalHolder || rec.contactName || originRecord?.senderName || originRecord?.rekPenerima || "-"}
+                      </p>
+                      {originRecord?.recordedBy && (
+                        <p className="text-[10px] text-slate-400 mt-0.5">Dicatat oleh: {originRecord.recordedBy}</p>
+                      )}
+                    </div>
+
+                    <div className="p-3 bg-white rounded-2xl border border-indigo-100 shadow-2xs sm:col-span-2 lg:col-span-3">
+                      <p className="text-[10px] font-black uppercase tracking-wider text-slate-400">Deskripsi / Uraian Lengkap Transaksi di Buku</p>
+                      <p className="font-semibold text-slate-800 mt-1 leading-relaxed bg-slate-50 p-2.5 rounded-xl border border-slate-200/80">
+                        {originRecord?.description || rec.description || rec.title}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2 mt-2 text-[10px] font-medium text-slate-500">
+                        {originRecord?.sumberDana && (
+                          <span className="px-2 py-0.5 bg-slate-100 rounded border border-slate-200 font-bold">
+                            Sumber: {originRecord.sumberDana}
+                          </span>
+                        )}
+                        {originRecord?.rekPenerima && (
+                          <span className="px-2 py-0.5 bg-slate-100 rounded border border-slate-200 font-bold">
+                            Penerima: {originRecord.rekPenerima}
+                          </span>
+                        )}
+                        {originRecord?.refIdBank && (
+                          <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-100 font-mono font-bold">
+                            Ref Bank: {originRecord.refIdBank}
+                          </span>
+                        )}
+                        {rec.projectId && (
+                          <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 rounded border border-indigo-100 font-bold">
+                            Proyek: {projects.find((p) => p.id === rec.projectId)?.name || "Umum"}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Status Alert Banner */}
+                {isFullyPaid ? (
+                  <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-emerald-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-200">
+                        <CheckCircle2 size={24} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-emerald-900 uppercase tracking-wide">
+                          Status: Lunas Penuh
+                        </p>
+                        <p className="text-xs text-emerald-700 font-medium">
+                          Seluruh nominal telah diselesaikan. Tidak ada sisa tagihan yang tertunggak.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedTransactionDetailRecord(null);
+                        handleOpenStatusModal(rec, "UNPAID");
+                      }}
+                      className="px-3.5 py-2 bg-white hover:bg-emerald-100/60 border border-emerald-300 text-emerald-800 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs shrink-0 flex items-center gap-1.5"
+                    >
+                      <RotateCcw size={13} />
+                      <span>Ubah ke Belum Lunas</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shrink-0 shadow-md shadow-amber-200">
+                        <Clock size={24} />
+                      </div>
+                      <div>
+                        <p className="text-sm font-black text-amber-900 uppercase tracking-wide">
+                          {totalPaid > 0 ? "Status: Dicicil (Sebagian Terbayar)" : "Status: Belum Dibayar"}
+                        </p>
+                        <p className="text-xs text-amber-700 font-medium">
+                          Sisa kewajiban pembayaran yang belum selesai: <span className="font-bold font-mono">{formatCurrencyIDR(remaining)}</span>
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTransactionDetailRecord(null);
+                          setShowPaymentModal(rec);
+                          setPaymentForm((prev) => ({
+                            ...prev,
+                            amount: remaining.toString(),
+                          }));
+                        }}
+                        className="px-3.5 py-2 bg-[#112a46] hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center gap-1.5"
+                      >
+                        <DollarSign size={13} />
+                        <span>Cicil / Bayar</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedTransactionDetailRecord(null);
+                          handleOpenStatusModal(rec, "PAID");
+                        }}
+                        className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs flex items-center gap-1.5"
+                      >
+                        <CheckCircle2 size={13} />
+                        <span>Tandai Lunas</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 3 Metric Summary Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+                  <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl">
+                    <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                      Total Nilai Tagihan
+                    </p>
+                    <p className="text-lg font-black font-mono text-slate-900 mt-1">
+                      {formatCurrencyIDR(contractValue)}
+                    </p>
+                    <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                      Jatuh Tempo: {rec.dueDate || "-"}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-emerald-50/70 border border-emerald-200/80 rounded-2xl">
+                    <p className="text-[10px] font-black uppercase text-emerald-600 tracking-wider">
+                      Total Sudah Dibayar
+                    </p>
+                    <p className="text-lg font-black font-mono text-emerald-700 mt-1">
+                      {formatCurrencyIDR(totalPaid)}
+                    </p>
+                    <p className="text-[10px] text-emerald-600 font-medium mt-0.5">
+                      {unifiedPayments.length} kali pembayaran tercatat
+                    </p>
+                  </div>
+                  <div className={`p-4 rounded-2xl border ${
+                    remaining > 0 ? "bg-rose-50/70 border-rose-200/80" : "bg-slate-50 border-slate-200"
+                  }`}>
+                    <p className={`text-[10px] font-black uppercase tracking-wider ${
+                      remaining > 0 ? "text-rose-600" : "text-slate-400"
+                    }`}>
+                      Sisa Tagihan
+                    </p>
+                    <p className={`text-lg font-black font-mono mt-1 ${
+                      remaining > 0 ? "text-rose-700" : "text-slate-500"
+                    }`}>
+                      {formatCurrencyIDR(remaining)}
+                    </p>
+                    <p className="text-[10px] text-slate-500 font-medium mt-0.5">
+                      {isFullyPaid ? "Tagihan tuntas lunas" : "Wajib diselesaikan"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Data Transaksi yang Sudah Dibayar */}
+                <div className="space-y-3 pt-2">
+                  <div className="flex justify-between items-center">
+                    <div className="flex items-center gap-2">
+                      <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                      <h4 className="text-sm font-black text-slate-900 uppercase tracking-wider">
+                        Data Transaksi Pembayaran yang Sudah Dibayar
+                      </h4>
+                      <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-black rounded-full">
+                        {unifiedPayments.length} Transaksi
+                      </span>
+                    </div>
+                  </div>
+
+                  {unifiedPayments.length > 0 ? (
+                    <div className="overflow-hidden border border-slate-200 rounded-2xl">
+                      <table className="w-full text-left text-xs border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                            <th className="p-3.5 pl-4">Tanggal Bayar</th>
+                            <th className="p-3.5">Nominal Dibayar</th>
+                            <th className="p-3.5">Keterangan / Uraian</th>
+                            <th className="p-3.5">Saluran / Bukti Kas</th>
+                            <th className="p-3.5">Pencatat</th>
+                            <th className="p-3.5 pr-4 text-center">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {unifiedPayments.map((item, idx) => (
+                            <tr key={item.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                              <td className="p-3.5 pl-4 font-mono font-bold text-slate-700 whitespace-nowrap">
+                                {item.date}
+                              </td>
+                              <td className="p-3.5 font-mono font-black text-emerald-600 whitespace-nowrap">
+                                {formatCurrencyIDR(item.amount)}
+                              </td>
+                              <td className="p-3.5 font-medium text-slate-800 max-w-xs">
+                                <p className="font-bold text-slate-900">{item.note}</p>
+                                {item.refNumber && (
+                                  <p className="text-[10px] font-mono text-indigo-600 mt-0.5">
+                                    Ref: {item.refNumber}
+                                  </p>
+                                )}
+                              </td>
+                              <td className="p-3.5 font-medium text-slate-600 whitespace-nowrap">
+                                <span className="px-2 py-1 bg-slate-100 text-slate-700 rounded-md text-[10px] font-bold">
+                                  {item.source}
+                                </span>
+                              </td>
+                              <td className="p-3.5 font-medium text-slate-600 text-[11px] whitespace-nowrap">
+                                {item.recordedBy}
+                              </td>
+                              <td className="p-3.5 pr-4 text-center whitespace-nowrap">
+                                <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-[9px] font-black uppercase tracking-wider">
+                                  <CheckCircle2 size={10} />
+                                  <span>{item.status}</span>
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot className="bg-slate-50 border-t border-slate-200 font-bold">
+                          <tr>
+                            <td className="p-3.5 pl-4 text-slate-600 font-black uppercase text-[10px]">
+                              Total Terbayar
+                            </td>
+                            <td className="p-3.5 font-mono font-black text-emerald-600">
+                              {formatCurrencyIDR(
+                                unifiedPayments.reduce((acc, u) => acc + (u.amount || 0), 0)
+                              )}
+                            </td>
+                            <td colSpan={4} className="p-3.5 pr-4 text-right text-[10px] text-slate-400 font-medium">
+                              Semua transaksi valid & tersinkronisasi
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-8 bg-slate-50 border border-dashed border-slate-200 rounded-2xl text-center space-y-2">
+                      <div className="w-10 h-10 rounded-full bg-slate-200 text-slate-500 flex items-center justify-center mx-auto">
+                        <Info size={20} />
+                      </div>
+                      <p className="text-sm font-bold text-slate-700">
+                        Belum Ada Transaksi Pembayaran
+                      </p>
+                      <p className="text-xs text-slate-400 max-w-md mx-auto">
+                        Catatan ini belum memiliki riwayat transaksi pembayaran atau cicilan yang tercatat.
+                      </p>
+                      <div className="pt-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedTransactionDetailRecord(null);
+                            setShowPaymentModal(rec);
+                            setPaymentForm((prev) => ({
+                              ...prev,
+                              amount: remaining.toString(),
+                            }));
+                          }}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-sm transition-all cursor-pointer inline-flex items-center gap-1.5"
+                        >
+                          <DollarSign size={14} />
+                          <span>Catat Pembayaran Sekarang</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedTransactionDetailRecord(null);
+                        handleOpenStatusModal(rec);
+                      }}
+                      className="px-4 py-2.5 rounded-xl border border-slate-200 hover:border-slate-300 text-slate-700 hover:bg-slate-50 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2"
+                    >
+                      <SlidersHorizontal size={14} />
+                      <span>Ganti Status (Lunas / Belum Lunas)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedTransactionDetailRecord(null);
+                        if (onNavigateToFinance) {
+                          onNavigateToFinance(originQuery);
+                        } else {
+                          onNavigate("admin-finance");
+                        }
+                      }}
+                      className="px-4 py-2.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold text-xs uppercase tracking-wider transition-all cursor-pointer flex items-center gap-2"
+                    >
+                      <ArrowRightLeft size={14} />
+                      <span>Buka di Keuangan Keseluruhan</span>
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedTransactionDetailRecord(null)}
+                    className="px-6 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-black text-xs uppercase tracking-wider shadow-md transition-all cursor-pointer"
+                  >
+                    Tutup
+                  </button>
+                </div>
+              </motion.div>
+            </div>
+          );
+        })()}
 
         {showGroupPaymentModal && (
           <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[200] flex items-start justify-center p-6 overflow-y-auto">
@@ -10392,17 +12745,22 @@ const AdminDebtScreen = ({
                                     </span>
                                   </td>
                                   <td className="p-3.5 text-center">
-                                    <span
-                                      className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenStatusModal(rec)}
+                                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border cursor-pointer hover:scale-105 transition-all shadow-xs ${
                                         status === "PAID"
-                                          ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                          ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
                                           : status === "PARTIAL"
-                                            ? "bg-amber-50 text-amber-700 border-amber-200"
-                                            : "bg-rose-50 text-rose-700 border-rose-200"
+                                            ? "bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100"
+                                            : "bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100"
                                       }`}
+                                      title="Klik untuk ganti status Lunas / Belum Lunas"
                                     >
-                                      {status === "PAID" ? "Lunas" : status === "PARTIAL" ? "Dicicil" : "Belum Bayar"}
-                                    </span>
+                                      {status === "PAID" ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
+                                      <span>{status === "PAID" ? "Lunas" : status === "PARTIAL" ? "Dicicil" : "Belum Bayar"}</span>
+                                      <SlidersHorizontal size={8} className="opacity-50 ml-0.5" />
+                                    </button>
                                   </td>
                                   <td className="p-3.5 pr-4">
                                     <div className="flex items-center justify-center gap-1.5">
@@ -10432,6 +12790,21 @@ const AdminDebtScreen = ({
                                         title="Edit Rincian"
                                       >
                                         <Edit size={12} />
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setSelectedContactDetail(null);
+                                          const { query } = getOriginFinanceQueryAndRecord(rec, financialRecords);
+                                          if (onNavigateToFinance) {
+                                            onNavigateToFinance(query);
+                                          } else {
+                                            onNavigate("admin-finance");
+                                          }
+                                        }}
+                                        className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors cursor-pointer flex items-center justify-center"
+                                        title="Buka Catatan Transaksi di Data Keuangan Keseluruhan"
+                                      >
+                                        <ArrowRightLeft size={12} />
                                       </button>
                                       <button
                                         onClick={() => setSelectedTerminRecord(rec)}
@@ -10865,6 +13238,211 @@ const AdminDebtScreen = ({
           </div>
         )}
       </AnimatePresence>
+
+      {/* Modal Pilihan Unduh Laporan PDF (Hutang / Piutang / Gabungan) */}
+      <AnimatePresence>
+        {showExportReportModal && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm overflow-y-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 15 }}
+              className="bg-white rounded-[2.5rem] p-6 sm:p-8 max-w-xl w-full shadow-2xl border border-slate-100 space-y-6 my-auto"
+            >
+              <div className="flex items-center justify-between pb-4 border-b border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
+                    <Download size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-slate-900 uppercase tracking-tight">
+                      Cetak & Unduh Laporan PDF
+                    </h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Pilih format jenis laporan, filter status pelunasan, dan cakupan proyek
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowExportReportModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-all cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="space-y-5">
+                {/* 1. Pilihan Jenis Laporan */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                    1. Pilihan Dokumen Laporan
+                  </label>
+                  <div className="grid grid-cols-3 gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => setExportReportConfig({ ...exportReportConfig, type: "HUTANG" })}
+                      className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        exportReportConfig.type === "HUTANG"
+                          ? "bg-rose-50/80 border-rose-400 ring-2 ring-rose-400/30 text-rose-900 shadow-xs"
+                          : "bg-slate-50 border-slate-200/80 text-slate-600 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-black uppercase">Hutang</span>
+                        <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                          exportReportConfig.type === "HUTANG" ? "border-rose-600 bg-rose-600" : "border-slate-300"
+                        }`}>
+                          {exportReportConfig.type === "HUTANG" && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-medium leading-tight">
+                        Rekap hutang usaha & total per kreditur
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setExportReportConfig({ ...exportReportConfig, type: "PIUTANG" })}
+                      className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        exportReportConfig.type === "PIUTANG"
+                          ? "bg-emerald-50/80 border-emerald-500 ring-2 ring-emerald-400/30 text-emerald-900 shadow-xs"
+                          : "bg-slate-50 border-slate-200/80 text-slate-600 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-black uppercase">Piutang</span>
+                        <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                          exportReportConfig.type === "PIUTANG" ? "border-emerald-600 bg-emerald-600" : "border-slate-300"
+                        }`}>
+                          {exportReportConfig.type === "PIUTANG" && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-slate-500 font-medium leading-tight">
+                        Rekap piutang usaha & tagihan per debitur
+                      </p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setExportReportConfig({ ...exportReportConfig, type: "GABUNGAN" })}
+                      className={`p-3.5 rounded-2xl border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                        exportReportConfig.type === "GABUNGAN"
+                          ? "bg-indigo-50/80 border-indigo-500 ring-2 ring-indigo-400/30 text-indigo-900 shadow-xs"
+                          : "bg-slate-50 border-slate-200/80 text-slate-600 hover:border-slate-300"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-xs font-black uppercase text-indigo-700">Gabungan</span>
+                        <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                          exportReportConfig.type === "GABUNGAN" ? "border-indigo-600 bg-indigo-600" : "border-slate-300"
+                        }`}>
+                          {exportReportConfig.type === "GABUNGAN" && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-indigo-600 font-medium leading-tight">
+                        Konsolidasi Hutang & Piutang + Posisi Net
+                      </p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* 2. Filter Status Pelunasan */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                    2. Filter Status Pelunasan
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setExportReportConfig({ ...exportReportConfig, statusFilter: "ALL" })}
+                      className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer text-center ${
+                        exportReportConfig.statusFilter === "ALL"
+                          ? "bg-slate-900 text-white border-slate-900 shadow-xs"
+                          : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      Semua Status
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportReportConfig({ ...exportReportConfig, statusFilter: "UNPAID" })}
+                      className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer text-center ${
+                        exportReportConfig.statusFilter === "UNPAID"
+                          ? "bg-rose-600 text-white border-rose-600 shadow-xs"
+                          : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      Belum Lunas Saja
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportReportConfig({ ...exportReportConfig, statusFilter: "PAID" })}
+                      className={`py-2.5 px-3 rounded-xl border text-xs font-bold transition-all cursor-pointer text-center ${
+                        exportReportConfig.statusFilter === "PAID"
+                          ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                          : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      Lunas Saja
+                    </button>
+                  </div>
+                </div>
+
+                {/* 3. Cakupan Proyek */}
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                    3. Cakupan Proyek
+                  </label>
+                  <select
+                    value={exportReportConfig.projectFilter}
+                    onChange={(e) => setExportReportConfig({ ...exportReportConfig, projectFilter: e.target.value })}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    <option value="ALL">Semua Proyek (Global Seluruh Data)</option>
+                    {projects.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Info preview notice */}
+                <div className="p-4 rounded-2xl bg-indigo-50/60 border border-indigo-100 text-xs text-indigo-950 space-y-1">
+                  <div className="font-bold flex items-center gap-1.5 text-indigo-900">
+                    <AlertCircle size={14} /> Format Laporan Profesional PT GIG:
+                  </div>
+                  <ul className="list-disc list-inside text-[11px] text-slate-600 space-y-0.5 ml-1">
+                    <li>Mencantumkan <strong>Total Hutang & Piutang Perusahaan</strong></li>
+                    <li>Mencantumkan <strong>Rincian Total Hutang ke Masing-Masing Orang / Pihak yang Dihutangin</strong></li>
+                    <li>Layout Landscape A4 rapi, lengkap dengan lembar verifikasi & tanda tangan Pengesahan Direktur</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowExportReportModal(false)}
+                  className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => executeExportPDF(exportReportConfig)}
+                  disabled={isExporting}
+                  className="px-7 py-3 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all cursor-pointer flex items-center gap-2"
+                >
+                  <Download size={15} /> {isExporting ? "Memproses PDF..." : "Unduh PDF Sekarang"}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </AdminLayout>
   );
 };
@@ -11009,6 +13587,8 @@ const AdminFinanceScreen = ({
   setDebtRecords,
   setFinancialRecords,
   setProjects,
+  initialSearchQuery,
+  setFinanceSearchQuery,
 }: {
   financialRecords: FinancialRecord[];
   debtRecords: DebtRecord[];
@@ -11023,6 +13603,8 @@ const AdminFinanceScreen = ({
   setDebtRecords?: React.Dispatch<React.SetStateAction<DebtRecord[]>>;
   setFinancialRecords?: React.Dispatch<React.SetStateAction<FinancialRecord[]>>;
   setProjects?: React.Dispatch<React.SetStateAction<Project[]>>;
+  initialSearchQuery?: string;
+  setFinanceSearchQuery?: (q: string) => void;
 }) => {
   const [timeframe, setTimeframe] = useState("monthly");
   const effectiveDebtRecords = useMemo(() => {
@@ -11242,7 +13824,18 @@ const AdminFinanceScreen = ({
     };
   }, [showAddModal, showExportModal, editingTransaction, selectedPattyCashDetail]);
 
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(initialSearchQuery || "");
+
+  useEffect(() => {
+    if (initialSearchQuery !== undefined && initialSearchQuery !== "") {
+      setSearchQuery(initialSearchQuery);
+      setFilterFlowType("ALL");
+      setFilterTimeRange("ALL");
+      setFilterProject("ALL");
+      setFilterCategory("ALL");
+    }
+  }, [initialSearchQuery]);
+
   const [useManualPIC, setUseManualPIC] = useState(false);
   const [useManualRefPiutang, setUseManualRefPiutang] = useState(false);
   const [useManualRefHutang, setUseManualRefHutang] = useState(false);
@@ -12322,10 +14915,18 @@ const AdminFinanceScreen = ({
   const outgoingSpendsFiltered = useMemo(() => {
     return outgoingSpends
       .filter((r) => {
+        const q = searchQuery.toLowerCase().trim();
+        const cleanQ = q.replace(/^htg-/i, "").replace(/^ptg-/i, "").trim();
         const matchesSearch =
-          r.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (r.personalHolder || "").toLowerCase().includes(searchQuery.toLowerCase());
+          !q ||
+          r.description.toLowerCase().includes(q) ||
+          r.category.toLowerCase().includes(q) ||
+          (r.personalHolder || "").toLowerCase().includes(q) ||
+          (r.senderName || "").toLowerCase().includes(q) ||
+          (r.customId || "").toLowerCase().includes(q) ||
+          (cleanQ !== "" && (r.customId || "").toLowerCase().includes(cleanQ)) ||
+          (r.refHutang || "").toLowerCase().includes(q) ||
+          (r.refPiutang || "").toLowerCase().includes(q);
 
         const matchesProject = filterProject === "ALL" || r.referenceId === filterProject;
         const matchesCategory = filterCategory === "ALL" || r.category === filterCategory;
@@ -12387,12 +14988,19 @@ const AdminFinanceScreen = ({
   const filteredRecords = useMemo(() => {
     return financialRecords.filter((r) => {
       // Search Box
+      const q = searchQuery.toLowerCase().trim();
+      const cleanQ = q.replace(/^htg-/i, "").replace(/^ptg-/i, "").trim();
       const matchesSearch =
-        r.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        r.category.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (r.personalHolder || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (r.senderName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (r.customId || "").toLowerCase().includes(searchQuery.toLowerCase());
+        !q ||
+        r.description.toLowerCase().includes(q) ||
+        r.category.toLowerCase().includes(q) ||
+        (r.personalHolder || "").toLowerCase().includes(q) ||
+        (r.senderName || "").toLowerCase().includes(q) ||
+        (r.customId || "").toLowerCase().includes(q) ||
+        (cleanQ !== "" && (r.customId || "").toLowerCase().includes(cleanQ)) ||
+        (r.refHutang || "").toLowerCase().includes(q) ||
+        (r.refPiutang || "").toLowerCase().includes(q) ||
+        (r.linkedDebtId || "").toLowerCase().includes(q);
 
       // Project Category
       const matchesProject = filterProject === "ALL" || r.referenceId === filterProject;
@@ -14922,6 +17530,32 @@ const AdminFinanceScreen = ({
                 </div>
               </div>
 
+              {searchQuery && (
+                <div className="mb-4 p-3.5 bg-indigo-50/90 border border-indigo-200 rounded-2xl flex flex-wrap items-center justify-between gap-3 text-xs shadow-xs">
+                  <div className="flex items-center gap-2.5 text-indigo-950 font-medium">
+                    <span className="p-1.5 bg-indigo-600 text-white rounded-lg flex items-center justify-center shadow-xs">
+                      <ArrowRightLeft size={14} />
+                    </span>
+                    <span>
+                      Menampilkan filter data transaksi keuangan untuk:{" "}
+                      <strong className="font-mono font-bold bg-white px-2.5 py-1 rounded-md border border-indigo-200 text-indigo-700 shadow-2xs">
+                        {searchQuery}
+                      </strong>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      if (setFinanceSearchQuery) setFinanceSearchQuery("");
+                    }}
+                    className="px-3.5 py-1.5 bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-300 rounded-xl text-xs font-bold transition-all cursor-pointer shadow-2xs"
+                  >
+                    Tampilkan Semua Transaksi
+                  </button>
+                </div>
+              )}
+
               {filterFlowType !== "TALANGAN" ? (
                 <div className="overflow-x-auto border border-slate-100 rounded-3xl">
                   <table className="w-full text-left border-collapse min-w-[900px] text-[13px]">
@@ -15030,11 +17664,22 @@ const AdminFinanceScreen = ({
                           const groupKey = record.refIdBank || (record.customId && record.customId.startsWith("BNK-") && activeBankIds.has(record.customId) ? record.customId : "");
                           const groupBgClass = groupKey && uiBankColorMap[groupKey] ? uiBankColorMap[groupKey] : "";
 
+                          const cleanSearch = (searchQuery || "").replace(/^(htg|ptg)-/i, "").toLowerCase().trim();
+                          const isDirectTarget =
+                            Boolean(searchQuery) &&
+                            Boolean(record.customId) &&
+                            (record.customId.toLowerCase() === searchQuery.toLowerCase().trim() ||
+                              (cleanSearch !== "" && record.customId.toLowerCase() === cleanSearch));
+
                           return (
                             <tr
                               key={record.id}
                               className={`hover:bg-slate-100/50 transition-all font-medium ${
-                                groupBgClass ? groupBgClass : (iIdx % 2 === 0 ? "bg-white" : "bg-slate-50/40")
+                                isDirectTarget
+                                  ? "bg-indigo-50/90 ring-2 ring-indigo-400 ring-inset shadow-xs"
+                                  : groupBgClass
+                                  ? groupBgClass
+                                  : (iIdx % 2 === 0 ? "bg-white" : "bg-slate-50/40")
                               } ${isChosen ? "bg-slate-100/60" : ""}`}
                             >
                               {user?.role !== "owner" && user?.role !== "direktur" && (
@@ -22672,6 +25317,7 @@ export default function App() {
   const [clients, setClients] = useState<Client[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selectedInvoiceForEdit, setSelectedInvoiceForEdit] = useState<any | null>(null);
+  const [financeSearchQuery, setFinanceSearchQuery] = useState<string>("");
   const [suratJalanList, setSuratJalanList] = useState<SuratJalan[]>([]);
   const [maintenanceRecords, setMaintenanceRecords] = useState<
     MaintenanceRecord[]
@@ -28428,6 +31074,11 @@ export default function App() {
 
     setScreen(s);
     localStorage.setItem("workflow_pro_screen", s);
+  };
+
+  const handleNavigateToFinance = (searchQuery?: string) => {
+    setFinanceSearchQuery(searchQuery || "");
+    navigate("admin-finance");
   };
 
   const navigateBack = () => {
@@ -37863,6 +40514,8 @@ export default function App() {
             setDebtRecords={setDebtRecords}
             setFinancialRecords={setFinancialRecords}
             setProjects={setProjects}
+            initialSearchQuery={financeSearchQuery}
+            setFinanceSearchQuery={setFinanceSearchQuery}
           />
         );
 
@@ -37873,6 +40526,7 @@ export default function App() {
             financialRecords={financialRecords}
             projects={projects}
             onNavigate={navigate}
+            onNavigateToFinance={handleNavigateToFinance}
             user={currentUser}
             roles={roles}
             logActivity={logActivity}
