@@ -1,11 +1,18 @@
 import express from "express";
 import path from "path";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { execSync } from "child_process";
 
 dotenv.config();
+
+// Auto-detect production environment when running compiled server bundle
+const isRunningBundled = Boolean(process.argv[1] && process.argv[1].includes("dist"));
+if (isRunningBundled) {
+  process.env.NODE_ENV = "production";
+}
 
 const app = express();
 const PORT = 3000;
@@ -24,19 +31,29 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ limit: "15mb", extended: true }));
 
-// Share server-side Gemini client, always using User-Agent header as required
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
+// Lazy initialization for server-side Gemini client to avoid crashes on startup if secret is not set
+let geminiClientInstance: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI {
+  if (!geminiClientInstance) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      throw new Error("GEMINI_API_KEY is not configured. Silakan tambahkan kunci di Settings > Secrets.");
     }
+    geminiClientInstance = new GoogleGenAI({
+      apiKey: key,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
   }
-});
+  return geminiClientInstance;
+}
 
-// API Routes
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok" });
+// API Health Check Routes (compatible with GCP Cloud Run startup and liveness probes)
+app.get(["/api/health", "/health", "/healthz"], (req, res) => {
+  res.status(200).json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
 // Direct download endpoints for clean source files and project
@@ -206,6 +223,7 @@ app.post("/api/gemini/generate-boq", async (req, res) => {
     const modelsToTry = ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"];
     let response: any = null;
     let lastError: any = null;
+    const ai = getGeminiClient();
 
     for (const modelName of modelsToTry) {
       try {
@@ -347,6 +365,7 @@ app.post("/api/gemini/parse-quotation", async (req, res) => {
     const modelsToTry = ["gemini-3.5-flash", "gemini-3.1-pro-preview", "gemini-3.1-flash-lite"];
     let response: any = null;
     let lastError: any = null;
+    const ai = getGeminiClient();
 
     for (const modelName of modelsToTry) {
       try {
@@ -468,6 +487,7 @@ app.post("/api/gemini/parse-pdf-financial", async (req, res) => {
     const modelsToTry = ["gemini-3.5-flash", "gemini-3.1-pro-preview"];
     let response: any = null;
     let lastError: any = null;
+    const ai = getGeminiClient();
 
     for (const modelName of modelsToTry) {
       try {
@@ -505,24 +525,47 @@ app.post("/api/gemini/parse-pdf-financial", async (req, res) => {
 
 // Vite middleware for development / SPA static server for production
 async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
+  const isProduction =
+    process.env.NODE_ENV === "production" ||
+    isRunningBundled ||
+    (!process.env.NODE_ENV && fs.existsSync(path.join(process.cwd(), "dist", "index.html")));
+
+  if (!isProduction) {
+    console.log("[Server] Starting in DEVELOPMENT mode with Vite middleware...");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), 'dist');
+    console.log("[Server] Starting in PRODUCTION mode with static file serving...");
+    const distPath = path.join(process.cwd(), "dist");
+
     app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+
+    // Handle unknown API requests with 404 JSON instead of HTML
+    app.all("/api/*", (req, res) => {
+      res.status(404).json({ error: "API endpoint not found" });
+    });
+
+    // SPA fallback
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT} (${isProduction ? "production" : "development"})`);
   });
 }
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught Exception:", error);
+});
 
 startServer().catch((error) => {
   console.error("Failed to start server:", error);

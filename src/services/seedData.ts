@@ -155,6 +155,7 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     category: "BELANJA",
     description: "PEMBELIAN PLASTIK POLYBAG",
     sumberDana: "REKENING PRIBADI",
+    refHutang: "HTG-006",
     recordedBy: "admin",
     timestamp: 1780394400000,
     referenceId: "WESTMARK"
@@ -371,6 +372,7 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     category: "BELANJA",
     description: "PEMBELIAN KARUNG 50 PCS",
     sumberDana: "REKENING PRIBADI",
+    refHutang: "HTG-007",
     recordedBy: "admin",
     timestamp: 1780830000000,
     referenceId: "WESTMARK"
@@ -595,7 +597,7 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     refIdBank: "BNK-140626-001"
   },
   {
-    customId: "PRS-130626-001",
+    customId: "PRS-140626-001",
     date: "2026-06-14",
     type: "OUT",
     flowType: "OUT_PERSONAL_SPEND",
@@ -673,7 +675,7 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     referenceId: "WESTMARK"
   },
   {
-    customId: "PRS-200626-001",
+    customId: "PRS-190626-001",
     date: "2026-06-19",
     type: "OUT",
     flowType: "OUT_PERSONAL_SPEND",
@@ -924,7 +926,7 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     refHutang: "HTG-009"
   },
   {
-    customId: "PRS-240626-004",
+    customId: "PRS-240626-005",
     date: "2026-06-24",
     type: "OUT",
     flowType: "OUT_PERSONAL_SPEND",
@@ -1362,7 +1364,7 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     referenceId: "WESTMARK"
   },
   {
-    customId: "PRS-080726-001",
+    customId: "PRS-060726-001",
     date: "2026-07-06",
     type: "OUT",
     flowType: "OUT_PERSONAL_SPEND",
@@ -2503,7 +2505,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     customId: "HTG-002",
     type: "HUTANG",
     title: "Pembayaran DP Pompa",
-    contactName: "MUHAMMAD YASIN",
+    contactName: "BANG YASIN OWNER PT",
     amount: 65405500,
     dueDate: "2026-06-30",
     status: "UNPAID",
@@ -2519,10 +2521,19 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     contactName: "PAK DODO INVESTOR",
     amount: 100000000,
     dueDate: "2026-12-31",
-    status: "UNPAID",
+    status: "PARTIAL",
     description: "Dana investasi masuk perusahaan",
     recordedBy: "admin",
-    payments: []
+    payments: [
+      {
+        id: "PAY-HTG003",
+        amount: 90000000,
+        date: "2026-07-03",
+        note: "Pengembalian Dana Investasi Sebagian",
+        financialRecordId: "BNK-030726-001",
+        recordedBy: "admin"
+      }
+    ]
   },
   {
     id: "HTG-004",
@@ -2542,13 +2553,21 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     customId: "HTG-005",
     type: "HUTANG",
     title: "Pembayaran DP Desain",
-    contactName: "MUHAMMAD YASIN",
+    contactName: "BANG YASIN OWNER PT",
     amount: 1000000,
     dueDate: "2026-06-30",
-    status: "UNPAID",
+    status: "PAID",
     description: "Dana talangan untuk DP Desain",
     recordedBy: "admin",
-    payments: []
+    payments: [
+      {
+        id: "PAY-HTG005",
+        amount: 1000000,
+        date: "2026-06-30",
+        note: "Lunas",
+        recordedBy: "admin"
+      }
+    ]
   },
   {
     id: "HTG-006",
@@ -2562,6 +2581,8 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "Talangan pembelian polybag",
     recordedBy: "admin",
+    originFinancialRecordId: "PRS-020626-001",
+    originCustomId: "PRS-020626-001",
     payments: [{"id":"PAY-HTG006","amount":122000,"date":"2026-06-02","note":"Dibayar via kas/pribadi","recordedBy":"admin"}]
   },
   {
@@ -2576,6 +2597,8 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "Talangan pembelian karung",
     recordedBy: "admin",
+    originFinancialRecordId: "PRS-070626-002",
+    originCustomId: "PRS-070626-002",
     payments: [{"id":"PAY-HTG007","amount":100000,"date":"2026-06-07","note":"Telah dibayarkan tunai","recordedBy":"admin"}]
   },
   {
@@ -2616,7 +2639,7 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "Hutang sisa pembayaran DP pompa",
     recordedBy: "admin",
-    payments: [{"id":"PAY-HTG010a","amount":30000000,"date":"2026-06-08","note":"DP","recordedBy":"admin"},{"id":"PAY-HTG010b","amount":20000000,"date":"2026-06-30","note":"Pelunasan","recordedBy":"admin"}]
+    payments: [{"id":"PAY-HTG010a","amount":30000000,"date":"2026-06-08","note":"DP","recordedBy":"admin"},{"id":"PAY-HTG010b","amount":25000000,"date":"2026-06-30","note":"Pelunasan","recordedBy":"admin"}]
   },
   {
     id: "HTG-011",
@@ -2657,7 +2680,9 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "Talangan Jidan untuk Pembelian Fitting PVC Westmark",
     recordedBy: "admin",
-    payments: [{"id":"PAY-HTG013","amount":446500,"date":"2026-07-04","note":"Lunas dibayarkan","financialRecordId":"PRS-090726-004","recordedBy":"admin"}]
+    originFinancialRecordId: "PRS-040726-004",
+    originCustomId: "PRS-040726-004",
+    payments: [{"id":"PAY-HTG013","amount":446500,"date":"2026-07-09","note":"Lunas dibayarkan","financialRecordId":"PRS-090726-004","recordedBy":"admin"}]
   },
   {
     id: "HTG-014",
@@ -2681,10 +2706,19 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     contactName: "MUHAMMAD YASIN",
     amount: 25000000,
     dueDate: "2026-07-31",
-    status: "UNPAID",
+    status: "PAID",
     description: "Pelunasan DP Pompa menggunakan uang pribadi",
     recordedBy: "admin",
-    payments: []
+    payments: [
+      {
+        id: "PAY-HTG015",
+        amount: 26125500,
+        date: "2026-06-25",
+        note: "Cicilan Pembayaran Dana Owner (Lunas)",
+        financialRecordId: "BNK-250626-001",
+        recordedBy: "admin"
+      }
+    ]
   },
   {
     id: "HTG-016",
@@ -2725,7 +2759,9 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     status: "PAID",
     description: "Lem, WD, Knee",
     recordedBy: "admin",
-    payments: [{"id":"PAY-HTG018","amount":133000,"date":"2026-07-04","note":"Lunas","financialRecordId":"PRS-090726-002","recordedBy":"admin"}]
+    originFinancialRecordId: "PRS-080726-001",
+    originCustomId: "PRS-080726-001",
+    payments: [{"id":"PAY-HTG018","amount":133000,"date":"2026-07-09","note":"Lunas","financialRecordId":"PRS-090726-002","recordedBy":"admin"}]
   },
   {
     id: "HTG-019",

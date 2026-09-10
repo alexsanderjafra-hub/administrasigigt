@@ -96,8 +96,11 @@ export interface CashAdvance {
 export interface Project {
   id: string;
   name: string;
+  projectType?: 'PROJEK STP/IPAL' | 'PENGADAAN BARANG DAN JASA';
   client?: string;
   location: string;
+  poNumber?: string;
+  itemDetails?: string;
   lat?: number;
   lng?: number;
   startDate: string;
@@ -262,6 +265,14 @@ export interface SuratJalan {
   timestamp: number;
 }
 
+export interface DebtPaymentAllocation {
+  debtId: string;
+  customId?: string;
+  title?: string;
+  contactName?: string;
+  amount: number;
+}
+
 export interface FinancialRecord {
   id: string;
   date: string;
@@ -407,6 +418,8 @@ export interface DebtRecord {
   timestamp: number;
   payments?: DebtPayment[];
   terms?: Term[];
+  originFinancialRecordId?: string;
+  originCustomId?: string;
 }
 
 export interface Assignment {
