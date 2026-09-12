@@ -15751,6 +15751,23 @@ const AdminFinanceScreen = ({
     });
   }, [financialRecords, isPattyCashCategory]);
 
+  const checkMatchesCategory = useCallback((recordCat: string = "", filterCat: string) => {
+    if (filterCat === "ALL") return true;
+    const rc = (recordCat || "").trim().toUpperCase();
+    const fc = (filterCat || "").trim().toUpperCase();
+    if (rc === fc) return true;
+    if (fc === "PATTYCASH" || fc === "PETTY CASH" || fc === "PETTYCASH") {
+      return isPattyCashCategory(recordCat);
+    }
+    if (fc === "GAJI" && (rc.includes("GAJI") || rc.includes("UPAH"))) return true;
+    if (fc === "OPERASIONAL" && rc.includes("OPERASIONAL")) return true;
+    if (fc === "PEMBAYARAN HUTANG" && rc.includes("HUTANG")) return true;
+    if (fc === "REIMBURSE" && rc.includes("REIMBURSE")) return true;
+    if (fc === "BELANJA PROJEK" && (rc.includes("PROJEK") || rc.includes("PROYEK") || rc.includes("MATERIAL"))) return true;
+    if (fc === "BELANJA KANTOR" && (rc.includes("KANTOR") || rc.includes("ALAT TULIS") || rc.includes("DAPUR"))) return true;
+    return false;
+  }, [isPattyCashCategory]);
+
   const incomingTransfersFiltered = useMemo(() => {
     return incomingTransfers
       .filter((r) => {
@@ -15760,7 +15777,7 @@ const AdminFinanceScreen = ({
           (r.personalHolder || "").toLowerCase().includes(searchQuery.toLowerCase());
 
         const matchesProject = filterProject === "ALL" || r.referenceId === filterProject;
-        const matchesCategory = filterCategory === "ALL" || r.category === filterCategory;
+        const matchesCategory = checkMatchesCategory(r.category, filterCategory);
 
         let matchesTimeRange = true;
         if (filterTimeRange === "7_DAYS") {
@@ -15811,7 +15828,7 @@ const AdminFinanceScreen = ({
           (r.refPiutang || "").toLowerCase().includes(q);
 
         const matchesProject = filterProject === "ALL" || r.referenceId === filterProject;
-        const matchesCategory = filterCategory === "ALL" || r.category === filterCategory;
+        const matchesCategory = checkMatchesCategory(r.category, filterCategory);
 
         let matchesTimeRange = true;
         if (filterTimeRange === "7_DAYS") {
@@ -15888,7 +15905,7 @@ const AdminFinanceScreen = ({
       const matchesProject = filterProject === "ALL" || r.referenceId === filterProject;
 
       // Category filter
-      const matchesCategory = filterCategory === "ALL" || r.category === filterCategory;
+      const matchesCategory = checkMatchesCategory(r.category, filterCategory);
 
       // Class type filter (4 structural logs)
       let matchesFlowType = true;
