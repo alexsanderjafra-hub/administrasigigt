@@ -83,6 +83,35 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   }
 }
 
+/**
+ * Recursively removes keys with `undefined` values from objects or arrays.
+ * Firestore throws a fatal error if any property value is undefined.
+ */
+export function sanitizeFirestoreData<T>(data: T): T {
+  if (data === null || data === undefined) {
+    return data;
+  }
+  if (Array.isArray(data)) {
+    return data
+      .filter((item) => item !== undefined)
+      .map((item) => sanitizeFirestoreData(item)) as unknown as T;
+  }
+  if (
+    typeof data === "object" &&
+    !(data instanceof Date) &&
+    !(data instanceof Timestamp)
+  ) {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(data as Record<string, any>)) {
+      if (value !== undefined) {
+        cleaned[key] = sanitizeFirestoreData(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return data;
+}
+
 export const dbService = {
   async getDocument<T>(collectionPath: string, docId: string, retries = 3, delayMs = 300): Promise<T | null> {
     for (let i = 0; i < retries; i++) {
@@ -133,8 +162,9 @@ export const dbService = {
 
   async setDocument(collectionPath: string, docId: string, data: any): Promise<void> {
     try {
+      const sanitized = sanitizeFirestoreData(data) || {};
       await setDoc(doc(db, collectionPath, docId), {
-        ...data,
+        ...sanitized,
         updatedAt: Timestamp.now()
       }, { merge: true });
     } catch (error) {
@@ -144,10 +174,11 @@ export const dbService = {
 
   async createDocument(collectionPath: string, data: any): Promise<string> {
     try {
+      const sanitized = sanitizeFirestoreData(data) || {};
       const colRef = collection(db, collectionPath);
       const docRef = doc(colRef);
       await setDoc(docRef, {
-        ...data,
+        ...sanitized,
         id: docRef.id,
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now()
@@ -161,9 +192,10 @@ export const dbService = {
 
   async updateDocument(collectionPath: string, docId: string, data: any): Promise<void> {
     try {
+      const sanitized = sanitizeFirestoreData(data) || {};
       const docRef = doc(db, collectionPath, docId);
       await updateDoc(docRef, {
-        ...data,
+        ...sanitized,
         updatedAt: Timestamp.now()
       });
     } catch (error) {
