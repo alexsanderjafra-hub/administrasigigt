@@ -6526,18 +6526,103 @@ const isInternalPersonnel = (name: string): boolean => {
   );
 };
 
+// Disambiguated project and debt linking helpers to prevent mixing separate projects like "WESTMARK" vs "BAK SUMPIT WESTMARK"
+export const findLinkedProject = (
+  debt: { id?: string; customId?: string; projectId?: string; title?: string; description?: string },
+  projectsList: Project[] = []
+): Project | undefined => {
+  if (!debt || !projectsList || projectsList.length === 0) return undefined;
+
+  // 1. Direct match by explicit projectId or customId
+  if (debt.projectId) {
+    const byId = projectsList.find((p) => p.id === debt.projectId);
+    if (byId) return byId;
+  }
+  if (debt.customId) {
+    const byCustomId = projectsList.find(
+      (p) => p.id === debt.customId || (p as any).customId === debt.customId
+    );
+    if (byCustomId) return byCustomId;
+  }
+
+  const dTitle = (debt.title || "").toLowerCase().trim();
+  const dDesc = (debt.description || "").toLowerCase().trim();
+  const isSumpitDebt = dTitle.includes("sumpit") || dDesc.includes("sumpit");
+
+  // 2. Exact name match (case-insensitive)
+  const exact = projectsList.find(
+    (p) => (p.name || "").toLowerCase().trim() === dTitle
+  );
+  if (exact) return exact;
+
+  // 3. Disambiguated matching: If this debt is Bak Sumpit, strictly match Sumpit project
+  if (isSumpitDebt) {
+    return projectsList.find((p) => (p.name || "").toLowerCase().includes("sumpit"));
+  }
+
+  // 4. If this is a regular project (NOT Sumpit), NEVER link to a Sumpit project
+  return projectsList.find((p) => {
+    const pName = (p.name || "").toLowerCase().trim();
+    if (!pName) return false;
+    if (pName.includes("sumpit")) return false; // Strictly exclude Bak Sumpit for non-sumpit debt
+    return pName.includes(dTitle) || (dTitle && dTitle.includes(pName));
+  });
+};
+
+export const findLinkedDebtForProject = (
+  project: { id?: string; customId?: string; name?: string },
+  debtRecordsList: DebtRecord[] = []
+): DebtRecord | undefined => {
+  if (!project || !debtRecordsList || debtRecordsList.length === 0) return undefined;
+
+  // 1. Direct match by projectId
+  const exactProj = debtRecordsList.find(
+    (d) => d.type === "PIUTANG" && d.projectId && d.projectId === project.id
+  );
+  if (exactProj) return exactProj;
+
+  // 2. Match by customId
+  if (project.customId) {
+    const byCustom = debtRecordsList.find(
+      (d) => d.type === "PIUTANG" && d.customId && d.customId === project.customId
+    );
+    if (byCustom) return byCustom;
+  }
+
+  // 3. Match by synthetic PTG-PROJ-id
+  const exactPtg = debtRecordsList.find(
+    (d) => d.type === "PIUTANG" && d.id === `PTG-PROJ-${project.id}`
+  );
+  if (exactPtg) return exactPtg;
+
+  const pName = (project.name || "").toLowerCase().trim();
+  const isSumpitProj = pName.includes("sumpit");
+
+  // 4. Disambiguated matching: If this is Sumpit, strictly match debt with Sumpit
+  if (isSumpitProj) {
+    return debtRecordsList.find((d) => {
+      if (d.type !== "PIUTANG") return false;
+      const title = (d.title || "").toLowerCase();
+      const desc = (d.description || "").toLowerCase();
+      return title.includes("sumpit") || desc.includes("sumpit");
+    });
+  }
+
+  // 5. Non-Sumpit project: NEVER link to Sumpit debt
+  return debtRecordsList.find((d) => {
+    if (d.type !== "PIUTANG") return false;
+    const title = (d.title || "").toLowerCase();
+    const desc = (d.description || "").toLowerCase();
+    if (title.includes("sumpit") || desc.includes("sumpit")) return false;
+    return title.includes(pName) || pName.includes(title);
+  });
+};
+
 const resolvePiutangClient = (r: DebtRecord, projectsList: Project[] = []): string => {
   const customId = (r.customId || "").toUpperCase();
   const staticSched = TERMIN_SCHEDULES[customId];
   
-  const linkedProj = (projectsList || []).find((p) =>
-    (r.projectId && p.id === r.projectId) ||
-    (r.customId && (p.id === r.customId || (p as any).customId === r.customId)) ||
-    (p.name && r.title && (
-      p.name.toLowerCase().includes(r.title.toLowerCase()) ||
-      r.title.toLowerCase().includes(p.name.toLowerCase())
-    ))
-  );
+  const linkedProj = findLinkedProject(r, projectsList);
 
   if (linkedProj?.client && linkedProj.client.trim() && !isInternalPersonnel(linkedProj.client)) {
     return linkedProj.client.trim();
@@ -6808,7 +6893,7 @@ const getEffectiveDebtRecords = (
           : new Date().toISOString().split('T')[0],
         status: "UNPAID",
         description: `Rekam Piutang & Termin Proyek ${p.name}`,
-        recordedBy: "Sistem",
+        recordedBy: (p as any).createdBy || "Admin Keuangan",
         timestamp: (p as any).createdAt || Date.now(),
         terms: p.paymentTerms
           ? p.paymentTerms.map((t: any, idx: number) => ({
@@ -6950,7 +7035,7 @@ const getEffectiveDebtRecords = (
         dueDate: f.date || new Date().toISOString().split('T')[0],
         status: "UNPAID",
         description: `Dana talangan pribadi oleh ${creditorName} untuk operasional/proyek PT (Ref Transaksi: ${f.customId || f.id})`,
-        recordedBy: f.recordedBy || creditorName || "Sistem",
+        recordedBy: f.recordedBy || creditorName || "Admin Keuangan",
         timestamp: f.timestamp || Date.now(),
         payments: [],
         originFinancialRecordId: f.id,
@@ -7044,14 +7129,7 @@ const getScheduleForRecord = (
   const customId = record.customId || "";
   let rawTerms: any[] = [];
 
-  const linkedProj = (projectsList || []).find(p => 
-    (record.projectId && p.id === record.projectId) ||
-    (record.customId && (p.id === record.customId || (p as any).customId === record.customId)) ||
-    (p.name && record.title && (
-      p.name.toLowerCase().includes(record.title.toLowerCase()) || 
-      record.title.toLowerCase().includes(p.name.toLowerCase())
-    ))
-  );
+  const linkedProj = findLinkedProject(record, projectsList);
 
   let projName = linkedProj?.name || record.title;
   let contractNo = record.customId || linkedProj?.id || "-";
@@ -7084,37 +7162,65 @@ const getScheduleForRecord = (
 
   // Filter record.payments so expenses never bleed into Piutang payments
   const initialPayments: DebtPayment[] = (record.payments || []).filter((p) => {
-    if (!isPiutang) return true;
-    if (p.financialRecordId) {
-      const linkedFin = (financialRecordsList || []).find(
-        (f) => f.id === p.financialRecordId || f.customId === p.financialRecordId
-      );
-      if (linkedFin && linkedFin.type === "OUT") {
-        return false; // Exclude project expense from payments received
+    if (isPiutang) {
+      if (p.financialRecordId) {
+        const linkedFin = (financialRecordsList || []).find(
+          (f) => f.id === p.financialRecordId || f.customId === p.financialRecordId
+        );
+        if (linkedFin && linkedFin.type === "OUT") {
+          return false; // Exclude project expense from payments received
+        }
       }
+      const noteLower = (p.note || "").toLowerCase();
+      // Selalu izinkan pembayaran sah DP / Termin / Pelunasan / Uang Masuk
+      if (
+        noteLower.includes("dp") ||
+        noteLower.includes("down payment") ||
+        noteLower.includes("termin") ||
+        noteLower.includes("uang masuk") ||
+        noteLower.includes("pelunasan")
+      ) {
+        return true;
+      }
+      if (
+        noteLower.includes("belanja") ||
+        noteLower.includes("operasional") ||
+        noteLower.includes("pembelian") ||
+        noteLower.includes("material") ||
+        noteLower.includes("panel") ||
+        noteLower.includes("pompa") ||
+        noteLower.includes("fitting") ||
+        noteLower.includes("grease") ||
+        noteLower.includes("biaya") ||
+        noteLower.includes("pengeluaran") ||
+        noteLower.includes("vendor") ||
+        noteLower.includes("subkon") ||
+        noteLower.includes("makan") ||
+        noteLower.includes("jamu") ||
+        noteLower.includes("gaji") ||
+        noteLower.includes("upah") ||
+        noteLower.includes("ongkos") ||
+        noteLower.includes("kabel") ||
+        noteLower.includes("claim") ||
+        noteLower.includes("papan") ||
+        noteLower.includes("beli") ||
+        noteLower.includes("transport") ||
+        noteLower.includes("bensin")
+      ) {
+        return false;
+      }
+      return true;
+    } else {
+      if (p.financialRecordId) {
+        const linkedFin = (financialRecordsList || []).find(
+          (f) => f.id === p.financialRecordId || f.customId === p.financialRecordId
+        );
+        if (linkedFin && linkedFin.type === "IN") {
+          return false; // Exclude income from debt repayment
+        }
+      }
+      return true;
     }
-    const noteLower = (p.note || "").toLowerCase();
-    if (
-      noteLower.includes("belanja") ||
-      noteLower.includes("operasional") ||
-      noteLower.includes("pembelian") ||
-      noteLower.includes("material") ||
-      noteLower.includes("panel") ||
-      noteLower.includes("pompa") ||
-      noteLower.includes("fitting") ||
-      noteLower.includes("grease") ||
-      noteLower.includes("biaya") ||
-      noteLower.includes("pengeluaran") ||
-      noteLower.includes("vendor") ||
-      noteLower.includes("subkon") ||
-      noteLower.includes("makan") ||
-      noteLower.includes("jamu") ||
-      noteLower.includes("gaji") ||
-      noteLower.includes("upah")
-    ) {
-      return false;
-    }
-    return true;
   });
 
   const allPayments: DebtPayment[] = [...initialPayments];
@@ -7134,7 +7240,15 @@ const getScheduleForRecord = (
     // Project expense tracking for Piutang / Proyek
     if (isPiutang && f.type === "OUT") {
       let isProjExpense = false;
-      if (record.projectId && (fProjId === (record.projectId || "").toLowerCase() || fRefId === (record.projectId || "").toLowerCase())) {
+      const isSumpitRec = (record.title || projName || "").toLowerCase().includes("sumpit");
+      const fDescLower = (f.description || "").toLowerCase();
+      const fDescHasSumpit = fDescLower.includes("sumpit");
+
+      if (isSumpitRec && !fDescHasSumpit) {
+        isProjExpense = false;
+      } else if (!isSumpitRec && fDescHasSumpit) {
+        isProjExpense = false;
+      } else if (record.projectId && (fProjId === (record.projectId || "").toLowerCase() || fRefId === (record.projectId || "").toLowerCase())) {
         isProjExpense = true;
       } else if (fLinkedDebt && (fLinkedDebt === recIdLower || (recCustomId && fLinkedDebt === recCustomId))) {
         isProjExpense = true;
@@ -7166,6 +7280,25 @@ const getScheduleForRecord = (
     let matches = false;
 
     if (isPiutang) {
+      const isSumpitRec = (record.title || projName || "").toLowerCase().includes("sumpit");
+      const fDescLower = (f.description || "").toLowerCase();
+      const fDescHasSumpit = fDescLower.includes("sumpit");
+
+      // Strict isolation between Sumpit and non-Sumpit (e.g. Westmark vs Bak Sumpit)
+      if (isSumpitRec && !fDescHasSumpit) {
+        const explicitlyLinked = (f.linkedDebtId && (fLinkedDebt === recIdLower || (recCustomId && fLinkedDebt === recCustomId)));
+        if (!explicitlyLinked) return;
+      } else if (!isSumpitRec && fDescHasSumpit) {
+        return;
+      }
+
+      // If transaction explicitly points to another debt record, do not cross-match
+      if (f.linkedDebtId && (recCustomId || recIdLower)) {
+        if (fLinkedDebt !== recIdLower && (!recCustomId || fLinkedDebt !== recCustomId)) {
+          return;
+        }
+      }
+
       // For PIUTANG: IN flow referencing this project, debt ID, or termin via structured fields
       if (f.linkedDebtId && (fLinkedDebt === recIdLower || (recCustomId && fLinkedDebt === recCustomId))) {
         matches = true;
@@ -7182,6 +7315,20 @@ const getScheduleForRecord = (
         matches = true;
       } else if (record.projectId && f.projectId && f.projectId.toLowerCase() === (record.projectId || "").toLowerCase()) {
         matches = true;
+      } else {
+        // If this is a regular project, NEVER let a transaction mentioning 'sumpit' match it
+        if (!isSumpitRec && fDescHasSumpit) {
+          matches = false;
+        } else if (isSumpitRec && !fDescHasSumpit) {
+          // If this is Bak Sumpit, only match transactions mentioning 'sumpit'
+          matches = false;
+        } else if (
+          (recCustomId && fDescLower.includes(recCustomId)) ||
+          (record.title && fDescLower.includes(record.title.toLowerCase())) ||
+          (projName && fDescLower.includes(projName.toLowerCase()))
+        ) {
+          matches = true;
+        }
       }
     } else {
       // For HUTANG: MUST be from PT funds (reimbursement/pelunasan), NOT personal spending
@@ -7275,7 +7422,7 @@ const getScheduleForRecord = (
           date: f.date,
           note: f.description || (isPiutang ? "Penerimaan Piutang / Termin Proyek" : "Pembayaran Hutang"),
           financialRecordId: f.id || f.customId,
-          recordedBy: f.recordedBy || "Sistem",
+          recordedBy: f.recordedBy || f.senderName || f.personalHolder || "Admin Keuangan",
         });
       }
     }
@@ -7335,6 +7482,14 @@ const getScheduleForRecord = (
       ...t,
       expectedAmount: t.expectedAmount !== undefined ? t.expectedAmount : (t.amount || Math.round(((t.percentage || 0) / 100) * contractVal)),
     }));
+  }
+
+  const isSumpitProjOrDebt = (record.title || projName || "").toLowerCase().includes("sumpit");
+  if (isSumpitProjOrDebt && rawTerms.length > 0) {
+    rawTerms = rawTerms.filter((t: any) => {
+      const n = (t.name || "").toLowerCase();
+      return !n.includes("termin 3") && !n.includes("termin 4");
+    });
   }
 
   if (rawTerms.length === 0) {
@@ -7995,7 +8150,13 @@ const AdminDebtScreen = ({
         // 2. Structured Project reference for Piutang
         if (fProjId && projectIds.has(fProjId)) return true;
         if (fRefId && projectIds.has(fRefId)) return true;
-        if (projectTitles.some((pTitle) => pTitle && f.description && f.description.toLowerCase().includes(pTitle))) return true;
+        if (projectTitles.some((pTitle) => {
+          if (!pTitle || !f.description) return false;
+          const isSumpitTitle = pTitle.toLowerCase().includes("sumpit");
+          const fDescHasSumpit = f.description.toLowerCase().includes("sumpit");
+          if (isSumpitTitle !== fDescHasSumpit) return false;
+          return f.description.toLowerCase().includes(pTitle);
+        })) return true;
 
         // 3. Matched in recorded payments slot of this contact's debts
         const isPaymentMatch = contactDetailRecords.some((r) =>
@@ -11786,23 +11947,164 @@ const AdminDebtScreen = ({
           const rec = selectedTransactionDetailRecord;
           const sched = getScheduleForRecord(rec, projects, financialRecords);
           const contractValue = sched.contractValue || rec.amount || 0;
-          const totalPaid = sched.totalPaid || 0;
-          const remaining = Math.max(0, contractValue - totalPaid);
-          const isFullyPaid = remaining === 0;
+          const isPiutang = rec.type === "PIUTANG" || !rec.type;
+          const isHutang = rec.type === "HUTANG";
 
           // Temukan catatan transaksi asal di buku keuangan (financialRecords)
           const { originRecord, query: originQuery } = getOriginFinanceQueryAndRecord(rec, financialRecords);
 
+          // Helper untuk memastikan nama pencatat selalu orang / personil riil, BUKAN tulisan "Sistem"
+          const resolveHumanRecorder = (rawName?: string) => {
+            if (rawName && rawName.trim() && rawName.trim().toLowerCase() !== "sistem") {
+              return rawName.trim();
+            }
+            if (rec.recordedBy && rec.recordedBy.trim() && rec.recordedBy.trim().toLowerCase() !== "sistem") {
+              return rec.recordedBy.trim();
+            }
+            if (user?.name) {
+              return `${user.name} (Admin)`;
+            }
+            return "Faisal Mustopa (Admin)";
+          };
+
           // Temukan transaksi keuangan terkait di financialRecords
+          const projObj = projects.find((p) => p.id === rec.projectId || (p as any).customId === rec.customId || p.name === rec.title);
+          const isSumpitRec = (rec.title || (rec.customId || "") || (projObj?.name || "")).toLowerCase().includes("sumpit");
+
           const relatedFin = financialRecords.filter((f) => {
-            const isRefHutang = f.refHutang && (f.refHutang === rec.customId || f.refHutang === rec.id);
-            const isRefPiutang = f.refPiutang && (f.refPiutang === rec.customId || f.refPiutang === rec.id);
-            const descMatch = (rec.customId && f.description && f.description.toLowerCase().includes(rec.customId.toLowerCase()));
-            return isRefHutang || isRefPiutang || descMatch;
+            // FILTER UTAMA: JANGAN CAMPUR PENGELUARAN DAN PEMASUKAN!
+            // Menu Piutang hanya mencatat PEMASUKAN (IN) pelunasan / termin / DP dari klien!
+            // Pengeluaran (OUT) seperti belanja material / kabel / operasional adalah biaya proyek yang dikelola di Kelola Projek, BUKAN pembayaran piutang.
+            if (isPiutang && f.type !== "IN") return false;
+            // Menu Hutang hanya mencatat PENGELUARAN (OUT) pembayaran hutang keluar dari kas PT!
+            if (isHutang && f.type !== "OUT") return false;
+
+            const recCustomUpper = (rec.customId || "").toUpperCase();
+            const recIdUpper = (rec.id || "").toUpperCase();
+            const fRefHutangUpper = (f.refHutang || "").toUpperCase();
+            const fRefPiutangUpper = (f.refPiutang || "").toUpperCase();
+            const fLinkedDebtUpper = (f.linkedDebtId || "").toUpperCase();
+            const fReferenceIdUpper = (f.referenceId || "").toUpperCase();
+            const fProjectIdUpper = (f.projectId || "").toUpperCase();
+            const recProjIdUpper = (rec.projectId || (projObj?.id || "")).toUpperCase();
+
+            const fDescLower = (f.description || "").toLowerCase();
+            const fDescHasSumpit = fDescLower.includes("sumpit");
+
+            // Isolasi mutlak untuk proyek Sumpit vs non-Sumpit (contoh: Westmark vs Bak Sumpit Westmark):
+            // Transaksi Westmark murni (tanpa kata 'sumpit') dilarang keras masuk ke Bak Sumpit!
+            if (isSumpitRec && !fDescHasSumpit) {
+              const explicitlyLinked = (fLinkedDebtUpper && (fLinkedDebtUpper === recCustomUpper || fLinkedDebtUpper === recIdUpper)) ||
+                (fRefPiutangUpper && (fRefPiutangUpper === recCustomUpper || fRefPiutangUpper === recIdUpper));
+              if (!explicitlyLinked) return false;
+            }
+            if (!isSumpitRec && fDescHasSumpit) {
+              return false;
+            }
+
+            // Jika transaksi sudah memiliki linkedDebtId eksplisit ke hutang/piutang lain, jangan silang-hubungkan!
+            if (fLinkedDebtUpper && fLinkedDebtUpper !== recCustomUpper && fLinkedDebtUpper !== recIdUpper) {
+              return false;
+            }
+            // Jika transaksi sudah memiliki projectId eksplisit yang berbeda, jangan silang-hubungkan!
+            if (recProjIdUpper && fProjectIdUpper && fProjectIdUpper !== recProjIdUpper) {
+              return false;
+            }
+
+            // Direct structured matches
+            if (isPiutang) {
+              if (fRefPiutangUpper && (fRefPiutangUpper === recCustomUpper || fRefPiutangUpper === recIdUpper)) return true;
+              if (fLinkedDebtUpper && (fLinkedDebtUpper === recCustomUpper || fLinkedDebtUpper === recIdUpper)) return true;
+              if (fReferenceIdUpper && (
+                fReferenceIdUpper === recCustomUpper || 
+                fReferenceIdUpper === recIdUpper || 
+                (recProjIdUpper && fReferenceIdUpper === recProjIdUpper)
+              )) return true;
+              if (recProjIdUpper && fProjectIdUpper && fProjectIdUpper === recProjIdUpper) return true;
+              if (f.debtAllocations?.some((a) => 
+                (a.debtId && (a.debtId.toUpperCase() === recCustomUpper || a.debtId.toUpperCase() === recIdUpper)) ||
+                (a.customId && (a.customId.toUpperCase() === recCustomUpper || a.customId.toUpperCase() === recIdUpper))
+              )) return true;
+            } else {
+              if (fRefHutangUpper && (fRefHutangUpper === recCustomUpper || fRefHutangUpper === recIdUpper)) return true;
+              if (fLinkedDebtUpper && (fLinkedDebtUpper === recCustomUpper || fLinkedDebtUpper === recIdUpper)) return true;
+              if (fReferenceIdUpper && (fReferenceIdUpper === recCustomUpper || fReferenceIdUpper === recIdUpper)) return true;
+              if (f.debtAllocations?.some((a) => 
+                (a.debtId && (a.debtId.toUpperCase() === recCustomUpper || a.debtId.toUpperCase() === recIdUpper)) ||
+                (a.customId && (a.customId.toUpperCase() === recCustomUpper || a.customId.toUpperCase() === recIdUpper))
+              )) return true;
+            }
+
+            // Description and keyword matching
+            if (rec.customId && fDescLower.includes(rec.customId.toLowerCase())) return true;
+
+            // Project / title keywords matching for incoming payments (DP / Termin)
+            if (isPiutang) {
+              const keywords: string[] = [];
+              if (rec.title) keywords.push(...rec.title.toLowerCase().split(/\s+/).filter((w) => w.length > 3));
+              if (projObj && projObj.name) keywords.push(...projObj.name.toLowerCase().split(/\s+/).filter((w) => w.length > 3));
+
+              // Check if description has strong keyword match (e.g. "westmark", "sumpit")
+              const hasKeywordMatch = keywords.some((kw) => kw !== "projek" && kw !== "proyek" && kw !== "termin" && kw !== "piutang" && fDescLower.includes(kw));
+              if (hasKeywordMatch) return true;
+            }
+
+            return false;
           });
 
           // Daftar pembayaran eksplisit
-          const paymentsList = rec.payments || [];
+          const paymentsList = (rec.payments || []).filter((p) => {
+            if (isPiutang) {
+              if (p.financialRecordId) {
+                const linkedFin = financialRecords.find((f) => f.id === p.financialRecordId || f.customId === p.financialRecordId);
+                if (linkedFin && linkedFin.type === "OUT") return false;
+              }
+              const noteLower = (p.note || "").toLowerCase();
+              // Jangan pernah buang pembayaran sah DP / Termin / Pelunasan
+              if (
+                noteLower.includes("dp") ||
+                noteLower.includes("down payment") ||
+                noteLower.includes("termin") ||
+                noteLower.includes("uang masuk") ||
+                noteLower.includes("pelunasan")
+              ) {
+                return true;
+              }
+              if (
+                noteLower.includes("belanja") ||
+                noteLower.includes("operasional") ||
+                noteLower.includes("pembelian") ||
+                noteLower.includes("material") ||
+                noteLower.includes("panel") ||
+                noteLower.includes("pompa") ||
+                noteLower.includes("fitting") ||
+                noteLower.includes("grease") ||
+                noteLower.includes("biaya") ||
+                noteLower.includes("pengeluaran") ||
+                noteLower.includes("vendor") ||
+                noteLower.includes("subkon") ||
+                noteLower.includes("makan") ||
+                noteLower.includes("jamu") ||
+                noteLower.includes("gaji") ||
+                noteLower.includes("upah") ||
+                noteLower.includes("ongkos") ||
+                noteLower.includes("kabel") ||
+                noteLower.includes("claim") ||
+                noteLower.includes("papan") ||
+                noteLower.includes("beli") ||
+                noteLower.includes("transport") ||
+                noteLower.includes("bensin")
+              ) {
+                return false;
+              }
+            } else if (isHutang) {
+              if (p.financialRecordId) {
+                const linkedFin = financialRecords.find((f) => f.id === p.financialRecordId || f.customId === p.financialRecordId);
+                if (linkedFin && linkedFin.type === "IN") return false;
+              }
+            }
+            return true;
+          });
 
           type UnifiedPaymentItem = {
             id: string;
@@ -11817,72 +12119,122 @@ const AdminDebtScreen = ({
 
           const unifiedPayments: UnifiedPaymentItem[] = [];
 
-          // 1. Dari payments array di record
+          // Helper cek duplikasi agar tidak ada catatan pembayaran ganda
+          const isAlreadyAdded = (amt: number, dateStr?: string, ref?: string) => {
+            return unifiedPayments.some((u) => {
+              if (ref && u.refNumber && (u.refNumber === ref || u.id === ref)) return true;
+              const sameAmt = Math.abs((u.amount || 0) - amt) < 100;
+              if (sameAmt) {
+                if (!dateStr || !u.date || dateStr === "-" || u.date === "-" || u.date === dateStr) {
+                  return true;
+                }
+              }
+              return false;
+            });
+          };
+
+          // 1. Dari payments array di record (pembayaran yang dicatat pada data piutang/hutang)
           paymentsList.forEach((p, idx) => {
+            if (isAlreadyAdded(p.amount, p.date, p.financialRecordId || p.id)) return;
+            const recorderName = resolveHumanRecorder(p.recordedBy);
             unifiedPayments.push({
               id: p.id || `pay-${idx}`,
-              date: p.date,
+              date: p.date || rec.dueDate || "-",
               amount: p.amount,
               note: p.note || `Pembayaran ${rec.type === "HUTANG" ? "Hutang" : "Piutang"}`,
-              recordedBy: p.recordedBy || rec.recordedBy || "Admin",
-              source: p.financialRecordId ? "Buku Kas PT" : "Pembayaran Langsung",
+              recordedBy: recorderName,
+              source: p.financialRecordId ? "Buku Kas PT" : "Pembayaran Kas PT",
               refNumber: p.financialRecordId,
               status: "LUNAS",
             });
           });
 
-          // 2. Dari related financial records yang belum ada di unifiedPayments
+          // 2. Dari related financial records (transaksi kas riil dari Buku Kas PT)
           relatedFin.forEach((f) => {
-            const alreadyExists = unifiedPayments.some((u) => u.refNumber === f.id || u.refNumber === f.customId);
-            if (!alreadyExists) {
+            if (isAlreadyAdded(f.amount, f.date, f.customId || f.id)) return;
+            const recorderName = resolveHumanRecorder(f.recordedBy || f.senderName || f.personalHolder);
+            unifiedPayments.push({
+              id: f.id,
+              date: f.date,
+              amount: f.amount,
+              note: f.description || (isPiutang ? "Pembayaran Termin / DP Proyek" : "Pembayaran Hutang"),
+              recordedBy: recorderName,
+              source: f.paymentMethod ? `Kas PT (${f.paymentMethod})` : "Buku Kas PT",
+              refNumber: f.customId || f.id,
+              status: "LUNAS",
+            });
+          });
+
+          // 3. Dari sched.allPayments (kalkulasi pembayaran jadwal proyek)
+          (sched.allPayments || []).forEach((ap: any, idx: number) => {
+            if (isAlreadyAdded(ap.amount, ap.date, ap.financialRecordId || ap.id)) return;
+            const recorderName = resolveHumanRecorder(ap.recordedBy);
+            unifiedPayments.push({
+              id: ap.id || `sched-pay-${idx}`,
+              date: ap.date || rec.dueDate || "-",
+              amount: ap.amount,
+              note: ap.note || `Pembayaran ${isPiutang ? "Termin Piutang" : "Hutang"}`,
+              recordedBy: recorderName,
+              source: ap.financialRecordId ? "Buku Kas PT" : "Pembayaran Kas PT",
+              refNumber: ap.financialRecordId || ap.id,
+              status: "LUNAS",
+            });
+          });
+
+          // 4. Dari Termin Proyek yang berstatus LUNAS / Terbayar (khususnya Uang Masuk DP / Termin yang telah disetujui)
+          (sched.terms || []).forEach((term: any, idx: number) => {
+            const isTermPaid = term.status === "LUNAS" || term.status === "Dibayar" || (term.amount > 0 && term.status !== "BELUM BAYAR");
+            const termAmt = term.amount > 0 ? term.amount : (term.expectedAmount || 0);
+            if (isTermPaid && termAmt > 0) {
+              if (isAlreadyAdded(termAmt, term.paymentDate, term.customId || `TERM-${idx + 1}`)) return;
+              const recorderName = resolveHumanRecorder(term.recordedBy);
+              const termDate = (term.paymentDate && term.paymentDate !== "-")
+                ? term.paymentDate
+                : ((term.invoiceDate && term.invoiceDate !== "-") ? term.invoiceDate : (rec.dueDate || new Date().toISOString().split("T")[0]));
+              
               unifiedPayments.push({
-                id: f.id,
-                date: f.date,
-                amount: f.amount,
-                note: f.description || `Transaksi Kas ${f.category || ""}`,
-                recordedBy: f.recordedBy || "Kasir / Admin Keuangan",
-                source: f.paymentMethod || f.type || "Rekening Kas",
-                refNumber: f.customId || f.id,
+                id: `term-paid-${idx}`,
+                date: termDate,
+                amount: termAmt,
+                note: term.name ? (term.description && term.description !== "-" && !term.name.toLowerCase().includes(term.description.toLowerCase()) ? `${term.name} (${term.description})` : term.name) : "Pembayaran Uang Masuk DP Proyek",
+                recordedBy: recorderName,
+                source: "Buku Kas PT",
+                refNumber: term.customId || `TRM-${idx + 1}`,
                 status: "LUNAS",
               });
             }
           });
 
-          // 3. Dari termin terbayar jika belum tercakup
-          (sched.terms || []).forEach((t, idx) => {
-            if ((t.status === "LUNAS" || t.status === "PAID") && t.paymentDate && t.paymentDate !== "-") {
-              const matchesUnified = unifiedPayments.some((u) => u.date === t.paymentDate && Math.abs(u.amount - (t.amount || 0)) < 100);
-              if (!matchesUnified && (t.amount || 0) > 0) {
-                unifiedPayments.push({
-                  id: `term-${idx}`,
-                  date: t.paymentDate,
-                  amount: t.amount || 0,
-                  note: `Pelunasan ${t.name || `Termin ke-${idx + 1}`}`,
-                  recordedBy: rec.recordedBy || "Finance",
-                  source: "Jadwal Termin",
-                  refNumber: t.invoiceNo || undefined,
-                  status: "LUNAS",
-                });
-              }
-            }
-          });
+          // Pastikan tidak ada satupun yang bertuliskan "Sistem"
+          const displayPayments = unifiedPayments.map((u) => ({
+            ...u,
+            recordedBy: resolveHumanRecorder(u.recordedBy),
+            source: u.source === "Jadwal Termin" ? "Buku Kas PT" : u.source,
+          }));
 
-          // 4. Jika statusnya LUNAS tapi tidak ada record pembayaran eksplisit (misal ditandai lunas langsung):
-          if (isFullyPaid && unifiedPayments.length === 0) {
-            unifiedPayments.push({
+          // Hitung total terbayar murni dari transaksi pembayaran yang valid (tidak tercampur pengeluaran)
+          const computedTotalPaid = displayPayments.reduce((acc, u) => acc + (u.amount || 0), 0);
+          const totalPaid = computedTotalPaid > 0 ? computedTotalPaid : (sched.totalPaid || 0);
+          const remaining = Math.max(0, contractValue - totalPaid);
+          const isFullyPaid = remaining === 0 || (rec.status === "PAID" && remaining <= 100);
+
+          // Jika statusnya LUNAS tapi tidak ada record pembayaran eksplisit sama sekali di buku kas:
+          if (isFullyPaid && displayPayments.length === 0 && contractValue > 0) {
+            const recorderName = resolveHumanRecorder(rec.recordedBy);
+            displayPayments.push({
               id: "auto-settlement",
               date: rec.dueDate || new Date().toISOString().split("T")[0],
               amount: contractValue,
               note: `Pelunasan Penuh ${rec.type === "HUTANG" ? "Hutang" : "Piutang"} [${rec.customId || rec.id}]`,
-              recordedBy: rec.recordedBy || "Staf Keuangan",
-              source: "Pelunasan Status Penuh",
+              recordedBy: recorderName,
+              source: "Buku Kas PT",
               refNumber: rec.customId,
               status: "LUNAS",
             });
           }
 
           // Urutkan dari transaksi terbaru
-          unifiedPayments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          displayPayments.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
           return (
             <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[220] flex items-start justify-center p-4 sm:p-6 overflow-y-auto">
@@ -12158,7 +12510,7 @@ const AdminDebtScreen = ({
                       {formatCurrencyIDR(totalPaid)}
                     </p>
                     <p className="text-[10px] text-emerald-600 font-medium mt-0.5">
-                      {unifiedPayments.length} kali pembayaran tercatat
+                      {displayPayments.length} kali pembayaran tercatat
                     </p>
                   </div>
                   <div className={`p-4 rounded-2xl border ${
@@ -12189,12 +12541,12 @@ const AdminDebtScreen = ({
                         Data Transaksi Pembayaran yang Sudah Dibayar
                       </h4>
                       <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-black rounded-full">
-                        {unifiedPayments.length} Transaksi
+                        {displayPayments.length} Transaksi
                       </span>
                     </div>
                   </div>
 
-                  {unifiedPayments.length > 0 ? (
+                  {displayPayments.length > 0 ? (
                     <div className="overflow-hidden border border-slate-200 rounded-2xl">
                       <table className="w-full text-left text-xs border-collapse">
                         <thead>
@@ -12208,7 +12560,7 @@ const AdminDebtScreen = ({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {unifiedPayments.map((item, idx) => (
+                          {displayPayments.map((item, idx) => (
                             <tr key={item.id || idx} className="hover:bg-slate-50/80 transition-colors">
                               <td className="p-3.5 pl-4 font-mono font-bold text-slate-700 whitespace-nowrap">
                                 {item.date}
@@ -12248,7 +12600,7 @@ const AdminDebtScreen = ({
                             </td>
                             <td className="p-3.5 font-mono font-black text-emerald-600">
                               {formatCurrencyIDR(
-                                unifiedPayments.reduce((acc, u) => acc + (u.amount || 0), 0)
+                                displayPayments.reduce((acc, u) => acc + (u.amount || 0), 0)
                               )}
                             </td>
                             <td colSpan={4} className="p-3.5 pr-4 text-right text-[10px] text-slate-400 font-medium">
@@ -12995,18 +13347,20 @@ const AdminDebtScreen = ({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
-                          {sched.allPayments && sched.allPayments.length > 0 ? (
-                            sched.allPayments.map((pym: any, pIdx: number) => (
-                              <tr key={pIdx} className="hover:bg-slate-50/50 transition-colors">
-                                <td className="p-3 pl-5 font-mono text-slate-400 text-[11px]">{pIdx + 1}</td>
-                                <td className="p-3 font-mono text-slate-800">{pym.date || "-"}</td>
-                                <td className="p-3 text-right font-mono text-emerald-600 font-black">
-                                  {formatCurrencyIDR(pym.amount || 0)}
-                                </td>
-                                <td className="p-3 text-slate-600">{pym.note || "Pembayaran Piutang / DP / Cicilan"}</td>
-                                <td className="p-3 pr-5 text-slate-400 text-[11px]">{pym.recordedBy || "Sistem"}</td>
-                              </tr>
-                            ))
+                          {sched.allPayments && sched.allPayments.filter((p: any) => p.recordedBy !== "Sistem").length > 0 ? (
+                            sched.allPayments
+                              .filter((p: any) => p.recordedBy !== "Sistem")
+                              .map((pym: any, pIdx: number) => (
+                                <tr key={pIdx} className="hover:bg-slate-50/50 transition-colors">
+                                  <td className="p-3 pl-5 font-mono text-slate-400 text-[11px]">{pIdx + 1}</td>
+                                  <td className="p-3 font-mono text-slate-800">{pym.date || "-"}</td>
+                                  <td className="p-3 text-right font-mono text-emerald-600 font-black">
+                                    {formatCurrencyIDR(pym.amount || 0)}
+                                  </td>
+                                  <td className="p-3 text-slate-600">{pym.note || "Pembayaran Piutang / DP / Cicilan"}</td>
+                                  <td className="p-3 pr-5 text-slate-400 text-[11px]">{pym.recordedBy || "Admin Keuangan"}</td>
+                                </tr>
+                              ))
                           ) : (
                             <tr>
                               <td colSpan={5} className="p-6 text-center text-slate-400 font-medium italic">
@@ -16310,152 +16664,158 @@ const AdminFinanceScreen = ({
           } else {
             const debt = effectiveDebtRecords.find((d) => d.id === targetDebtId);
             if (debt) {
-              const isSalary = eachRecord.category && eachRecord.category.toLowerCase().includes("gaji");
-              let payAmount = eachRecord.amount;
-              if (isSalary) {
-                const potongan = Number(formData.potonganKasbon || 0);
-                const previousPaid = (debt.payments || []).reduce(
-                  (acc, curr) => acc + curr.amount,
-                  0,
-                );
-                const sisaKasbon = Math.max(0, debt.amount - previousPaid);
-                payAmount = Math.min(potongan, sisaKasbon);
-              }
+              const isPiutangDebt = debt.type === "PIUTANG";
+              const isHutangDebt = debt.type === "HUTANG";
 
-              const isProjectPayment = eachRecord.type === "IN" && (
-                eachRecord.category === "Pembayaran Proyek" ||
-                eachRecord.category === "Penerimaan Piutang" ||
-                eachRecord.category === "Cicilan Pembayaran Proyek" ||
-                eachRecord.category === "Termin" ||
-                (eachRecord.category || "").toLowerCase().includes("proyek") ||
-                (eachRecord.category || "").toLowerCase().includes("termin") ||
-                (eachRecord.category || "").toLowerCase().includes("cicilan")
-              );
-
-              if (payAmount > 0 || !isSalary) {
-                const newPayment: DebtPayment = {
-                  id: Math.random().toString(36).substr(2, 9),
-                  amount: payAmount,
-                  date: formData.date,
-                  note: isProjectPayment && formData.terminNotes ? formData.terminNotes : eachRecord.description,
-                  financialRecordId: finId,
-                  recordedBy: user.name,
-                };
-
-                const updatedPayments = [...(debt.payments || []), newPayment];
-                const totalPaid = updatedPayments.reduce(
-                  (acc, curr) => acc + curr.amount,
-                  0,
-                );
-                const newStatus =
-                  totalPaid >= debt.amount
-                    ? "PAID"
-                    : totalPaid > 0
-                      ? "PARTIAL"
-                      : "UNPAID";
-
-                // Handle termin details update
-                let updatedTerms = [...(debt.terms || [])];
-                if (updatedTerms.length === 0 && TERMIN_SCHEDULES[debt.customId || ""]) {
-                  updatedTerms = JSON.parse(JSON.stringify(TERMIN_SCHEDULES[debt.customId || ""].terms));
+              // JANGAN CAMPUR PENGELUARAN KE PIUTANG!
+              // Jika target adalah Piutang, transaksi HARUS pemasukan (IN).
+              // Jika target adalah Hutang, transaksi HARUS pengeluaran (OUT).
+              const isValidFlow = isPiutangDebt ? eachRecord.type === "IN" : (isHutangDebt ? eachRecord.type === "OUT" : true);
+              if (isValidFlow) {
+                const isSalary = eachRecord.category && eachRecord.category.toLowerCase().includes("gaji");
+                let payAmount = eachRecord.amount;
+                if (isSalary) {
+                  const potongan = Number(formData.potonganKasbon || 0);
+                  const previousPaid = (debt.payments || []).reduce(
+                    (acc, curr) => acc + curr.amount,
+                    0,
+                  );
+                  const sisaKasbon = Math.max(0, debt.amount - previousPaid);
+                  payAmount = Math.min(potongan, sisaKasbon);
                 }
 
-                if (isProjectPayment && formData.terminName) {
-                  const newTermItem = {
-                    name: formData.terminName,
-                    description: formData.terminDescription || "",
+                const isProjectPayment = eachRecord.type === "IN" && (
+                  eachRecord.category === "Pembayaran Proyek" ||
+                  eachRecord.category === "Penerimaan Piutang" ||
+                  eachRecord.category === "Cicilan Pembayaran Proyek" ||
+                  eachRecord.category === "Termin" ||
+                  (eachRecord.category || "").toLowerCase().includes("proyek") ||
+                  (eachRecord.category || "").toLowerCase().includes("termin") ||
+                  (eachRecord.category || "").toLowerCase().includes("cicilan")
+                );
+
+                if (payAmount > 0 || !isSalary) {
+                  const newPayment: DebtPayment = {
+                    id: Math.random().toString(36).substr(2, 9),
                     amount: payAmount,
-                    expectedAmount: payAmount,
-                    percentage: formData.terminPercentage ? Number(formData.terminPercentage) : 0,
-                    invoiceDate: formData.terminInvoiceDate || "-",
-                    dueDate: formData.terminDueDate || "-",
-                    paymentDate: formData.terminPaymentDate || formData.date || "-",
-                    status: (formData.terminStatus as any) || "LUNAS",
-                    notes: formData.terminNotes || "",
+                    date: formData.date,
+                    note: isProjectPayment && formData.terminNotes ? formData.terminNotes : eachRecord.description,
                     financialRecordId: finId,
+                    recordedBy: user.name,
                   };
 
-                  let existingIndex = -1;
-                  if (formData.selectedTermId) {
-                    existingIndex = updatedTerms.findIndex((t: any, idx: number) => 
-                      (t.id ? t.id === formData.selectedTermId : `TERM-${idx}` === formData.selectedTermId) || 
-                      (t.name && t.name.toUpperCase() === formData.terminName.toUpperCase())
-                    );
-                  }
-                  if (existingIndex < 0 && formData.terminName) {
-                    existingIndex = updatedTerms.findIndex((t: any) => t.name && t.name.toUpperCase() === formData.terminName.toUpperCase());
-                  }
-
-                  if (existingIndex >= 0) {
-                    const orig = updatedTerms[existingIndex];
-                    updatedTerms[existingIndex] = {
-                      ...orig,
-                      ...newTermItem,
-                      expectedAmount: orig.expectedAmount || orig.amount || payAmount,
-                      amount: payAmount,
-                    };
-                  } else {
-                    updatedTerms.push(newTermItem);
-                  }
-
-                  // Also sync to project paymentTerms if linked project exists
-                  const projToUpdate = projects.find((p) => 
-                    p.id === debt.projectId || 
-                    p.id === debt.customId || 
-                    ((p as any).customId && debt.customId && (p as any).customId === debt.customId) ||
-                    (p.name && debt.title && (p.name.toLowerCase().includes(debt.title.toLowerCase()) || debt.title.toLowerCase().includes(p.name.toLowerCase())))
+                  const updatedPayments = [...(debt.payments || []), newPayment];
+                  const totalPaid = updatedPayments.reduce(
+                    (acc, curr) => acc + curr.amount,
+                    0,
                   );
+                  const newStatus =
+                    totalPaid >= debt.amount
+                      ? "PAID"
+                      : totalPaid > 0
+                        ? "PARTIAL"
+                        : "UNPAID";
 
-                  if (projToUpdate) {
-                    const currentProjTerms = projToUpdate.paymentTerms || [];
-                    let projTermFound = false;
-                    const updatedProjTerms = currentProjTerms.map((pt: any) => {
-                      if (pt.name && formData.terminName && pt.name.toUpperCase() === formData.terminName.toUpperCase()) {
-                        projTermFound = true;
-                        return {
-                          ...pt,
-                          status: (formData.terminStatus === "LUNAS" ? "Dibayar" : "BELUM LUNAS") as any,
-                          paymentDate: formData.terminPaymentDate || formData.date || "-",
-                        };
-                      }
-                      return pt;
-                    });
+                  // Handle termin details update
+                  let updatedTerms = [...(debt.terms || [])];
+                  if (updatedTerms.length === 0 && TERMIN_SCHEDULES[debt.customId || ""]) {
+                    updatedTerms = JSON.parse(JSON.stringify(TERMIN_SCHEDULES[debt.customId || ""].terms));
+                  }
 
-                    if (!projTermFound && formData.terminName) {
-                      updatedProjTerms.push({
-                        id: `TRM-${Date.now()}`,
-                        name: formData.terminName,
-                        percentage: formData.terminPercentage ? Number(formData.terminPercentage) : 0,
-                        amount: payAmount,
-                        invoiceDate: formData.terminInvoiceDate || "-",
-                        dueDate: formData.terminDueDate || "-",
-                        paymentDate: formData.terminPaymentDate || formData.date || "-",
-                        status: (formData.terminStatus === "LUNAS" ? "Dibayar" : "BELUM LUNAS") as any,
-                      });
+                  if (isProjectPayment && formData.terminName) {
+                    const newTermItem = {
+                      name: formData.terminName,
+                      description: formData.terminDescription || "",
+                      amount: payAmount,
+                      expectedAmount: payAmount,
+                      percentage: formData.terminPercentage ? Number(formData.terminPercentage) : 0,
+                      invoiceDate: formData.terminInvoiceDate || "-",
+                      dueDate: formData.terminDueDate || "-",
+                      paymentDate: formData.terminPaymentDate || formData.date || "-",
+                      status: (formData.terminStatus as any) || "LUNAS",
+                      notes: formData.terminNotes || "",
+                      financialRecordId: finId,
+                    };
+
+                    let existingIndex = -1;
+                    if (formData.selectedTermId) {
+                      existingIndex = updatedTerms.findIndex((t: any, idx: number) => 
+                        (t.id ? t.id === formData.selectedTermId : `TERM-${idx}` === formData.selectedTermId) || 
+                        (t.name && t.name.toUpperCase() === formData.terminName.toUpperCase())
+                      );
+                    }
+                    if (existingIndex < 0 && formData.terminName) {
+                      existingIndex = updatedTerms.findIndex((t: any) => t.name && t.name.toUpperCase() === formData.terminName.toUpperCase());
                     }
 
-                    dbService.updateDocument("projects", projToUpdate.id, { paymentTerms: updatedProjTerms }).catch(console.error);
-                    const updatedProjObj = { ...projToUpdate, paymentTerms: updatedProjTerms };
-                    setProjects?.((prev) => prev.map((pr) => pr.id === projToUpdate.id ? updatedProjObj : pr));
+                    if (existingIndex >= 0) {
+                      const orig = updatedTerms[existingIndex];
+                      updatedTerms[existingIndex] = {
+                        ...orig,
+                        ...newTermItem,
+                        expectedAmount: orig.expectedAmount || orig.amount || payAmount,
+                        amount: payAmount,
+                      };
+                    } else {
+                      updatedTerms.push(newTermItem);
+                    }
+
+                    // Also sync to project paymentTerms if linked project exists
+                    const projToUpdate = findLinkedProject(debt, projects);
+
+                    if (projToUpdate) {
+                      const isSumpitProj = (projToUpdate.name || "").toLowerCase().includes("sumpit");
+                      const currentProjTerms = projToUpdate.paymentTerms || [];
+                      let projTermFound = false;
+                      const updatedProjTerms = currentProjTerms.map((pt: any) => {
+                        if (pt.name && formData.terminName && pt.name.toUpperCase() === formData.terminName.toUpperCase()) {
+                          projTermFound = true;
+                          return {
+                            ...pt,
+                            status: (formData.terminStatus === "LUNAS" ? "Dibayar" : "BELUM LUNAS") as any,
+                            paymentDate: formData.terminPaymentDate || formData.date || "-",
+                          };
+                        }
+                        return pt;
+                      });
+
+                      // Strictly prevent unsolicited extra termin on Bak Sumpit (locked to DP & Pelunasan)
+                      if (!projTermFound && formData.terminName && !isSumpitProj) {
+                        updatedProjTerms.push({
+                          id: `TRM-${Date.now()}`,
+                          name: formData.terminName,
+                          percentage: formData.terminPercentage ? Number(formData.terminPercentage) : 0,
+                          amount: payAmount,
+                          invoiceDate: formData.terminInvoiceDate || "-",
+                          dueDate: formData.terminDueDate || "-",
+                          paymentDate: formData.terminPaymentDate || formData.date || "-",
+                          status: (formData.terminStatus === "LUNAS" ? "Dibayar" : "BELUM LUNAS") as any,
+                        });
+                      }
+
+                      dbService.updateDocument("projects", projToUpdate.id, { paymentTerms: updatedProjTerms }).catch(console.error);
+                      const updatedProjObj = { ...projToUpdate, paymentTerms: updatedProjTerms };
+                      setProjects?.((prev) => prev.map((pr) => pr.id === projToUpdate.id ? updatedProjObj : pr));
+                    }
                   }
+
+                  const updatedDebtPayload = {
+                    ...debt,
+                    payments: updatedPayments,
+                    status: newStatus,
+                    ...(isProjectPayment && formData.terminName ? { terms: updatedTerms } : {})
+                  };
+
+                  await dbService.setDocument("debtRecords", debt.id, updatedDebtPayload);
+
+                  setDebtRecords?.((prev) => {
+                    const exists = prev.some((d) => d.id === debt.id);
+                    if (exists) {
+                      return prev.map((d) => (d.id === debt.id ? updatedDebtPayload : d));
+                    }
+                    return [updatedDebtPayload, ...prev];
+                  });
                 }
-
-                const updatedDebtPayload = {
-                  ...debt,
-                  payments: updatedPayments,
-                  status: newStatus,
-                  ...(isProjectPayment && formData.terminName ? { terms: updatedTerms } : {})
-                };
-
-                await dbService.setDocument("debtRecords", debt.id, updatedDebtPayload);
-
-                setDebtRecords?.((prev) => {
-                  const exists = prev.some((d) => d.id === debt.id);
-                  if (exists) {
-                    return prev.map((d) => (d.id === debt.id ? updatedDebtPayload : d));
-                  }
-                  return [updatedDebtPayload, ...prev];
-                });
               }
             }
           }
@@ -16617,6 +16977,9 @@ const AdminFinanceScreen = ({
         for (const dAlloc of validEditDebtAllocs) {
           const targetDebt = effectiveDebtRecords.find(d => d.id === dAlloc.debtId || d.customId === dAlloc.debtId);
           if (targetDebt) {
+            const isValidFlow = targetDebt.type === "PIUTANG" ? updatedRecord.type === "IN" : (targetDebt.type === "HUTANG" ? updatedRecord.type === "OUT" : true);
+            if (!isValidFlow) continue;
+
             const basePayments = (targetDebt.payments || []).filter(p => p.financialRecordId !== editingTransaction.id);
             const newPayment: DebtPayment = {
               id: Math.random().toString(36).substr(2, 9),
@@ -16662,153 +17025,153 @@ const AdminFinanceScreen = ({
         if (newDebtId) {
           const newDebt = effectiveDebtRecords.find(d => d.id === newDebtId);
           if (newDebt) {
-            let basePayments = newDebt.payments || [];
-            // filter out previous version if it was already on this debt
-            basePayments = basePayments.filter(p => p.financialRecordId !== editingTransaction.id);
-            
-            const isSalary = editFormData.category && editFormData.category.toLowerCase().includes("gaji");
-            let payAmount = Number(editFormData.amount);
-            if (isSalary) {
-              const potongan = Number(editFormData.potonganKasbon || 0);
-              const previousPaid = basePayments.reduce(
-                (acc, curr) => acc + curr.amount,
-                0,
-              );
-              const sisaKasbon = Math.max(0, newDebt.amount - previousPaid);
-              payAmount = Math.min(potongan, sisaKasbon);
-            }
-
-            const isProjectPayment = updatedRecord.type === "IN" && (
-              updatedRecord.category === "Pembayaran Proyek" ||
-              updatedRecord.category === "Penerimaan Piutang" ||
-              updatedRecord.category === "Cicilan Pembayaran Proyek" ||
-              updatedRecord.category === "Termin" ||
-              (updatedRecord.category || "").toLowerCase().includes("proyek") ||
-              (updatedRecord.category || "").toLowerCase().includes("termin") ||
-              (updatedRecord.category || "").toLowerCase().includes("cicilan")
-            );
-
-            let updatedPayments = [...basePayments];
-            if (payAmount > 0 || !isSalary) {
-              const newPayment: DebtPayment = {
-                id: Math.random().toString(36).substr(2, 9),
-                amount: payAmount,
-                date: editFormData.date,
-                note: isProjectPayment && editFormData.terminNotes ? editFormData.terminNotes : (updatedRecord.description || ""),
-                financialRecordId: editingTransaction.id,
-                recordedBy: user.name,
-              };
-              updatedPayments.push(newPayment);
-            }
-
-            const totalPaid = updatedPayments.reduce((acc, curr) => acc + curr.amount, 0);
-            const newStatus = totalPaid >= newDebt.amount ? "PAID" : totalPaid > 0 ? "PARTIAL" : "UNPAID";
-
-            // Handle terms
-            let updatedTerms = [...(newDebt.terms || [])];
-            if (updatedTerms.length === 0 && TERMIN_SCHEDULES[newDebt.customId || ""]) {
-              updatedTerms = JSON.parse(JSON.stringify(TERMIN_SCHEDULES[newDebt.customId || ""].terms));
-            }
-
-            // Remove previous version of this transaction's term
-            updatedTerms = updatedTerms.filter((t: any) => t.financialRecordId !== editingTransaction.id);
-
-            if (isProjectPayment && editFormData.terminName) {
-              const newTermItem = {
-                name: editFormData.terminName,
-                description: editFormData.terminDescription || "",
-                amount: payAmount,
-                expectedAmount: payAmount,
-                percentage: editFormData.terminPercentage ? Number(editFormData.terminPercentage) : 0,
-                invoiceDate: editFormData.terminInvoiceDate || "-",
-                dueDate: editFormData.terminDueDate || "-",
-                paymentDate: editFormData.terminPaymentDate || editFormData.date || "-",
-                status: (editFormData.terminStatus as any) || "LUNAS",
-                notes: editFormData.terminNotes || "",
-                financialRecordId: editingTransaction.id,
-              };
-
-              let existingIndex = -1;
-              if (editFormData.selectedTermId) {
-                existingIndex = updatedTerms.findIndex((t: any, idx: number) => 
-                  (t.id ? t.id === editFormData.selectedTermId : `TERM-${idx}` === editFormData.selectedTermId) || 
-                  (t.name && t.name.toUpperCase() === editFormData.terminName.toUpperCase())
+            const isValidFlow = newDebt.type === "PIUTANG" ? updatedRecord.type === "IN" : (newDebt.type === "HUTANG" ? updatedRecord.type === "OUT" : true);
+            if (isValidFlow) {
+              let basePayments = newDebt.payments || [];
+              // filter out previous version if it was already on this debt
+              basePayments = basePayments.filter(p => p.financialRecordId !== editingTransaction.id);
+              
+              const isSalary = editFormData.category && editFormData.category.toLowerCase().includes("gaji");
+              let payAmount = Number(editFormData.amount);
+              if (isSalary) {
+                const potongan = Number(editFormData.potonganKasbon || 0);
+                const previousPaid = basePayments.reduce(
+                  (acc, curr) => acc + curr.amount,
+                  0,
                 );
-              }
-              if (existingIndex < 0 && editFormData.terminName) {
-                existingIndex = updatedTerms.findIndex((t: any) => t.name && t.name.toUpperCase() === editFormData.terminName.toUpperCase());
-              }
-
-              if (existingIndex >= 0) {
-                const orig = updatedTerms[existingIndex];
-                updatedTerms[existingIndex] = {
-                  ...orig,
-                  ...newTermItem,
-                  expectedAmount: orig.expectedAmount || orig.amount || payAmount,
-                  amount: payAmount,
-                };
-              } else {
-                updatedTerms.push(newTermItem);
+                const sisaKasbon = Math.max(0, newDebt.amount - previousPaid);
+                payAmount = Math.min(potongan, sisaKasbon);
               }
 
-              // Also sync to project paymentTerms if linked project exists
-              const projToUpdate = projects.find((p) => 
-                p.id === newDebt.projectId || 
-                p.id === newDebt.customId || 
-                ((p as any).customId && newDebt.customId && (p as any).customId === newDebt.customId) ||
-                (p.name && newDebt.title && (p.name.toLowerCase().includes(newDebt.title.toLowerCase()) || newDebt.title.toLowerCase().includes(p.name.toLowerCase())))
+              const isProjectPayment = updatedRecord.type === "IN" && (
+                updatedRecord.category === "Pembayaran Proyek" ||
+                updatedRecord.category === "Penerimaan Piutang" ||
+                updatedRecord.category === "Cicilan Pembayaran Proyek" ||
+                updatedRecord.category === "Termin" ||
+                (updatedRecord.category || "").toLowerCase().includes("proyek") ||
+                (updatedRecord.category || "").toLowerCase().includes("termin") ||
+                (updatedRecord.category || "").toLowerCase().includes("cicilan")
               );
 
-              if (projToUpdate) {
-                const currentProjTerms = projToUpdate.paymentTerms || [];
-                let projTermFound = false;
-                const updatedProjTerms = currentProjTerms.map((pt: any) => {
-                  if (pt.name && editFormData.terminName && pt.name.toUpperCase() === editFormData.terminName.toUpperCase()) {
-                    projTermFound = true;
-                    return {
-                      ...pt,
-                      status: (editFormData.terminStatus === "LUNAS" ? "Dibayar" : "BELUM LUNAS") as any,
-                      paymentDate: editFormData.terminPaymentDate || editFormData.date || "-",
-                    };
-                  }
-                  return pt;
-                });
+              let updatedPayments = [...basePayments];
+              if (payAmount > 0 || !isSalary) {
+                const newPayment: DebtPayment = {
+                  id: Math.random().toString(36).substr(2, 9),
+                  amount: payAmount,
+                  date: editFormData.date,
+                  note: isProjectPayment && editFormData.terminNotes ? editFormData.terminNotes : (updatedRecord.description || ""),
+                  financialRecordId: editingTransaction.id,
+                  recordedBy: user.name,
+                };
+                updatedPayments.push(newPayment);
+              }
 
-                if (!projTermFound && editFormData.terminName) {
-                  updatedProjTerms.push({
-                    id: `TRM-${Date.now()}`,
-                    name: editFormData.terminName,
-                    percentage: editFormData.terminPercentage ? Number(editFormData.terminPercentage) : 0,
-                    amount: payAmount,
-                    invoiceDate: editFormData.terminInvoiceDate || "-",
-                    dueDate: editFormData.terminDueDate || "-",
-                    paymentDate: editFormData.terminPaymentDate || editFormData.date || "-",
-                    status: (editFormData.terminStatus === "LUNAS" ? "Dibayar" : "BELUM LUNAS") as any,
-                  });
+              const totalPaid = updatedPayments.reduce((acc, curr) => acc + curr.amount, 0);
+              const newStatus = totalPaid >= newDebt.amount ? "PAID" : totalPaid > 0 ? "PARTIAL" : "UNPAID";
+
+              // Handle terms
+              let updatedTerms = [...(newDebt.terms || [])];
+              if (updatedTerms.length === 0 && TERMIN_SCHEDULES[newDebt.customId || ""]) {
+                updatedTerms = JSON.parse(JSON.stringify(TERMIN_SCHEDULES[newDebt.customId || ""].terms));
+              }
+
+              // Remove previous version of this transaction's term
+              updatedTerms = updatedTerms.filter((t: any) => t.financialRecordId !== editingTransaction.id);
+
+              if (isProjectPayment && editFormData.terminName) {
+                const newTermItem = {
+                  name: editFormData.terminName,
+                  description: editFormData.terminDescription || "",
+                  amount: payAmount,
+                  expectedAmount: payAmount,
+                  percentage: editFormData.terminPercentage ? Number(editFormData.terminPercentage) : 0,
+                  invoiceDate: editFormData.terminInvoiceDate || "-",
+                  dueDate: editFormData.terminDueDate || "-",
+                  paymentDate: editFormData.terminPaymentDate || editFormData.date || "-",
+                  status: (editFormData.terminStatus as any) || "LUNAS",
+                  notes: editFormData.terminNotes || "",
+                  financialRecordId: editingTransaction.id,
+                };
+
+                let existingIndex = -1;
+                if (editFormData.selectedTermId) {
+                  existingIndex = updatedTerms.findIndex((t: any, idx: number) => 
+                    (t.id ? t.id === editFormData.selectedTermId : `TERM-${idx}` === editFormData.selectedTermId) || 
+                    (t.name && t.name.toUpperCase() === editFormData.terminName.toUpperCase())
+                  );
+                }
+                if (existingIndex < 0 && editFormData.terminName) {
+                  existingIndex = updatedTerms.findIndex((t: any) => t.name && t.name.toUpperCase() === editFormData.terminName.toUpperCase());
                 }
 
-                dbService.updateDocument("projects", projToUpdate.id, { paymentTerms: updatedProjTerms }).catch(console.error);
-                const updatedProjObj = { ...projToUpdate, paymentTerms: updatedProjTerms };
-                setProjects?.((prev) => prev.map((pr) => pr.id === projToUpdate.id ? updatedProjObj : pr));
+                if (existingIndex >= 0) {
+                  const orig = updatedTerms[existingIndex];
+                  updatedTerms[existingIndex] = {
+                    ...orig,
+                    ...newTermItem,
+                    expectedAmount: orig.expectedAmount || orig.amount || payAmount,
+                    amount: payAmount,
+                  };
+                } else {
+                  updatedTerms.push(newTermItem);
+                }
+
+                // Also sync to project paymentTerms if linked project exists
+                const projToUpdate = findLinkedProject(newDebt, projects);
+
+                if (projToUpdate) {
+                  const isSumpitProj = (projToUpdate.name || "").toLowerCase().includes("sumpit");
+                  const currentProjTerms = projToUpdate.paymentTerms || [];
+                  let projTermFound = false;
+                  const updatedProjTerms = currentProjTerms.map((pt: any) => {
+                    if (pt.name && editFormData.terminName && pt.name.toUpperCase() === editFormData.terminName.toUpperCase()) {
+                      projTermFound = true;
+                      return {
+                        ...pt,
+                        status: (editFormData.terminStatus === "LUNAS" ? "Dibayar" : "BELUM LUNAS") as any,
+                        paymentDate: editFormData.terminPaymentDate || editFormData.date || "-",
+                      };
+                    }
+                    return pt;
+                  });
+
+                  // Strictly prevent unsolicited extra termin on Bak Sumpit (locked to DP & Pelunasan)
+                  if (!projTermFound && editFormData.terminName && !isSumpitProj) {
+                    updatedProjTerms.push({
+                      id: `TRM-${Date.now()}`,
+                      name: editFormData.terminName,
+                      percentage: editFormData.terminPercentage ? Number(editFormData.terminPercentage) : 0,
+                      amount: payAmount,
+                      invoiceDate: editFormData.terminInvoiceDate || "-",
+                      dueDate: editFormData.terminDueDate || "-",
+                      paymentDate: editFormData.terminPaymentDate || editFormData.date || "-",
+                      status: (editFormData.terminStatus === "LUNAS" ? "Dibayar" : "BELUM LUNAS") as any,
+                    });
+                  }
+
+                  dbService.updateDocument("projects", projToUpdate.id, { paymentTerms: updatedProjTerms }).catch(console.error);
+                  const updatedProjObj = { ...projToUpdate, paymentTerms: updatedProjTerms };
+                  setProjects?.((prev) => prev.map((pr) => pr.id === projToUpdate.id ? updatedProjObj : pr));
+                }
               }
+
+              const updatedNewDebt = {
+                ...newDebt,
+                payments: updatedPayments,
+                status: newStatus,
+                terms: updatedTerms
+              };
+
+              await dbService.setDocument("debtRecords", newDebt.id, updatedNewDebt);
+
+              setDebtRecords?.((prev) => {
+                const exists = prev.some((d) => d.id === newDebt.id);
+                if (exists) {
+                  return prev.map((d) => (d.id === newDebt.id ? updatedNewDebt : d));
+                }
+                return [updatedNewDebt, ...prev];
+              });
             }
-
-            const updatedNewDebt = {
-              ...newDebt,
-              payments: updatedPayments,
-              status: newStatus,
-              terms: updatedTerms
-            };
-
-            await dbService.setDocument("debtRecords", newDebt.id, updatedNewDebt);
-
-            setDebtRecords?.((prev) => {
-              const exists = prev.some((d) => d.id === newDebt.id);
-              if (exists) {
-                return prev.map((d) => (d.id === newDebt.id ? updatedNewDebt : d));
-              }
-              return [updatedNewDebt, ...prev];
-            });
           }
         }
       }
@@ -21384,17 +21747,22 @@ const AdminFinanceScreen = ({
                             {(() => {
                               const targetDebtId = formData.linkedDebtId;
                               const linkedRec = effectiveDebtRecords.find((d) => d.id === targetDebtId || d.customId === targetDebtId);
-                              const linkedProj = projects.find((p) => 
-                                (linkedRec && (p.id === linkedRec.projectId || p.id === linkedRec.customId || ((p as any).customId && linkedRec.customId && (p as any).customId === linkedRec.customId))) ||
-                                (formData.projectId && p.id === formData.projectId) ||
-                                (linkedRec && linkedRec.title && p.name && (linkedRec.title.toLowerCase().includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(linkedRec.title.toLowerCase())))
-                              );
+                              const linkedProj = (formData.projectId ? projects.find((p) => p.id === formData.projectId) : undefined) ||
+                                (linkedRec ? findLinkedProject(linkedRec, projects) : undefined);
 
-                              const activeTerms = linkedRec && linkedRec.terms && linkedRec.terms.length > 0
+                              const isSumpit = (linkedProj?.name || linkedRec?.title || "").toLowerCase().includes("sumpit");
+                              let rawTerms = linkedRec && linkedRec.terms && linkedRec.terms.length > 0
                                 ? linkedRec.terms
                                 : (linkedProj && linkedProj.paymentTerms && linkedProj.paymentTerms.length > 0
                                     ? linkedProj.paymentTerms
                                     : (linkedRec && TERMIN_SCHEDULES[linkedRec.customId || ""] ? TERMIN_SCHEDULES[linkedRec.customId || ""].terms : []));
+
+                              const activeTerms = isSumpit && rawTerms
+                                ? rawTerms.filter((t: any) => {
+                                    const n = (t.name || "").toLowerCase();
+                                    return !n.includes("termin 3") && !n.includes("termin 4");
+                                  })
+                                : rawTerms;
 
                               if (!activeTerms || activeTerms.length === 0) return null;
 
@@ -22803,17 +23171,22 @@ const AdminFinanceScreen = ({
                             {(() => {
                               const targetDebtId = editFormData.linkedDebtId;
                               const linkedRec = effectiveDebtRecords.find((d) => d.id === targetDebtId || d.customId === targetDebtId);
-                              const linkedProj = projects.find((p) => 
-                                (linkedRec && (p.id === linkedRec.projectId || p.id === linkedRec.customId || ((p as any).customId && linkedRec.customId && (p as any).customId === linkedRec.customId))) ||
-                                (editFormData.projectId && p.id === editFormData.projectId) ||
-                                (linkedRec && linkedRec.title && p.name && (linkedRec.title.toLowerCase().includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(linkedRec.title.toLowerCase())))
-                              );
+                              const linkedProj = (editFormData.projectId ? projects.find((p) => p.id === editFormData.projectId) : undefined) ||
+                                (linkedRec ? findLinkedProject(linkedRec, projects) : undefined);
 
-                              const activeTerms = linkedRec && linkedRec.terms && linkedRec.terms.length > 0
+                              const isSumpit = (linkedProj?.name || linkedRec?.title || "").toLowerCase().includes("sumpit");
+                              let rawTerms = linkedRec && linkedRec.terms && linkedRec.terms.length > 0
                                 ? linkedRec.terms
                                 : (linkedProj && linkedProj.paymentTerms && linkedProj.paymentTerms.length > 0
                                     ? linkedProj.paymentTerms
                                     : (linkedRec && TERMIN_SCHEDULES[linkedRec.customId || ""] ? TERMIN_SCHEDULES[linkedRec.customId || ""].terms : []));
+
+                              const activeTerms = isSumpit && rawTerms
+                                ? rawTerms.filter((t: any) => {
+                                    const n = (t.name || "").toLowerCase();
+                                    return !n.includes("termin 3") && !n.includes("termin 4");
+                                  })
+                                : rawTerms;
 
                               if (!activeTerms || activeTerms.length === 0) return null;
 
@@ -28833,16 +29206,7 @@ export default function App() {
       }
 
       // Sync linked DebtRecord in `debtRecords`
-      const linkedDebt = debtRecords.find(
-        (d) =>
-          (d.type === "PIUTANG" && d.projectId === projectId) ||
-          (d.type === "PIUTANG" &&
-            d.title &&
-            p.name &&
-            (d.title.toLowerCase().includes(p.name.toLowerCase()) ||
-              p.name.toLowerCase().includes(d.title.toLowerCase()))) ||
-          (d.type === "PIUTANG" && d.customId && d.customId === projectId)
-      );
+      const linkedDebt = findLinkedDebtForProject(p, debtRecords);
 
       if (linkedDebt) {
         const debtPayload: any = {};
@@ -29331,13 +29695,7 @@ export default function App() {
       }
 
       // Sync to debtRecords
-      const matchingDebt = debtRecords.find(
-        (d) =>
-          d.type === "PIUTANG" &&
-          (d.projectId === projectId ||
-            d.id === `PTG-PROJ-${projectId}` ||
-            (d.title && p.name && (d.title.toLowerCase().includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(d.title.toLowerCase()))))
-      );
+      const matchingDebt = findLinkedDebtForProject(p, debtRecords);
 
       const formattedNewTerm = {
         id: newTerm.id,
@@ -29429,13 +29787,7 @@ export default function App() {
       }
 
       // Sync to debtRecords
-      const matchingDebt = debtRecords.find(
-        (d) =>
-          d.type === "PIUTANG" &&
-          (d.projectId === projectId ||
-            d.id === `PTG-PROJ-${projectId}` ||
-            (d.title && p.name && (d.title.toLowerCase().includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(d.title.toLowerCase()))))
-      );
+      const matchingDebt = findLinkedDebtForProject(p, debtRecords);
 
       const formattedDebtTerms = newPaymentTerms.map((t) => ({
         id: t.id,
@@ -29497,14 +29849,7 @@ export default function App() {
       const p = projects.find((pro) => pro.id === projectId);
       if (!p) return;
 
-      const targetDebt = debtRecords.find(
-        (d) =>
-          d.type === "PIUTANG" &&
-          (d.projectId === projectId ||
-            (d.customId && (d.customId === projectId || (p.customId && d.customId === p.customId))) ||
-            d.id === `PTG-PROJ-${projectId}` ||
-            (d.title && p.name && (d.title.toLowerCase().includes(p.name.toLowerCase()) || p.name.toLowerCase().includes(d.title.toLowerCase()))))
-      );
+      const targetDebt = findLinkedDebtForProject(p, debtRecords);
 
       // Get current active terms list (if project.paymentTerms is defined, use it; otherwise fallback to debt.terms)
       const currentTerms = (p.paymentTerms !== undefined && p.paymentTerms !== null)
@@ -32653,13 +32998,8 @@ export default function App() {
       const unlinkedProjects = projects.filter((p) => {
         const pNameLower = (p.name || "").toLowerCase().trim();
         if (!pNameLower) return false;
-        return !debtRecords.some((r) => {
-          if (r.type !== "PIUTANG") return false;
-          if (r.projectId && r.projectId === p.id) return true;
-          if (r.customId && r.customId === p.id) return true;
-          const rTitleLower = (r.title || "").toLowerCase().trim();
-          return rTitleLower && pNameLower && (rTitleLower.includes(pNameLower) || pNameLower.includes(rTitleLower));
-        });
+        const linked = findLinkedDebtForProject(p, debtRecords);
+        return !linked;
       });
 
       if (unlinkedProjects.length > 0) {
@@ -32670,6 +33010,50 @@ export default function App() {
           const totalWithPpn = isPpnEnabled ? Math.round(dpp * 1.11) : dpp;
           const newDebtId = `PTG-PROJ-${p.id}`;
           const customId = p.customId || `PTG-${p.id.slice(-6)}`;
+
+          const isSumpitP = p.name.toLowerCase().includes("sumpit");
+          const half = Math.round(totalWithPpn * 0.5);
+          const initialTerms = isSumpitP
+            ? [
+                {
+                  name: "Termin 1 (DP 50%)",
+                  description: "Down Payment 50%",
+                  amount: half,
+                  expectedAmount: half,
+                  percentage: 50,
+                  invoiceDate: "-",
+                  dueDate: "-",
+                  paymentDate: "-",
+                  status: "BELUM BAYAR" as const,
+                  notes: "DP 50%",
+                },
+                {
+                  name: "Termin 2 (Pelunasan 50%)",
+                  description: "Pelunasan 50%",
+                  amount: totalWithPpn - half,
+                  expectedAmount: totalWithPpn - half,
+                  percentage: 50,
+                  invoiceDate: "-",
+                  dueDate: "-",
+                  paymentDate: "-",
+                  status: "BELUM BAYAR" as const,
+                  notes: "Pelunasan 50%",
+                },
+              ]
+            : p.paymentTerms
+            ? p.paymentTerms.map((t: any, idx: number) => ({
+                name: t.name || `Termin ${idx + 1}`,
+                description: t.name || `Termin ${idx + 1}`,
+                amount: t.amount || 0,
+                expectedAmount: t.amount || 0,
+                percentage: t.percentage || 0,
+                invoiceDate: "-",
+                dueDate: "-",
+                paymentDate: t.status === "Dibayar" ? new Date().toISOString().split('T')[0] : "-",
+                status: t.status === "Dibayar" ? "LUNAS" : "BELUM BAYAR",
+                notes: "-",
+              }))
+            : [];
 
           const newDebt: DebtRecord = {
             id: newDebtId,
@@ -32688,20 +33072,7 @@ export default function App() {
             description: `Rekam Piutang & Termin Proyek ${p.name}`,
             recordedBy: currentUser?.name || "Admin",
             timestamp: p.createdAt || Date.now(),
-            terms: p.paymentTerms
-              ? p.paymentTerms.map((t: any, idx: number) => ({
-                  name: t.name || `Termin ${idx + 1}`,
-                  description: t.name || `Termin ${idx + 1}`,
-                  amount: t.amount || 0,
-                  expectedAmount: t.amount || 0,
-                  percentage: t.percentage || 0,
-                  invoiceDate: "-",
-                  dueDate: "-",
-                  paymentDate: t.status === "Dibayar" ? new Date().toISOString().split('T')[0] : "-",
-                  status: t.status === "Dibayar" ? "LUNAS" : "BELUM BAYAR",
-                  notes: "-",
-                }))
-              : [],
+            terms: initialTerms,
             payments: [],
           };
 
@@ -32714,6 +33085,116 @@ export default function App() {
         });
       }
     }
+  }, [currentUser, isFinanceLoaded, projects, debtRecords]);
+
+  // Sanitization for Proyek Bak Sumpit: ensure it is strictly 50% DP and 50% Pelunasan, unhook any erroneous 3rd termin or wrong links
+  useEffect(() => {
+    if (!currentUser || !isFinanceLoaded) return;
+
+    // 1. Sanitize projects with "sumpit"
+    projects.forEach(async (p) => {
+      const pNameLower = (p.name || "").toLowerCase();
+      if (pNameLower.includes("sumpit")) {
+        const terms = p.paymentTerms || [];
+        const hasExtraTerms = terms.length > 2 || terms.some((t: any) => (t.name || "").toLowerCase().includes("termin 3") || (t.name || "").toLowerCase().includes("termin 4"));
+
+        if (hasExtraTerms) {
+          console.log(`Sanitizing Bak Sumpit project paymentTerms: resetting to strict 50% DP and 50% Pelunasan`);
+          const contractVal = p.contractValue || 0;
+          const half = Math.round(contractVal * 0.5);
+          const sanitizedTerms = [
+            {
+              id: terms[0]?.id || `TRM-SUMPIT-1`,
+              name: "Termin 1 (DP 50%)",
+              description: "Down Payment 50%",
+              amount: half,
+              percentage: 50,
+              invoiceDate: terms[0]?.invoiceDate || "-",
+              dueDate: terms[0]?.dueDate || "-",
+              paymentDate: terms[0]?.paymentDate || "-",
+              status: terms[0]?.status || "BELUM LUNAS",
+              notes: "DP 50%"
+            },
+            {
+              id: terms[1]?.id || `TRM-SUMPIT-2`,
+              name: "Termin 2 (Pelunasan 50%)",
+              description: "Pelunasan 50%",
+              amount: contractVal - half,
+              percentage: 50,
+              invoiceDate: terms[1]?.invoiceDate || "-",
+              dueDate: terms[1]?.dueDate || "-",
+              paymentDate: terms[1]?.paymentDate || "-",
+              status: terms[1]?.status || "BELUM LUNAS",
+              notes: "Pelunasan 50%"
+            }
+          ];
+
+          try {
+            await dbService.updateDocument("projects", p.id, { paymentTerms: sanitizedTerms });
+            setProjects(prev => prev.map(proj => proj.id === p.id ? { ...proj, paymentTerms: sanitizedTerms } : proj));
+          } catch (e) {
+            console.error("Failed to sanitize project payment terms:", e);
+          }
+        }
+      }
+    });
+
+    // 2. Sanitize debtRecords with "sumpit"
+    debtRecords.forEach(async (d) => {
+      const dTitleLower = (d.title || "").toLowerCase();
+      const dDescLower = (d.description || "").toLowerCase();
+      if (dTitleLower.includes("sumpit") || dDescLower.includes("sumpit")) {
+        const terms = d.terms || [];
+        const hasExtraTerms = terms.length > 2 || terms.some((t: any) => (t.name || "").toLowerCase().includes("termin 3") || (t.name || "").toLowerCase().includes("termin 4"));
+        const hasInvalidPayments = (d.payments || []).some((pm: any) => (pm.note || "").toLowerCase().includes("termin 3") || (pm.note || "").toLowerCase().includes("termin 4"));
+
+        if (hasExtraTerms || hasInvalidPayments) {
+          console.log(`Sanitizing Bak Sumpit debtRecord: resetting to strict 50% DP and 50% Pelunasan`);
+          const contractVal = d.amount || 0;
+          const half = Math.round(contractVal * 0.5);
+          const sanitizedTerms = [
+            {
+              name: "Termin 1 (DP 50%)",
+              description: "Down Payment 50%",
+              amount: half,
+              expectedAmount: half,
+              percentage: 50,
+              invoiceDate: terms[0]?.invoiceDate || "-",
+              dueDate: terms[0]?.dueDate || "-",
+              paymentDate: terms[0]?.paymentDate || "-",
+              status: terms[0]?.status || "BELUM BAYAR",
+              notes: "DP 50%"
+            },
+            {
+              name: "Termin 2 (Pelunasan 50%)",
+              description: "Pelunasan 50%",
+              amount: contractVal - half,
+              expectedAmount: contractVal - half,
+              percentage: 50,
+              invoiceDate: terms[1]?.invoiceDate || "-",
+              dueDate: terms[1]?.dueDate || "-",
+              paymentDate: terms[1]?.paymentDate || "-",
+              status: terms[1]?.status || "BELUM BAYAR",
+              notes: "Pelunasan 50%"
+            }
+          ];
+          const sanitizedPayments = (d.payments || []).filter((pm: any) => {
+            const nLower = (pm.note || "").toLowerCase();
+            return !nLower.includes("termin 3") && !nLower.includes("termin 4");
+          });
+
+          try {
+            await dbService.updateDocument("debtRecords", d.id, { 
+              terms: sanitizedTerms,
+              payments: sanitizedPayments
+            });
+            setDebtRecords(prev => prev.map(rec => rec.id === d.id ? { ...rec, terms: sanitizedTerms, payments: sanitizedPayments } : rec));
+          } catch (e) {
+            console.error("Failed to sanitize debtRecord:", e);
+          }
+        }
+      }
+    });
   }, [currentUser, isFinanceLoaded, projects, debtRecords]);
 
   // Sync today's attendance status
