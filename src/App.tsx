@@ -17734,6 +17734,87 @@ const AdminFinanceScreen = ({
     const periodBankClosing = periodOpeningBalance + (periodIncome - periodPtBankExpense);
     const allTimeBankClosing = income - (hasJune2026 && filterProject === "ALL" ? (allTimePtBankExpense || totalPengeluaranBank) : allTimePtBankExpense);
 
+    // Helper to accurately resolve contributor/creditor for personal fund records
+    const getPersonalRecordCreditor = (r: FinancialRecord): string => {
+      if (r.pemilikUangPribadi && r.pemilikUangPribadi.trim() !== "") {
+        return normalizeContactName(r.pemilikUangPribadi);
+      }
+      if (r.personalHolder && r.personalHolder.trim() !== "") {
+        return normalizeContactName(r.personalHolder);
+      }
+      if (r.linkedDebtId) {
+        const d = debtRecords.find((x) => x.id === r.linkedDebtId || x.customId === r.linkedDebtId);
+        if (d && d.contactName && !d.contactName.toLowerCase().includes("proyek") && !d.contactName.toLowerCase().includes("client")) {
+          return normalizeContactName(d.contactName);
+        }
+      }
+      if (r.referenceId) {
+        const d = debtRecords.find((x) => x.id === r.referenceId || x.customId === r.referenceId);
+        if (d && d.contactName && !d.contactName.toLowerCase().includes("proyek") && !d.contactName.toLowerCase().includes("client")) {
+          return normalizeContactName(d.contactName);
+        }
+      }
+      const originDebt = debtRecords.find((d) => 
+        ((d as any).originFinancialRecordId && (d as any).originFinancialRecordId === r.id) ||
+        ((d as any).originCustomId && (d as any).originCustomId === r.customId)
+      );
+      if (originDebt && originDebt.contactName && !originDebt.contactName.toLowerCase().includes("proyek") && !originDebt.contactName.toLowerCase().includes("client")) {
+        return normalizeContactName(originDebt.contactName);
+      }
+
+      const descUpper = (r.description || "").toUpperCase();
+      if (descUpper.includes("DUIT PRIBADI FAISAL") || descUpper.includes("UANG FAISAL")) return "FAISAL MUSTOPA";
+      if (descUpper.includes("DUIT PRIBADI WELI") || descUpper.includes("UANG WELI")) return "WELI MAHESA";
+      if (descUpper.includes("DUIT PRIBADI YASIN") || descUpper.includes("UANG YASIN") || descUpper.includes("UANG PRIBADI")) return "MUHAMMAD YASIN";
+      if (descUpper.includes("DUIT PRIBADI JIDAN") || descUpper.includes("UANG JIDAN")) return "JIDAN RAMADHAN";
+
+      if (descUpper.includes("RUMAH SAKIT PELNI") || descUpper.includes("PELNI")) return "MUHAMMAD YASIN";
+      if (descUpper.includes("KEBON JERUK")) return "MUHAMMAD YASIN";
+
+      if (descUpper.includes("FAISAL") || descUpper.includes("MUSTOPA")) return "FAISAL MUSTOPA";
+      if (descUpper.includes("WELI") || descUpper.includes("MAHESA")) return "WELI MAHESA";
+      if (descUpper.includes("YASIN")) return "MUHAMMAD YASIN";
+      if (descUpper.includes("JIDAN") || descUpper.includes("RAMADHAN")) return "JIDAN RAMADHAN";
+      if (descUpper.includes("DODO")) return "PAK DODO INVESTOR";
+      if (descUpper.includes("WINGGI")) return "WINGGI APRIYANTO";
+      if (descUpper.includes("YOGA")) return "YOGA";
+
+      if ((r as any).personInCharge && (r as any).personInCharge.trim() !== "") {
+        return normalizeContactName((r as any).personInCharge);
+      }
+      if ((r as any).recipient && (r as any).recipient.trim() !== "") {
+        return normalizeContactName((r as any).recipient);
+      }
+      if (r.recordedBy && r.recordedBy.trim() !== "" && r.recordedBy.toLowerCase() !== "admin") {
+        return normalizeContactName(r.recordedBy);
+      }
+      return "FAISAL MUSTOPA";
+    };
+
+    // Helper to generate dynamic sub-rows of personal fund contributors
+    const buildPersonalContributorRows = (records: FinancialRecord[]) => {
+      const map = new Map<string, { total: number; count: number }>();
+      records.forEach((r) => {
+        if (r.type === "OUT" && isPersonalFundRecord(r)) {
+          const person = getPersonalRecordCreditor(r);
+          const amt = (r.amount || 0) + (r.adminFee || 0);
+          const cur = map.get(person) || { total: 0, count: 0 };
+          cur.total += amt;
+          cur.count += 1;
+          map.set(person, cur);
+        }
+      });
+
+      return Array.from(map.entries())
+        .map(([name, data]) => ({ name, total: data.total, count: data.count }))
+        .sort((a, b) => b.total - a.total)
+        .map((c) => [
+          `   • ${c.name}`,
+          `Talangan dana pribadi untuk keperluan perusahaan (${c.count} transaksi)`,
+          formatCurrency(c.total),
+        ]);
+    };
+
     let titleP1 = "";
     let subtitleP1 = "";
     let sectionTitleP1 = "";
@@ -17746,8 +17827,10 @@ const AdminFinanceScreen = ({
         ? "AKUMULASI KEUNTUNGAN BERSIH (LABA KONSOLIDASI)"
         : "AKUMULASI KERUGIAN BERSIH (DEFISIT KONSOLIDASI)";
       const allTimeProfitLossDesc = isAllTimeProfitable
-        ? "Surplus keuntungan bersih akumulatif setelah seluruh beban belanja riil"
-        : "Defisit kerugian akumulatif operasional perusahaan (total belanja riil melebihi pemasukan)";
+        ? "Surplus laba bersih akumulatif perusahaan setelah memperhitungkan seluruh beban belanja riil konsolidasi"
+        : "Defisit arus kas riil akumulatif (Belanja Riil > Kas Masuk). Belanja modal & operasional mendahului realisasi kas masuk.";
+
+      const personalRowsAllTime = buildPersonalContributorRows(financialRecords);
 
       titleP1 = "PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO KESELURUHAN";
       subtitleP1 = `Laporan Internal Buku Kas Utama & Posisi Saldo Akumulatif (s/d ${new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })})`;
@@ -17757,6 +17840,7 @@ const AdminFinanceScreen = ({
         ["TOTAL PEMASUKAN RIIL PT", "Pemasukan akumulatif seluruh proyek & piutang", formatCurrency(income)],
         ["TOTAL PENGELUARAN BANK PT (DIRECT)", "Total mutasi uang keluar / transfer dari rekening bank PT (sesuai history bank PT)", formatCurrency(hasJune2026 && filterProject === "ALL" ? (allTimePtBankExpense || totalPengeluaranBank) : allTimePtBankExpense)],
         ["TOTAL PENGELUARAN DANA PRIBADI (NON-UANG PT)", "Total belanja talangan menggunakan uang pribadi (bukan uang PT)", formatCurrency(allTimePersonalExpense)],
+        ...personalRowsAllTime,
         ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil konsolidasi (Pengeluaran Bank PT + Dana Pribadi)", formatCurrency(allTimeTotalExpense)],
         [allTimeProfitLossLabel, allTimeProfitLossDesc, formatCurrency(balance)],
         ["SALDO CLOSING KAS BANK PT (AKUMULATIF)", "Sisa kas penutupan rekening bank PT (Total Pemasukan dikurangi Pengeluaran Bank PT)", formatCurrency(allTimeBankClosing)],
@@ -17767,8 +17851,10 @@ const AdminFinanceScreen = ({
         ? "KEUNTUNGAN BERSIH (LABA OPERASIONAL MINGGUAN)"
         : "KERUGIAN BERSIH (DEFISIT OPERASIONAL MINGGUAN)";
       const profitLossDesc = isProfitable
-        ? "Perusahaan mencatat keuntungan operasional periode mingguan"
-        : "Perusahaan mencatat kerugian operasional (total belanja riil melebihi pemasukan)";
+        ? "Surplus kas operasional mingguan: Pemasukan kas riil melebihi beban belanja riil periode ini"
+        : "Defisit arus kas riil mingguan: Realisasi belanja modal & operasional mendahului pencairan termin penagihan klien";
+
+      const personalRowsWeekly = buildPersonalContributorRows(periodRecords);
 
       titleP1 = "PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO MINGGUAN";
       subtitleP1 = `Laporan Rekapitulasi Kas Periode ${formatDateLabel(exportRange.start)} s/d ${formatDateLabel(exportRange.end)}`;
@@ -17786,6 +17872,7 @@ const AdminFinanceScreen = ({
         ["TOTAL PEMASUKAN RIIL MINGGUAN", "Pemasukan riil yang masuk selama periode 7 hari ini", formatCurrency(periodIncome)],
         ["TOTAL PENGELUARAN BANK PT (DIRECT)", "Total uang keluar / transfer dari rekening bank PT (sesuai history bank PT)", formatCurrency(periodPtBankExpense)],
         ["PENGELUARAN DANA PRIBADI (NON-UANG PT)", "Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)", formatCurrency(periodPersonalExpense)],
+        ...personalRowsWeekly,
         ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil periode ini (Bank PT Direct + Dana Pribadi)", formatCurrency(periodExpense)],
         [profitLossLabel, profitLossDesc, formatCurrency(periodNet)],
         [
@@ -17803,8 +17890,10 @@ const AdminFinanceScreen = ({
         ? `KEUNTUNGAN BERSIH (LABA OPERASIONAL BULAN ${monthNameUpper})`
         : `KERUGIAN BERSIH (DEFISIT OPERASIONAL BULAN ${monthNameUpper})`;
       const profitLossDesc = isProfitable
-        ? `Perusahaan mencatat keuntungan bersih (surplus laba riil bulan ${MONTHS_ID[targetMonth]})`
-        : `Perusahaan mencatat kerugian operasional (defisit belanja riil bulan ${MONTHS_ID[targetMonth]})`;
+        ? `Surplus kas operasional bulan ${MONTHS_ID[targetMonth]}: Total pemasukan kas riil melebihi seluruh beban belanja riil (Laba Bersih)`
+        : `Defisit arus kas riil bulan ${MONTHS_ID[targetMonth]} (Belanja Riil > Kas Masuk). Belanja modal/proyek mendahului penagihan termin klien.`;
+
+      const personalRowsMonthly = buildPersonalContributorRows(periodRecords);
 
       const prevMonthIndex = (targetMonth + 11) % 12;
       const prevMonthName = MONTHS_ID[prevMonthIndex];
@@ -17828,6 +17917,7 @@ const AdminFinanceScreen = ({
         [`TOTAL PEMASUKAN RIIL (BULAN ${monthNameUpper})`, `Pemasukan riil yang masuk selama bulan ${MONTHS_ID[targetMonth]}`, formatCurrency(periodIncome)],
         ["TOTAL PENGELUARAN BANK PT (DIRECT)", `Total uang keluar / transfer dari rekening bank PT bulan ${MONTHS_ID[targetMonth]} (sesuai history bank PT)`, formatCurrency(periodPtBankExpense)],
         ["PENGELUARAN DANA PRIBADI (NON-UANG PT)", `Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)`, formatCurrency(periodPersonalExpense)],
+        ...personalRowsMonthly,
         ["TOTAL BELANJA RIIL (ACTUAL COST)", `Total pengeluaran riil bulan ${MONTHS_ID[targetMonth]} (Bank PT Direct + Dana Pribadi)`, formatCurrency(periodExpense)],
         [profitLossLabel, profitLossDesc, formatCurrency(periodNet)],
         [
@@ -17845,8 +17935,10 @@ const AdminFinanceScreen = ({
         ? "KEUNTUNGAN BERSIH (LABA OPERASIONAL PERIODE)"
         : "KERUGIAN BERSIH (DEFISIT OPERASIONAL PERIODE)";
       const profitLossDesc = isProfitable
-        ? "Perusahaan mencatat keuntungan operasional periode terpilih"
-        : "Perusahaan mencatat kerugian operasional (total belanja riil melebihi pemasukan)";
+        ? "Surplus kas operasional periode terpilih: Total pemasukan kas melebihi seluruh beban belanja riil"
+        : "Defisit arus kas riil periode (Belanja Riil > Kas Masuk). Belanja modal & operasional mendahului pencairan termin piutang klien.";
+
+      const personalRowsCustom = buildPersonalContributorRows(periodRecords);
 
       titleP1 = "PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO PERIODE";
       subtitleP1 = `Laporan Rekapitulasi Kas Periode ${formatDateLabel(exportRange.start)} s/d ${formatDateLabel(exportRange.end)}`;
@@ -17866,6 +17958,7 @@ const AdminFinanceScreen = ({
         ["TOTAL PEMASUKAN RIIL PERIODE", "Pemasukan riil selama rentang tanggal terpilih", formatCurrency(periodIncome)],
         ["TOTAL PENGELUARAN BANK PT (DIRECT)", "Total uang keluar / transfer dari rekening bank PT periode ini (sesuai history bank PT)", formatCurrency(periodPtBankExpense)],
         ["PENGELUARAN DANA PRIBADI (NON-UANG PT)", "Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)", formatCurrency(periodPersonalExpense)],
+        ...personalRowsCustom,
         ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil periode terpilih (Bank PT Direct + Dana Pribadi)", formatCurrency(periodExpense)],
         [profitLossLabel, profitLossDesc, formatCurrency(periodNet)],
         [
@@ -18128,9 +18221,13 @@ const AdminFinanceScreen = ({
           if (rowTitle.includes("OPENING")) {
             data.cell.styles.fillColor = [241, 245, 249]; // Soft slate/neutral
             data.cell.styles.textColor = [51, 65, 85];
-          } else if (rowTitle.includes("DANA PRIBADI")) {
+          } else if (rowTitle.includes("DANA PRIBADI") && !rowTitle.trim().startsWith("•")) {
             data.cell.styles.fillColor = [254, 242, 242]; // Soft rose/pink for dana pribadi
             data.cell.styles.textColor = [185, 28, 28];
+          } else if (rowTitle.trim().startsWith("•") && String(data.row.raw?.[1] || "").includes("Talangan dana pribadi")) {
+            data.cell.styles.fillColor = [255, 246, 246]; // Warm subtle rose tint for personal contributors
+            data.cell.styles.textColor = [153, 27, 27];
+            data.cell.styles.fontStyle = "bold";
           } else if (rowTitle.includes("TOTAL BELANJA RIIL")) {
             data.cell.styles.fillColor = [219, 234, 254]; // Soft blue for total actual cost
             data.cell.styles.textColor = [27, 42, 74];
