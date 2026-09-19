@@ -7089,18 +7089,20 @@ const getOriginFinanceQueryAndRecord = (
   });
   if (linkedNonPay) return { originRecord: linkedNonPay, query: linkedNonPay.customId || linkedNonPay.id };
 
-  // 5. Description or Title containing cleanId or customId (non-payment)
-  const textMatch = finList.find((f) => {
-    const catLower = (f.category || "").toLowerCase();
-    const isPayment = catLower.includes("pembayaran");
-    if (isPayment) return false;
-    const fDesc = (f.description || "").toLowerCase();
-    return (
-      (cleanId && fDesc.includes(cleanId.toLowerCase())) ||
-      (r.customId && fDesc.includes(r.customId.toLowerCase()))
-    );
-  });
-  if (textMatch) return { originRecord: textMatch, query: textMatch.customId || textMatch.id };
+  // 5. Description containing customId (non-payment, hanya jika r bukan piutang umum)
+  if (r.type !== "PIUTANG") {
+    const textMatch = finList.find((f) => {
+      const catLower = (f.category || "").toLowerCase();
+      const isPayment = catLower.includes("pembayaran");
+      if (isPayment) return false;
+      const fDesc = (f.description || "").toLowerCase();
+      return (
+        (cleanId && fDesc.includes(cleanId.toLowerCase())) ||
+        (r.customId && fDesc.includes(r.customId.toLowerCase()))
+      );
+    });
+    if (textMatch) return { originRecord: textMatch, query: textMatch.customId || textMatch.id };
+  }
 
   return { originRecord: null, query: cleanId || r.customId || r.title || "" };
 };
@@ -7237,26 +7239,17 @@ const getScheduleForRecord = (
     const fIdLower = (f.id || "").toLowerCase();
     const fProjId = (f.projectId || "").toLowerCase();
 
-    // Project expense tracking for Piutang / Proyek
+    // Project expense tracking for Piutang / Proyek (Hanya untuk tracking beban proyek, TIDAK PERNAH masuk ke pembayaran piutang!)
     if (isPiutang && f.type === "OUT") {
       let isProjExpense = false;
-      const isSumpitRec = (record.title || projName || "").toLowerCase().includes("sumpit");
-      const fDescLower = (f.description || "").toLowerCase();
-      const fDescHasSumpit = fDescLower.includes("sumpit");
 
-      if (isSumpitRec && !fDescHasSumpit) {
-        isProjExpense = false;
-      } else if (!isSumpitRec && fDescHasSumpit) {
-        isProjExpense = false;
-      } else if (record.projectId && (fProjId === (record.projectId || "").toLowerCase() || fRefId === (record.projectId || "").toLowerCase())) {
+      if (record.projectId && (fProjId === (record.projectId || "").toLowerCase() || fRefId === (record.projectId || "").toLowerCase())) {
         isProjExpense = true;
       } else if (fLinkedDebt && (fLinkedDebt === recIdLower || (recCustomId && fLinkedDebt === recCustomId))) {
         isProjExpense = true;
       } else if (fRefPiutang && (fRefPiutang === recIdLower || (recCustomId && fRefPiutang === recCustomId))) {
         isProjExpense = true;
-      } else if (linkedProj && (f.projectId === linkedProj.id || (linkedProj.name && f.description && f.description.toLowerCase().includes(linkedProj.name.toLowerCase())))) {
-        isProjExpense = true;
-      } else if (projName && f.description && f.description.toLowerCase().includes(projName.toLowerCase())) {
+      } else if (linkedProj && f.projectId === linkedProj.id) {
         isProjExpense = true;
       }
 
@@ -7280,17 +7273,8 @@ const getScheduleForRecord = (
     let matches = false;
 
     if (isPiutang) {
-      const isSumpitRec = (record.title || projName || "").toLowerCase().includes("sumpit");
-      const fDescLower = (f.description || "").toLowerCase();
-      const fDescHasSumpit = fDescLower.includes("sumpit");
-
-      // Strict isolation between Sumpit and non-Sumpit (e.g. Westmark vs Bak Sumpit)
-      if (isSumpitRec && !fDescHasSumpit) {
-        const explicitlyLinked = (f.linkedDebtId && (fLinkedDebt === recIdLower || (recCustomId && fLinkedDebt === recCustomId)));
-        if (!explicitlyLinked) return;
-      } else if (!isSumpitRec && fDescHasSumpit) {
-        return;
-      }
+      // HANYA UANG MASUK (IN) YANG BOLEH MENJADI PEMBAYARAN PIUTANG
+      if (f.type !== "IN") return;
 
       // If transaction explicitly points to another debt record, do not cross-match
       if (f.linkedDebtId && (recCustomId || recIdLower)) {
@@ -7299,7 +7283,8 @@ const getScheduleForRecord = (
         }
       }
 
-      // For PIUTANG: IN flow referencing this project, debt ID, or termin via structured fields
+      // For PIUTANG: HARUS TERHUBUNG EKSPLISIT LEWAT ID (linkedDebtId, refPiutang, referenceId, atau projectId)
+      // DILARANG KERAS MENGGUNAKAN TEBAK KATA / DESKRIPSI!
       if (f.linkedDebtId && (fLinkedDebt === recIdLower || (recCustomId && fLinkedDebt === recCustomId))) {
         matches = true;
       } else if (f.refPiutang && (
@@ -7315,20 +7300,11 @@ const getScheduleForRecord = (
         matches = true;
       } else if (record.projectId && f.projectId && f.projectId.toLowerCase() === (record.projectId || "").toLowerCase()) {
         matches = true;
-      } else {
-        // If this is a regular project, NEVER let a transaction mentioning 'sumpit' match it
-        if (!isSumpitRec && fDescHasSumpit) {
-          matches = false;
-        } else if (isSumpitRec && !fDescHasSumpit) {
-          // If this is Bak Sumpit, only match transactions mentioning 'sumpit'
-          matches = false;
-        } else if (
-          (recCustomId && fDescLower.includes(recCustomId)) ||
-          (record.title && fDescLower.includes(record.title.toLowerCase())) ||
-          (projName && fDescLower.includes(projName.toLowerCase()))
-        ) {
-          matches = true;
-        }
+      } else if (f.debtAllocations?.some((a) => 
+        (a.debtId && (a.debtId.toLowerCase() === recCustomId || a.debtId.toLowerCase() === recIdLower)) ||
+        (a.customId && (a.customId.toLowerCase() === recCustomId || a.customId.toLowerCase() === recIdLower))
+      )) {
+        matches = true;
       }
     } else {
       // For HUTANG: MUST be from PT funds (reimbursement/pelunasan), NOT personal spending
@@ -11991,18 +11967,7 @@ const AdminDebtScreen = ({
             const fDescLower = (f.description || "").toLowerCase();
             const fDescHasSumpit = fDescLower.includes("sumpit");
 
-            // Isolasi mutlak untuk proyek Sumpit vs non-Sumpit (contoh: Westmark vs Bak Sumpit Westmark):
-            // Transaksi Westmark murni (tanpa kata 'sumpit') dilarang keras masuk ke Bak Sumpit!
-            if (isSumpitRec && !fDescHasSumpit) {
-              const explicitlyLinked = (fLinkedDebtUpper && (fLinkedDebtUpper === recCustomUpper || fLinkedDebtUpper === recIdUpper)) ||
-                (fRefPiutangUpper && (fRefPiutangUpper === recCustomUpper || fRefPiutangUpper === recIdUpper));
-              if (!explicitlyLinked) return false;
-            }
-            if (!isSumpitRec && fDescHasSumpit) {
-              return false;
-            }
-
-            // Jika transaksi sudah memiliki linkedDebtId eksplisit ke hutang/piutang lain, jangan silang-hubungkan!
+            // Isolasi jika transaksi sudah memiliki linkedDebtId eksplisit ke hutang/piutang lain, jangan silang-hubungkan!
             if (fLinkedDebtUpper && fLinkedDebtUpper !== recCustomUpper && fLinkedDebtUpper !== recIdUpper) {
               return false;
             }
@@ -12013,6 +11978,7 @@ const AdminDebtScreen = ({
 
             // Direct structured matches
             if (isPiutang) {
+              // Untuk Piutang: HANYA boleh cocok jika secara eksplisit terhubung lewat ID
               if (fRefPiutangUpper && (fRefPiutangUpper === recCustomUpper || fRefPiutangUpper === recIdUpper)) return true;
               if (fLinkedDebtUpper && (fLinkedDebtUpper === recCustomUpper || fLinkedDebtUpper === recIdUpper)) return true;
               if (fReferenceIdUpper && (
@@ -12025,6 +11991,9 @@ const AdminDebtScreen = ({
                 (a.debtId && (a.debtId.toUpperCase() === recCustomUpper || a.debtId.toUpperCase() === recIdUpper)) ||
                 (a.customId && (a.customId.toUpperCase() === recCustomUpper || a.customId.toUpperCase() === recIdUpper))
               )) return true;
+
+              // TIDAK ADA LAGI PENCOCOKAN DARI TULISAN / DESKRIPSI UNTUK PIUTANG!
+              return false;
             } else {
               if (fRefHutangUpper && (fRefHutangUpper === recCustomUpper || fRefHutangUpper === recIdUpper)) return true;
               if (fLinkedDebtUpper && (fLinkedDebtUpper === recCustomUpper || fLinkedDebtUpper === recIdUpper)) return true;
@@ -12033,20 +12002,9 @@ const AdminDebtScreen = ({
                 (a.debtId && (a.debtId.toUpperCase() === recCustomUpper || a.debtId.toUpperCase() === recIdUpper)) ||
                 (a.customId && (a.customId.toUpperCase() === recCustomUpper || a.customId.toUpperCase() === recIdUpper))
               )) return true;
-            }
 
-            // Description and keyword matching
-            if (rec.customId && fDescLower.includes(rec.customId.toLowerCase())) return true;
-
-            // Project / title keywords matching for incoming payments (DP / Termin)
-            if (isPiutang) {
-              const keywords: string[] = [];
-              if (rec.title) keywords.push(...rec.title.toLowerCase().split(/\s+/).filter((w) => w.length > 3));
-              if (projObj && projObj.name) keywords.push(...projObj.name.toLowerCase().split(/\s+/).filter((w) => w.length > 3));
-
-              // Check if description has strong keyword match (e.g. "westmark", "sumpit")
-              const hasKeywordMatch = keywords.some((kw) => kw !== "projek" && kw !== "proyek" && kw !== "termin" && kw !== "piutang" && fDescLower.includes(kw));
-              if (hasKeywordMatch) return true;
+              // Description and keyword matching khusus hutang jika customId sama
+              if (rec.customId && fDescLower.includes(rec.customId.toLowerCase())) return true;
             }
 
             return false;
@@ -12181,29 +12139,31 @@ const AdminDebtScreen = ({
             });
           });
 
-          // 4. Dari Termin Proyek yang berstatus LUNAS / Terbayar (khususnya Uang Masuk DP / Termin yang telah disetujui)
-          (sched.terms || []).forEach((term: any, idx: number) => {
-            const isTermPaid = term.status === "LUNAS" || term.status === "Dibayar" || (term.amount > 0 && term.status !== "BELUM BAYAR");
-            const termAmt = term.amount > 0 ? term.amount : (term.expectedAmount || 0);
-            if (isTermPaid && termAmt > 0) {
-              if (isAlreadyAdded(termAmt, term.paymentDate, term.customId || `TERM-${idx + 1}`)) return;
-              const recorderName = resolveHumanRecorder(term.recordedBy);
-              const termDate = (term.paymentDate && term.paymentDate !== "-")
-                ? term.paymentDate
-                : ((term.invoiceDate && term.invoiceDate !== "-") ? term.invoiceDate : (rec.dueDate || new Date().toISOString().split("T")[0]));
-              
-              unifiedPayments.push({
-                id: `term-paid-${idx}`,
-                date: termDate,
-                amount: termAmt,
-                note: term.name ? (term.description && term.description !== "-" && !term.name.toLowerCase().includes(term.description.toLowerCase()) ? `${term.name} (${term.description})` : term.name) : "Pembayaran Uang Masuk DP Proyek",
-                recordedBy: recorderName,
-                source: "Buku Kas PT",
-                refNumber: term.customId || `TRM-${idx + 1}`,
-                status: "LUNAS",
-              });
-            }
-          });
+          // 4. Dari Termin Proyek yang berstatus LUNAS / Terbayar (khusus jika belum ada catatan pembayaran kas riil yang mewakilinya)
+          if (unifiedPayments.length === 0) {
+            (sched.terms || []).forEach((term: any, idx: number) => {
+              const isTermPaid = term.status === "LUNAS" || term.status === "Dibayar" || (term.amount > 0 && term.status !== "BELUM BAYAR");
+              const termAmt = term.amount > 0 ? term.amount : (term.expectedAmount || 0);
+              if (isTermPaid && termAmt > 0) {
+                if (isAlreadyAdded(termAmt, term.paymentDate, term.customId || `TERM-${idx + 1}`)) return;
+                const recorderName = resolveHumanRecorder(term.recordedBy);
+                const termDate = (term.paymentDate && term.paymentDate !== "-")
+                  ? term.paymentDate
+                  : ((term.invoiceDate && term.invoiceDate !== "-") ? term.invoiceDate : (rec.dueDate || new Date().toISOString().split("T")[0]));
+                
+                unifiedPayments.push({
+                  id: `term-paid-${idx}`,
+                  date: termDate,
+                  amount: termAmt,
+                  note: term.name ? (term.description && term.description !== "-" && !term.name.toLowerCase().includes(term.description.toLowerCase()) ? `${term.name} (${term.description})` : term.name) : "Pembayaran Uang Masuk DP Proyek",
+                  recordedBy: recorderName,
+                  source: "Buku Kas PT",
+                  refNumber: term.customId || `TRM-${idx + 1}`,
+                  status: "LUNAS",
+                });
+              }
+            });
+          }
 
           // Pastikan tidak ada satupun yang bertuliskan "Sistem"
           const displayPayments = unifiedPayments.map((u) => ({
