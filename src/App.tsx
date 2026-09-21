@@ -17627,7 +17627,8 @@ const AdminFinanceScreen = ({
     let periodExpense = periodPtBankExpense + periodPersonalExpense;
 
     const isCoveringJune2026 = exportRange.start <= "2026-06-30" && exportRange.end >= "2026-06-01";
-    if (hasJune2026 && filterProject === "ALL" && isCoveringJune2026 && (isMonthly || isAllTime)) {
+    // Fallback baseline Juni 2026 hanya berlaku jika kategori SEMUA (ALL), bukan saat difilter per kategori
+    if (hasJune2026 && filterProject === "ALL" && isAllCategoriesActive && isCoveringJune2026 && (isMonthly || isAllTime)) {
       periodIncome = periodIncome || 285104802;
       periodPtBankExpense = periodPtBankExpense || 320168249;
       periodExpense = periodPtBankExpense + periodPersonalExpense;
@@ -17635,14 +17636,23 @@ const AdminFinanceScreen = ({
 
     const periodNet = periodIncome - periodExpense;
 
-    // All-time expenditure breakdown
-    const allTimePtBankExpense = financialRecords
+    // All-time expenditure breakdown (respects exportSelectedCategories if not ALL)
+    const targetAllTimeExpenseRecords = financialRecords.filter((r) => {
+      if (!isAllCategoriesActive) {
+        const rCat = (r.category || "").trim().toUpperCase();
+        if (!exportSelectedCategories.includes(rCat)) return false;
+      }
+      if (filterProject !== "ALL" && r.referenceId !== filterProject && r.projectId !== filterProject) return false;
+      return true;
+    });
+
+    const allTimePtBankExpense = targetAllTimeExpenseRecords
       .filter((r) => isPtBankDirectOutRecord(r))
       .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
-    const allTimePersonalExpense = financialRecords
+    const allTimePersonalExpense = targetAllTimeExpenseRecords
       .filter((r) => r.type === "OUT" && isPersonalFundRecord(r))
       .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
-    const allTimeTotalExpense = (hasJune2026 && filterProject === "ALL" ? Math.max(allTimePtBankExpense, totalPengeluaranBank) : allTimePtBankExpense) + allTimePersonalExpense;
+    const allTimeTotalExpense = (hasJune2026 && filterProject === "ALL" && isAllCategoriesActive ? Math.max(allTimePtBankExpense, totalPengeluaranBank) : allTimePtBankExpense) + allTimePersonalExpense;
 
     // Table Theme Settings (Landscape A4: width 297mm, printable 267mm with 15mm margins)
     const autoTableStyles = {
@@ -17811,21 +17821,37 @@ const AdminFinanceScreen = ({
         ? "Surplus laba bersih akumulatif perusahaan setelah memperhitungkan seluruh beban belanja riil konsolidasi"
         : "Defisit arus kas riil akumulatif (Belanja Riil > Kas Masuk). Belanja modal & operasional mendahului realisasi kas masuk.";
 
-      const personalRowsAllTime = buildPersonalContributorRows(financialRecords);
+      const personalRowsAllTime = buildPersonalContributorRows(targetAllTimeExpenseRecords);
 
-      titleP1 = "PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO KESELURUHAN";
-      subtitleP1 = `Laporan Internal Buku Kas Utama & Posisi Saldo Akumulatif (s/d ${new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })})`;
-      sectionTitleP1 = "POSISI SALDO TERKINI PERUSAHAAN (REAL-TIME KONSOLIDASI)";
-      p1TableHead = [["Uraian Saldo Akumulatif", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
-      p1TableBody = [
-        ["TOTAL PEMASUKAN RIIL PT", "Pemasukan akumulatif seluruh proyek & piutang", formatCurrency(income)],
-        ["TOTAL PENGELUARAN BANK PT (DIRECT)", "Total mutasi uang keluar / transfer dari rekening bank PT (sesuai history bank PT)", formatCurrency(hasJune2026 && filterProject === "ALL" ? (allTimePtBankExpense || totalPengeluaranBank) : allTimePtBankExpense)],
-        ["TOTAL PENGELUARAN DANA PRIBADI (NON-UANG PT)", "Total belanja talangan menggunakan uang pribadi (bukan uang PT)", formatCurrency(allTimePersonalExpense)],
-        ...personalRowsAllTime,
-        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil konsolidasi (Pengeluaran Bank PT + Dana Pribadi)", formatCurrency(allTimeTotalExpense)],
-        [allTimeProfitLossLabel, allTimeProfitLossDesc, formatCurrency(balance)],
-        ["SALDO CLOSING KAS BANK PT (AKUMULATIF)", "Sisa kas penutupan rekening bank PT (Total Pemasukan dikurangi Pengeluaran Bank PT)", formatCurrency(allTimeBankClosing)],
-      ];
+      const catHeaderSuffix = !isAllCategoriesActive ? ` [KATEGORI: ${exportSelectedCategories.join(", ")}]` : "";
+      titleP1 = `PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO KESELURUHAN${catHeaderSuffix}`;
+      subtitleP1 = !isAllCategoriesActive
+        ? `Laporan Mutasi & Pengeluaran Khusus Kategori ${exportSelectedCategories.join(", ")} (s/d ${new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })})`
+        : `Laporan Internal Buku Kas Utama & Posisi Saldo Akumulatif (s/d ${new Date().toLocaleDateString("id-ID", { day: "numeric", month: "long", year: "numeric" })})`;
+      sectionTitleP1 = !isAllCategoriesActive
+        ? `REKAPITULASI PENGELUARAN KHUSUS KATEGORI TERPILIH`
+        : "POSISI SALDO TERKINI PERUSAHAAN (REAL-TIME KONSOLIDASI)";
+      p1TableHead = [["Uraian Rekapitulasi", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
+
+      if (!isAllCategoriesActive) {
+        // Mode filter kategori: HANYA tampilkan rekapan pos kategori yang dipilih (Pengeluaran dari Uang Bank PT vs Dana Pribadi)
+        p1TableBody = [
+          ["PENGELUARAN DARI REKENING BANK PT", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} yang dibayar dari kas/bank PT`, formatCurrency(allTimePtBankExpense)],
+          ["PENGELUARAN DARI DANA PRIBADI (TALANGAN)", `Total belanja kategori ${exportSelectedCategories.join(", ")} yang ditalangi uang pribadi (bukan uang PT)`, formatCurrency(allTimePersonalExpense)],
+          ...personalRowsAllTime,
+          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran riil kategori ${exportSelectedCategories.join(", ")} (Bank PT + Dana Pribadi)`, formatCurrency(allTimeTotalExpense)],
+        ];
+      } else {
+        p1TableBody = [
+          ["TOTAL PEMASUKAN RIIL PT", "Pemasukan akumulatif seluruh proyek & piutang", formatCurrency(income)],
+          ["TOTAL PENGELUARAN BANK PT (DIRECT)", "Total mutasi uang keluar / transfer dari rekening bank PT (sesuai history bank PT)", formatCurrency(hasJune2026 && filterProject === "ALL" ? (allTimePtBankExpense || totalPengeluaranBank) : allTimePtBankExpense)],
+          ["TOTAL PENGELUARAN DANA PRIBADI (NON-UANG PT)", "Total belanja talangan menggunakan uang pribadi (bukan uang PT)", formatCurrency(allTimePersonalExpense)],
+          ...personalRowsAllTime,
+          ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil konsolidasi (Pengeluaran Bank PT + Dana Pribadi)", formatCurrency(allTimeTotalExpense)],
+          [allTimeProfitLossLabel, allTimeProfitLossDesc, formatCurrency(balance)],
+          ["SALDO CLOSING KAS BANK PT (AKUMULATIF)", "Sisa kas penutupan rekening bank PT (Total Pemasukan dikurangi Pengeluaran Bank PT)", formatCurrency(allTimeBankClosing)],
+        ];
+      }
     } else if (isWeekly) {
       const isProfitable = periodNet >= 0;
       const profitLossLabel = isProfitable
@@ -17837,33 +17863,47 @@ const AdminFinanceScreen = ({
 
       const personalRowsWeekly = buildPersonalContributorRows(periodRecords);
 
-      titleP1 = "PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO MINGGUAN";
+      const catHeaderSuffix = !isAllCategoriesActive ? ` [KATEGORI: ${exportSelectedCategories.join(", ")}]` : "";
+      titleP1 = `PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO MINGGUAN${catHeaderSuffix}`;
       subtitleP1 = `Laporan Rekapitulasi Kas Periode ${formatDateLabel(exportRange.start)} s/d ${formatDateLabel(exportRange.end)}`;
-      sectionTitleP1 = `REKAPITULASI KEUANGAN MINGGUAN (${formatDateLabel(exportRange.start)} - ${formatDateLabel(exportRange.end)})`;
-      p1TableHead = [["Uraian Rekapitulasi Kas Mingguan", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
+      sectionTitleP1 = !isAllCategoriesActive
+        ? `REKAPITULASI PENGELUARAN KHUSUS KATEGORI MINGGUAN (${formatDateLabel(exportRange.start)} - ${formatDateLabel(exportRange.end)})`
+        : `REKAPITULASI KEUANGAN MINGGUAN (${formatDateLabel(exportRange.start)} - ${formatDateLabel(exportRange.end)})`;
+      p1TableHead = [["Uraian Rekapitulasi", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
       p1TableBody = [];
-      if (!isFirstMonthJune) {
-        p1TableBody.push([
-          "SALDO OPENING MINGGUAN (KAS BANK PT)",
-          `Sisa saldo kas penutupan rekening bank PT sebelum tanggal ${formatDateLabel(exportRange.start)}`,
-          formatCurrency(periodOpeningBalance),
-        ]);
+
+      if (!isAllCategoriesActive) {
+        // Mode filter kategori: HANYA tampilkan rekapan kategori yang dipilih
+        p1TableBody.push(
+          ["PENGELUARAN DARI REKENING BANK PT", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} periode ini via bank PT`, formatCurrency(periodPtBankExpense)],
+          ["PENGELUARAN DARI DANA PRIBADI (TALANGAN)", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} yang ditalangi uang pribadi`, formatCurrency(periodPersonalExpense)],
+          ...personalRowsWeekly,
+          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} periode ini (Bank PT + Dana Pribadi)`, formatCurrency(periodExpense)]
+        );
+      } else {
+        if (!isFirstMonthJune) {
+          p1TableBody.push([
+            "SALDO OPENING MINGGUAN (KAS BANK PT)",
+            `Sisa saldo kas penutupan rekening bank PT sebelum tanggal ${formatDateLabel(exportRange.start)}`,
+            formatCurrency(periodOpeningBalance),
+          ]);
+        }
+        p1TableBody.push(
+          ["TOTAL PEMASUKAN RIIL MINGGUAN", "Pemasukan riil yang masuk selama periode 7 hari ini", formatCurrency(periodIncome)],
+          ["TOTAL PENGELUARAN BANK PT (DIRECT)", "Total uang keluar / transfer dari rekening bank PT (sesuai history bank PT)", formatCurrency(periodPtBankExpense)],
+          ["PENGELUARAN DANA PRIBADI (NON-UANG PT)", "Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)", formatCurrency(periodPersonalExpense)],
+          ...personalRowsWeekly,
+          ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil periode ini (Bank PT Direct + Dana Pribadi)", formatCurrency(periodExpense)],
+          [profitLossLabel, profitLossDesc, formatCurrency(periodNet)],
+          [
+            "SALDO CLOSING MINGGUAN (KAS BANK PT)",
+            !isFirstMonthJune
+              ? "Sisa saldo kas penutupan rekening bank PT (Saldo Opening + Pemasukan dikurangi Pengeluaran Bank PT)"
+              : "Sisa saldo kas penutupan rekening bank PT (Pemasukan dikurangi Pengeluaran Bank PT)",
+            formatCurrency(periodBankClosing),
+          ]
+        );
       }
-      p1TableBody.push(
-        ["TOTAL PEMASUKAN RIIL MINGGUAN", "Pemasukan riil yang masuk selama periode 7 hari ini", formatCurrency(periodIncome)],
-        ["TOTAL PENGELUARAN BANK PT (DIRECT)", "Total uang keluar / transfer dari rekening bank PT (sesuai history bank PT)", formatCurrency(periodPtBankExpense)],
-        ["PENGELUARAN DANA PRIBADI (NON-UANG PT)", "Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)", formatCurrency(periodPersonalExpense)],
-        ...personalRowsWeekly,
-        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil periode ini (Bank PT Direct + Dana Pribadi)", formatCurrency(periodExpense)],
-        [profitLossLabel, profitLossDesc, formatCurrency(periodNet)],
-        [
-          "SALDO CLOSING MINGGUAN (KAS BANK PT)",
-          !isFirstMonthJune
-            ? "Sisa saldo kas penutupan rekening bank PT (Saldo Opening + Pemasukan dikurangi Pengeluaran Bank PT)"
-            : "Sisa saldo kas penutupan rekening bank PT (Pemasukan dikurangi Pengeluaran Bank PT)",
-          formatCurrency(periodBankClosing),
-        ]
-      );
     } else if (isMonthly) {
       // isMonthly (baik dari tombol Bulanan maupun rentang tanggal kustom 1 bulan)
       const isProfitable = periodNet >= 0;
@@ -17879,36 +17919,49 @@ const AdminFinanceScreen = ({
       const prevMonthIndex = (targetMonth + 11) % 12;
       const prevMonthName = MONTHS_ID[prevMonthIndex];
 
-      titleP1 = `PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO BULAN ${monthNameUpper} ${targetYear}`;
+      const catHeaderSuffix = !isAllCategoriesActive ? ` [KATEGORI: ${exportSelectedCategories.join(", ")}]` : "";
+      titleP1 = `PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO BULAN ${monthNameUpper} ${targetYear}${catHeaderSuffix}`;
       subtitleP1 = `Laporan Rekapitulasi Kas & Mutasi Periode Bulan ${monthNameUpper} ${targetYear} (${formatDateLabel(exportRange.start)} s/d ${formatDateLabel(exportRange.end)})`;
-      sectionTitleP1 = `REKAPITULASI KEUANGAN BULAN ${monthNameUpper} ${targetYear}`;
-      p1TableHead = [["Uraian Rekapitulasi Kas Bulanan", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
+      sectionTitleP1 = !isAllCategoriesActive
+        ? `REKAPITULASI PENGELUARAN KHUSUS KATEGORI BULAN ${monthNameUpper} ${targetYear}`
+        : `REKAPITULASI KEUANGAN BULAN ${monthNameUpper} ${targetYear}`;
+      p1TableHead = [["Uraian Rekapitulasi", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
       p1TableBody = [];
 
-      // Saldo Opening hanya ada mulai bulan Juli 2026 dan seterusnya (bulan Juni adalah bulan awal pertama aplikasi)
-      if (!isFirstMonthJune) {
-        p1TableBody.push([
-          `SALDO OPENING BULAN ${monthNameUpper}`,
-          `Saldo kas penutupan rekening bank PT bulan sebelumnya (Saldo Closing bulan ${prevMonthName})`,
-          formatCurrency(periodOpeningBalance),
-        ]);
-      }
+      if (!isAllCategoriesActive) {
+        // Mode filter kategori: HANYA tampilkan rekapan kategori yang dipilih
+        p1TableBody.push(
+          ["PENGELUARAN DARI REKENING BANK PT", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} bulan ${MONTHS_ID[targetMonth]} via bank PT`, formatCurrency(periodPtBankExpense)],
+          ["PENGELUARAN DARI DANA PRIBADI (TALANGAN)", `Pengeluaran talangan kategori ${exportSelectedCategories.join(", ")} bulan ${MONTHS_ID[targetMonth]} yang memakai uang pribadi`, formatCurrency(periodPersonalExpense)],
+          ...personalRowsMonthly,
+          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} bulan ${MONTHS_ID[targetMonth]} (Bank PT + Dana Pribadi)`, formatCurrency(periodExpense)]
+        );
+      } else {
+        // Saldo Opening hanya ada mulai bulan Juli 2026 dan seterusnya (bulan Juni adalah bulan awal pertama aplikasi)
+        if (!isFirstMonthJune) {
+          p1TableBody.push([
+            `SALDO OPENING BULAN ${monthNameUpper}`,
+            `Saldo kas penutupan rekening bank PT bulan sebelumnya (Saldo Closing bulan ${prevMonthName})`,
+            formatCurrency(periodOpeningBalance),
+          ]);
+        }
 
-      p1TableBody.push(
-        [`TOTAL PEMASUKAN RIIL (BULAN ${monthNameUpper})`, `Pemasukan riil yang masuk selama bulan ${MONTHS_ID[targetMonth]}`, formatCurrency(periodIncome)],
-        ["TOTAL PENGELUARAN BANK PT (DIRECT)", `Total uang keluar / transfer dari rekening bank PT bulan ${MONTHS_ID[targetMonth]} (sesuai history bank PT)`, formatCurrency(periodPtBankExpense)],
-        ["PENGELUARAN DANA PRIBADI (NON-UANG PT)", `Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)`, formatCurrency(periodPersonalExpense)],
-        ...personalRowsMonthly,
-        ["TOTAL BELANJA RIIL (ACTUAL COST)", `Total pengeluaran riil bulan ${MONTHS_ID[targetMonth]} (Bank PT Direct + Dana Pribadi)`, formatCurrency(periodExpense)],
-        [profitLossLabel, profitLossDesc, formatCurrency(periodNet)],
-        [
-          `SALDO CLOSING BULAN ${monthNameUpper}`,
-          !isFirstMonthJune
-            ? `Sisa kas penutupan rekening bank PT (Saldo Opening + Pemasukan dikurangi Pengeluaran Bank PT)`
-            : `Sisa kas penutupan rekening bank PT (Pemasukan dikurangi Pengeluaran Bank PT)`,
-          formatCurrency(periodBankClosing),
-        ]
-      );
+        p1TableBody.push(
+          [`TOTAL PEMASUKAN RIIL (BULAN ${monthNameUpper})`, `Pemasukan riil yang masuk selama bulan ${MONTHS_ID[targetMonth]}`, formatCurrency(periodIncome)],
+          ["TOTAL PENGELUARAN BANK PT (DIRECT)", `Total uang keluar / transfer dari rekening bank PT bulan ${MONTHS_ID[targetMonth]} (sesuai history bank PT)`, formatCurrency(periodPtBankExpense)],
+          ["PENGELUARAN DANA PRIBADI (NON-UANG PT)", `Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)`, formatCurrency(periodPersonalExpense)],
+          ...personalRowsMonthly,
+          ["TOTAL BELANJA RIIL (ACTUAL COST)", `Total pengeluaran riil bulan ${MONTHS_ID[targetMonth]} (Bank PT Direct + Dana Pribadi)`, formatCurrency(periodExpense)],
+          [profitLossLabel, profitLossDesc, formatCurrency(periodNet)],
+          [
+            `SALDO CLOSING BULAN ${monthNameUpper}`,
+            !isFirstMonthJune
+              ? `Sisa kas penutupan rekening bank PT (Saldo Opening + Pemasukan dikurangi Pengeluaran Bank PT)`
+              : `Sisa kas penutupan rekening bank PT (Pemasukan dikurangi Pengeluaran Bank PT)`,
+            formatCurrency(periodBankClosing),
+          ]
+        );
+      }
     } else {
       // isCustomPeriod
       const isProfitable = periodNet >= 0;
@@ -17921,35 +17974,48 @@ const AdminFinanceScreen = ({
 
       const personalRowsCustom = buildPersonalContributorRows(periodRecords);
 
-      titleP1 = "PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO PERIODE";
+      const catHeaderSuffix = !isAllCategoriesActive ? ` [KATEGORI: ${exportSelectedCategories.join(", ")}]` : "";
+      titleP1 = `PT GARDA INOVASI GLOBALTECH - LAPORAN SALDO PERIODE${catHeaderSuffix}`;
       subtitleP1 = `Laporan Rekapitulasi Kas Periode ${formatDateLabel(exportRange.start)} s/d ${formatDateLabel(exportRange.end)}`;
-      sectionTitleP1 = `REKAPITULASI KEUANGAN PERIODE (${formatDateLabel(exportRange.start)} - ${formatDateLabel(exportRange.end)})`;
-      p1TableHead = [["Uraian Rekapitulasi Kas Periode", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
+      sectionTitleP1 = !isAllCategoriesActive
+        ? `REKAPITULASI PENGELUARAN KHUSUS KATEGORI PERIODE (${formatDateLabel(exportRange.start)} - ${formatDateLabel(exportRange.end)})`
+        : `REKAPITULASI KEUANGAN PERIODE (${formatDateLabel(exportRange.start)} - ${formatDateLabel(exportRange.end)})`;
+      p1TableHead = [["Uraian Rekapitulasi", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
       p1TableBody = [];
 
-      if (!isFirstMonthJune) {
-        p1TableBody.push([
-          "SALDO OPENING PERIODE (KAS BANK PT)",
-          `Sisa saldo kas penutupan rekening bank PT sebelum tanggal ${formatDateLabel(exportRange.start)}`,
-          formatCurrency(periodOpeningBalance),
-        ]);
-      }
+      if (!isAllCategoriesActive) {
+        // Mode filter kategori: HANYA tampilkan rekapan kategori yang dipilih
+        p1TableBody.push(
+          ["PENGELUARAN DARI REKENING BANK PT", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} periode ini via bank PT`, formatCurrency(periodPtBankExpense)],
+          ["PENGELUARAN DARI DANA PRIBADI (TALANGAN)", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} yang ditalangi uang pribadi`, formatCurrency(periodPersonalExpense)],
+          ...personalRowsCustom,
+          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} periode terpilih (Bank PT + Dana Pribadi)`, formatCurrency(periodExpense)]
+        );
+      } else {
+        if (!isFirstMonthJune) {
+          p1TableBody.push([
+            "SALDO OPENING PERIODE (KAS BANK PT)",
+            `Sisa saldo kas penutupan rekening bank PT sebelum tanggal ${formatDateLabel(exportRange.start)}`,
+            formatCurrency(periodOpeningBalance),
+          ]);
+        }
 
-      p1TableBody.push(
-        ["TOTAL PEMASUKAN RIIL PERIODE", "Pemasukan riil selama rentang tanggal terpilih", formatCurrency(periodIncome)],
-        ["TOTAL PENGELUARAN BANK PT (DIRECT)", "Total uang keluar / transfer dari rekening bank PT periode ini (sesuai history bank PT)", formatCurrency(periodPtBankExpense)],
-        ["PENGELUARAN DANA PRIBADI (NON-UANG PT)", "Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)", formatCurrency(periodPersonalExpense)],
-        ...personalRowsCustom,
-        ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil periode terpilih (Bank PT Direct + Dana Pribadi)", formatCurrency(periodExpense)],
-        [profitLossLabel, profitLossDesc, formatCurrency(periodNet)],
-        [
-          "SALDO CLOSING PERIODE (KAS BANK PT)",
-          !isFirstMonthJune
-            ? "Sisa kas penutupan rekening bank PT (Saldo Opening + Pemasukan dikurangi Pengeluaran Bank PT)"
-            : "Sisa kas penutupan rekening bank PT (Pemasukan dikurangi Pengeluaran Bank PT)",
-          formatCurrency(periodBankClosing),
-        ]
-      );
+        p1TableBody.push(
+          ["TOTAL PEMASUKAN RIIL PERIODE", "Pemasukan riil selama rentang tanggal terpilih", formatCurrency(periodIncome)],
+          ["TOTAL PENGELUARAN BANK PT (DIRECT)", "Total uang keluar / transfer dari rekening bank PT periode ini (sesuai history bank PT)", formatCurrency(periodPtBankExpense)],
+          ["PENGELUARAN DANA PRIBADI (NON-UANG PT)", "Pengeluaran talangan yang memakai uang pribadi (bukan uang PT)", formatCurrency(periodPersonalExpense)],
+          ...personalRowsCustom,
+          ["TOTAL BELANJA RIIL (ACTUAL COST)", "Total pengeluaran riil periode terpilih (Bank PT Direct + Dana Pribadi)", formatCurrency(periodExpense)],
+          [profitLossLabel, profitLossDesc, formatCurrency(periodNet)],
+          [
+            "SALDO CLOSING PERIODE (KAS BANK PT)",
+            !isFirstMonthJune
+              ? "Sisa kas penutupan rekening bank PT (Saldo Opening + Pemasukan dikurangi Pengeluaran Bank PT)"
+              : "Sisa kas penutupan rekening bank PT (Pemasukan dikurangi Pengeluaran Bank PT)",
+            formatCurrency(periodBankClosing),
+          ]
+        );
+      }
     }
 
     // ================= RINCIAN PENGELUARAN BERDASARKAN KATEGORI TRANSAKSI =================
@@ -18065,115 +18131,149 @@ const AdminFinanceScreen = ({
     const opTotal = opProjekTotal + opKantorTotal;
     const belanjaTotal = belanjaProjekTotal + belanjaKantorTotal;
 
-    // Header pembatas rincian kategori pengeluaran
-    p1TableBody.push([
-      "--- RINCIAN PENGELUARAN BERDASARKAN KATEGORI ---",
-      "Klasifikasi alokasi pos beban & belanja riil yang terekam pada mutasi data keuangan",
-      "TOTAL (RP)",
-    ]);
-
-    // 1. Baris Pengeluaran Operasional (Total + Sub-row Proyek & Kantor)
-    p1TableBody.push([
-      "PENGELUARAN OPERASIONAL (TOTAL)",
-      `Akumulasi biaya operasional (Proyek: ${formatCurrency(opProjekTotal)} | Kantor: ${formatCurrency(opKantorTotal)})`,
-      formatCurrency(opTotal),
-    ]);
-    p1TableBody.push(
-      [
-        "   • Operasional Proyek",
-        "Realisasi beban operasional lapangan & pelaksanaan proyek",
-        formatCurrency(opProjekTotal),
-      ],
-      [
-        "   • Operasional Kantor",
-        "Realisasi beban operasional rutin kantor & keperluan umum",
-        formatCurrency(opKantorTotal),
-      ]
-    );
-
-    // 2. Baris Pengeluaran Belanja (Total + Sub-row Proyek & Kantor)
-    p1TableBody.push([
-      "PENGELUARAN BELANJA (TOTAL)",
-      `Akumulasi belanja pengadaan (Proyek: ${formatCurrency(belanjaProjekTotal)} | Kantor: ${formatCurrency(belanjaKantorTotal)})`,
-      formatCurrency(belanjaTotal),
-    ]);
-    p1TableBody.push(
-      [
-        "   • Belanja Proyek / Material",
-        "Pengadaan material, suku cadang, dan perlengkapan proyek",
-        formatCurrency(belanjaProjekTotal),
-      ],
-      [
-        "   • Belanja Kantor / Umum",
-        "Pengadaan perlengkapan kantor, ATK, dan logistik operasional",
-        formatCurrency(belanjaKantorTotal),
-      ]
-    );
-
-    // 3. Baris Gaji atau Upah
-    p1TableBody.push([
-      "GAJI ATAU UPAH TENAGA KERJA",
-      "Pembayaran gaji staf, upah harian/borongan, lembur, dan teknisi",
-      formatCurrency(gajiTotal),
-    ]);
-
-    // 4. Baris Kasbon
-    p1TableBody.push([
-      "KASBON / PINJAMAN KARYAWAN",
-      "Pemberian kasbon operasional dan pinjaman karyawan periode ini",
-      formatCurrency(kasbonTotal),
-    ]);
-
-    // 5. Baris Fee
-    p1TableBody.push([
-      "FEE & BIAYA JASA PROFESIONAL",
-      "Pembayaran komisi, fee profesional, dan biaya jasa pihak ketiga",
-      formatCurrency(feeTotal),
-    ]);
-
-    // 6. Baris Kategori Lainnya yang Terekam (Urut dari Nominal Terbesar)
-    const sortedOtherCategories = Array.from(otherCategoryTotals.values()).sort(
-      (a, b) => b.amount - a.amount
-    );
-
-    sortedOtherCategories.forEach((item) => {
-      if (item.amount > 0) {
-        const itemLabelUpper = item.label.toUpperCase();
-        p1TableBody.push([
-          itemLabelUpper.startsWith("BIAYA") || itemLabelUpper.startsWith("PENGELUARAN")
-            ? itemLabelUpper
-            : `BIAYA ${itemLabelUpper}`,
-          `Realisasi pos pengeluaran kategori ${item.label} yang terekam di sistem (${item.count} transaksi)`,
-          formatCurrency(item.amount),
-        ]);
-      }
-    });
-
-    // 7. Total Akumulasi Kategori Pengeluaran
-    let totalRecordedBreakdown =
-      opTotal +
-      belanjaTotal +
-      gajiTotal +
-      kasbonTotal +
-      feeTotal +
-      sortedOtherCategories.reduce((sum, item) => sum + item.amount, 0);
-
-    const targetExpectedExpense = isAllTime ? allTimeTotalExpense : periodExpense;
-    const diffBaseline = targetExpectedExpense - totalRecordedBreakdown;
-    if (diffBaseline > 0) {
+    // Rincian kategori pengeluaran hanya ditampilkan jika memilih SEMUA kategori,
+    // atau jika lebih dari 1 kategori yang dipilih. Jika hanya memilih 1 atau 2 kategori spesifik,
+    // tabel rekap di atas sudah secara presisi menampilkan pengeluaran kategori tersebut (Bank PT Direct vs Dana Pribadi).
+    if (isAllCategoriesActive) {
+      // Header pembatas rincian kategori pengeluaran
       p1TableBody.push([
-        "PENYESUAIAN BASELINE & MUTASI AWAL",
-        "Alokasi mutasi saldo keluar / baseline awal yang terekam",
-        formatCurrency(diffBaseline),
+        "--- RINCIAN PENGELUARAN BERDASARKAN KATEGORI ---",
+        "Klasifikasi alokasi pos beban & belanja riil yang terekam pada mutasi data keuangan",
+        "TOTAL (RP)",
       ]);
-      totalRecordedBreakdown += diffBaseline;
-    }
 
-    p1TableBody.push([
-      "TOTAL AKUMULASI PENGELUARAN KATEGORI",
-      "Total seluruh rincian pos pengeluaran di atas (sinkron dengan Total Belanja Riil)",
-      formatCurrency(totalRecordedBreakdown),
-    ]);
+      // 1. Baris Pengeluaran Operasional (Total + Sub-row Proyek & Kantor)
+      p1TableBody.push([
+        "PENGELUARAN OPERASIONAL (TOTAL)",
+        `Akumulasi biaya operasional (Proyek: ${formatCurrency(opProjekTotal)} | Kantor: ${formatCurrency(opKantorTotal)})`,
+        formatCurrency(opTotal),
+      ]);
+      p1TableBody.push(
+        [
+          "   • Operasional Proyek",
+          "Realisasi beban operasional lapangan & pelaksanaan proyek",
+          formatCurrency(opProjekTotal),
+        ],
+        [
+          "   • Operasional Kantor",
+          "Realisasi beban operasional rutin kantor & keperluan umum",
+          formatCurrency(opKantorTotal),
+        ]
+      );
+
+      // 2. Baris Pengeluaran Belanja (Total + Sub-row Proyek & Kantor)
+      p1TableBody.push([
+        "PENGELUARAN BELANJA (TOTAL)",
+        `Akumulasi belanja pengadaan (Proyek: ${formatCurrency(belanjaProjekTotal)} | Kantor: ${formatCurrency(belanjaKantorTotal)})`,
+        formatCurrency(belanjaTotal),
+      ]);
+      p1TableBody.push(
+        [
+          "   • Belanja Proyek / Material",
+          "Pengadaan material, suku cadang, dan perlengkapan proyek",
+          formatCurrency(belanjaProjekTotal),
+        ],
+        [
+          "   • Belanja Kantor / Umum",
+          "Pengadaan perlengkapan kantor, ATK, dan logistik operasional",
+          formatCurrency(belanjaKantorTotal),
+        ]
+      );
+
+      // 3. Baris Gaji atau Upah
+      p1TableBody.push([
+        "GAJI ATAU UPAH TENAGA KERJA",
+        "Pembayaran gaji staf, upah harian/borongan, lembur, dan teknisi",
+        formatCurrency(gajiTotal),
+      ]);
+
+      // 4. Baris Kasbon
+      p1TableBody.push([
+        "KASBON / PINJAMAN KARYAWAN",
+        "Pemberian kasbon operasional dan pinjaman karyawan periode ini",
+        formatCurrency(kasbonTotal),
+      ]);
+
+      // 5. Baris Fee
+      p1TableBody.push([
+        "FEE & BIAYA JASA PROFESIONAL",
+        "Pembayaran komisi, fee profesional, dan biaya jasa pihak ketiga",
+        formatCurrency(feeTotal),
+      ]);
+
+      // 6. Baris Kategori Lainnya yang Terekam (Urut dari Nominal Terbesar)
+      const sortedOtherCategories = Array.from(otherCategoryTotals.values()).sort(
+        (a, b) => b.amount - a.amount
+      );
+
+      sortedOtherCategories.forEach((item) => {
+        if (item.amount > 0) {
+          const itemLabelUpper = item.label.toUpperCase();
+          p1TableBody.push([
+            itemLabelUpper.startsWith("BIAYA") || itemLabelUpper.startsWith("PENGELUARAN")
+              ? itemLabelUpper
+              : `BIAYA ${itemLabelUpper}`,
+            `Realisasi pos pengeluaran kategori ${item.label} yang terekam di sistem (${item.count} transaksi)`,
+            formatCurrency(item.amount),
+          ]);
+        }
+      });
+
+      // 7. Total Akumulasi Kategori Pengeluaran
+      let totalRecordedBreakdown =
+        opTotal +
+        belanjaTotal +
+        gajiTotal +
+        kasbonTotal +
+        feeTotal +
+        sortedOtherCategories.reduce((sum, item) => sum + item.amount, 0);
+
+      const targetExpectedExpense = isAllTime ? allTimeTotalExpense : periodExpense;
+      const diffBaseline = targetExpectedExpense - totalRecordedBreakdown;
+      if (diffBaseline > 0) {
+        p1TableBody.push([
+          "PENYESUAIAN BASELINE & MUTASI AWAL",
+          "Alokasi mutasi saldo keluar / baseline awal yang terekam",
+          formatCurrency(diffBaseline),
+        ]);
+        totalRecordedBreakdown += diffBaseline;
+      }
+
+      p1TableBody.push([
+        "TOTAL AKUMULASI PENGELUARAN KATEGORI",
+        "Total seluruh rincian pos pengeluaran di atas (sinkron dengan Total Belanja Riil)",
+        formatCurrency(totalRecordedBreakdown),
+      ]);
+    } else if (exportSelectedCategories.length > 1) {
+      // Jika memilih beberapa kategori (misal 2 atau 3), rincikan pengeluaran per kategori yang dipilih
+      p1TableBody.push([
+        "--- RINCIAN PER KATEGORI TERPILIH ---",
+        "Rincian nilai pengeluaran untuk masing-masing kategori yang dipilih",
+        "TOTAL (RP)",
+      ]);
+      exportSelectedCategories.forEach((catName) => {
+        const catUpper = catName.toUpperCase();
+        let catSum = 0;
+        if (catUpper === "OPERASIONAL" || catUpper.includes("OPERASIONAL")) {
+          catSum = opTotal;
+        } else if (catUpper === "BELANJA" || catUpper.includes("BELANJA")) {
+          catSum = belanjaTotal;
+        } else if (catUpper === "GAJI" || catUpper.includes("GAJI") || catUpper.includes("UPAH")) {
+          catSum = gajiTotal;
+        } else if (catUpper === "KASBON" || catUpper.includes("KASBON")) {
+          catSum = kasbonTotal;
+        } else if (catUpper === "FEE" || catUpper.includes("FEE")) {
+          catSum = feeTotal;
+        } else {
+          catSum = otherCategoryTotals.get(catUpper)?.amount || 0;
+        }
+        p1TableBody.push([
+          `TOTAL PENGELUARAN ${catUpper}`,
+          `Akumulasi belanja & beban untuk kategori ${catUpper}`,
+          formatCurrency(catSum),
+        ]);
+      });
+    }
 
     drawPageHeader(titleP1, subtitleP1);
 
@@ -18263,8 +18363,9 @@ const AdminFinanceScreen = ({
 
     currentY = (doc as any).lastAutoTable.finalY + 10;
 
-    // ================= PAGE 2 & PAGE 3 (Only for Keseluruhan / All-Time Report) =================
-    if (isAllTime) {
+    // ================= PAGE 2 & PAGE 3 (Only for Keseluruhan / All-Time Report and when ALL categories are selected) =================
+    // Jika pengguna hanya mencentang 1 atau 2 kategori spesifik, jangan tampilkan ikhtisar konsolidasi perusahaan (Page 2 & 3)
+    if (isAllTime && isAllCategoriesActive) {
       doc.addPage();
       drawPageHeader(
         "PT GIGT - IKHTISAR & MARGIN KEUNTUNGAN BULANAN",
@@ -18566,8 +18667,9 @@ const AdminFinanceScreen = ({
       : ` [KATEGORI: ${exportSelectedCategories.length <= 3 ? exportSelectedCategories.join(", ") : `${exportSelectedCategories.slice(0, 3).join(", ")} (+${exportSelectedCategories.length - 3})`}]`;
 
     const titleMutasi = "PT GARDA INOVASI GLOBALTECH";
+    const mutasiChapterNum = isAllTime && isAllCategoriesActive ? "IV" : "II";
     const subtitleMutasi = isAllTime
-      ? `IV. DETAIL JURNAL MUTASI ${flowTypeTitle} KESELURUHAN${catLabel}`
+      ? `${mutasiChapterNum}. DETAIL JURNAL MUTASI ${flowTypeTitle} KESELURUHAN${catLabel}`
       : isWeekly
       ? `II. DETAIL JURNAL MUTASI ${flowTypeTitle} MINGGUAN${catLabel}`
       : isMonthly
