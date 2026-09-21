@@ -15599,13 +15599,14 @@ const AdminFinanceScreen = ({
           holder = "Faisal Mustopa (Admin)";
         }
 
-        // Total spending from this specific bank topup
+        // Total spending from this specific bank topup (termasuk biaya admin transfer jika ada)
         const linkedSpent = financialRecords
           .filter((sp) => (isUsingJuneBaseline ? !sp.date.startsWith("2026-06") : true) && sp.flowType === "OUT_PERSONAL_SPEND")
           .reduce((sum, sp) => {
             const allocations = parseBankAllocations(sp.refIdBank || "", sp.amount);
             const matching = allocations.find((alloc) => alloc.bankId === record.customId);
-            return sum + (matching ? matching.amount : 0);
+            const adminShare = allocations.length > 0 && matching ? (Number(sp.adminFee || 0) / allocations.length) : (matching ? Number(sp.adminFee || 0) : 0);
+            return sum + (matching ? matching.amount + adminShare : 0);
           }, 0);
 
         list.push({
@@ -15744,12 +15745,14 @@ const AdminFinanceScreen = ({
     const { bankId } = selectedPattyCashDetail;
 
     return selectedPattyCashRecords.reduce((sum, rec) => {
+      const adminVal = Number(rec.adminFee || 0);
       if (bankId && bankId !== "ALL" && bankId !== "SISA JUNI") {
         const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
         const match = allocs.find((a) => a.bankId === bankId);
-        return sum + (match ? match.amount : rec.amount);
+        const adminShare = allocs.length > 0 && match ? (adminVal / allocs.length) : (match ? adminVal : 0);
+        return sum + (match ? match.amount + adminShare : rec.amount + adminVal);
       }
-      return sum + rec.amount;
+      return sum + rec.amount + adminVal;
     }, 0);
   }, [selectedPattyCashRecords, selectedPattyCashDetail]);
 
@@ -15771,7 +15774,8 @@ const AdminFinanceScreen = ({
           .reduce((sum, r) => {
             const allocs = parseBankAllocations(r.refIdBank || "", r.amount);
             const match = allocs.find((a) => a.bankId === customId);
-            return sum + (match ? match.amount : 0);
+            const adminShare = allocs.length > 0 && match ? (Number(r.adminFee || 0) / allocs.length) : (match ? Number(r.adminFee || 0) : 0);
+            return sum + (match ? match.amount + adminShare : 0);
           }, 0);
 
         setSelectedPattyCashDetail({
@@ -15825,14 +15829,11 @@ const AdminFinanceScreen = ({
     );
 
     // Info Box
-    let startY = 32;
-    doc.setDrawColor(226, 232, 240);
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(14, startY, 182, 32, 3, 3, "FD");
-
-    doc.setFontSize(8.5);
-    doc.setFont("helvetica", "bold");
-    doc.setTextColor(15, 23, 42);
+    const startY = 32;
+    const pageWidth = 210;
+    const margin = 14;
+    const rightColX = pageWidth - margin - 75; // Posisi tetap kolom kanan
+    const leftColWidth = rightColX - margin - 10; // Batas lebar kolom kiri
 
     const bankIdStr =
       selectedPattyCashDetail.bankId === "ALL"
@@ -15843,39 +15844,59 @@ const AdminFinanceScreen = ({
       ? formatCurrency(selectedPattyCashDetail.topupInfo.initialAmount)
       : "-";
     const spentAmtStr = formatCurrency(selectedPattyCashTotalSpent);
+    const balanceVal = selectedPattyCashDetail.topupInfo
+      ? (selectedPattyCashDetail.topupInfo.initialAmount - selectedPattyCashTotalSpent)
+      : 0;
     const remainingStr = selectedPattyCashDetail.topupInfo
-      ? formatCurrency(selectedPattyCashDetail.topupInfo.balance)
+      ? formatCurrency(balanceVal)
       : "-";
 
-    doc.text(`ID Reference Top-Up  : ${bankIdStr}`, 18, startY + 8);
-    doc.text(`Penanggung Jawab (PIC): ${holderStr}`, 18, startY + 15);
-    if (selectedPattyCashDetail.topupInfo?.description) {
-      doc.setFont("helvetica", "normal");
-      const descShort =
-        selectedPattyCashDetail.topupInfo.description.length > 55
-          ? selectedPattyCashDetail.topupInfo.description.substring(0, 55) + "..."
-          : selectedPattyCashDetail.topupInfo.description;
-      doc.text(`Keterangan Top-Up    : ${descShort}`, 18, startY + 22);
-    }
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    const keteranganRaw = `Keterangan Top-Up    : ${selectedPattyCashDetail.topupInfo?.description || "-"}`;
+    const wrappedKeterangan = doc.splitTextToSize(keteranganRaw, leftColWidth);
+    const boxHeight = Math.max(34, 22 + (wrappedKeterangan.length * 4.5));
 
+    doc.setDrawColor(226, 232, 240);
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(margin, startY, pageWidth - (margin * 2), boxHeight, 3, 3, "FD");
+
+    doc.setFontSize(8.5);
+    doc.setTextColor(15, 23, 42);
+
+    // Left Column (Kolom Kiri)
     doc.setFont("helvetica", "bold");
-    doc.text(`Total Top-Up   : ${topupAmtStr}`, 120, startY + 8);
-    doc.setTextColor(225, 29, 72); // Rose
-    doc.text(`Total Terpakai: -${spentAmtStr}`, 120, startY + 15);
-    doc.setTextColor(16, 185, 129); // Emerald
-    doc.text(`Sisa Saldo     : ${remainingStr}`, 120, startY + 22);
+    doc.text(`ID Reference Top-Up  : ${bankIdStr}`, margin + 5, startY + 8);
+    doc.text(`Penanggung Jawab (PIC): ${holderStr}`, margin + 5, startY + 15);
+    doc.text(wrappedKeterangan, margin + 5, startY + 22);
 
-    startY += 38;
+    // Right Column (Kolom Kanan)
+    doc.setFont("helvetica", "bold");
+    doc.text(`Total Top-Up   : ${topupAmtStr}`, rightColX, startY + 8);
+    doc.setTextColor(225, 29, 72); // Rose
+    doc.text(`Total Terpakai: -${spentAmtStr}`, rightColX, startY + 15);
+    doc.setTextColor(16, 185, 129); // Emerald
+    doc.text(`Sisa Saldo     : ${remainingStr}`, rightColX, startY + 22);
+
+    const tableStartY = startY + boxHeight + 6;
 
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9.5);
     doc.setTextColor(15, 23, 42);
-    doc.text("RINCIAN DOKUMEN REALISASI BELANJA (LOG PENGELUARAN)", 14, startY);
+    doc.text("RINCIAN DOKUMEN REALISASI BELANJA (LOG PENGELUARAN)", 14, tableStartY);
 
     const tableBody = selectedPattyCashRecords.map((rec, idx) => {
       const projName = rec.referenceId
         ? projects.find((p) => p.id === rec.referenceId)?.name || "-"
         : "-";
+      const adminFeeNum = Number(rec.adminFee || 0);
+      const descText = adminFeeNum > 0
+        ? `${rec.description}\n(Biaya Admin: Rp ${adminFeeNum.toLocaleString("id-ID")})`
+        : rec.description;
+      const totalSpendRow = adminFeeNum > 0
+        ? `-Rp ${(Number(rec.amount || 0) + adminFeeNum).toLocaleString("id-ID")}\n(Pokok: Rp ${Number(rec.amount || 0).toLocaleString("id-ID")})`
+        : `-${formatCurrency(rec.amount)}`;
+
       return [
         idx + 1,
         rec.date,
@@ -15883,13 +15904,13 @@ const AdminFinanceScreen = ({
         projName,
         rec.personalHolder || "-",
         rec.category,
-        rec.description,
-        `-${formatCurrency(rec.amount)}`,
+        descText,
+        totalSpendRow,
       ];
     });
 
     autoTable(doc, {
-      startY: startY + 4,
+      startY: tableStartY + 4,
       margin: { left: 14, right: 14 },
       head: [
         ["No", "Tanggal", "ID Trans", "Proyek", "PIC", "Kategori", "Deskripsi Pengeluaran", "Jumlah (Rp)"],
@@ -15936,7 +15957,7 @@ const AdminFinanceScreen = ({
       },
     });
 
-    const finalY = (doc as any).lastAutoTable?.finalY || startY + 50;
+    const finalY = (doc as any).lastAutoTable?.finalY || tableStartY + 50;
 
     // Signatures Section
     if (finalY + 40 < 280) {
@@ -20888,16 +20909,22 @@ const AdminFinanceScreen = ({
                     <div>
                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Terpakai (Realisasi)</p>
                       <p className="text-xs md:text-sm font-mono font-black text-rose-600">
-                        -{formatCurrency(selectedPattyCashDetail.topupInfo.spentAmount)}
+                        -{formatCurrency(selectedPattyCashTotalSpent > 0 ? selectedPattyCashTotalSpent : selectedPattyCashDetail.topupInfo.spentAmount)}
                       </p>
                     </div>
                     <div>
                       <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">Sisa Talangan</p>
-                      <p className={`text-xs md:text-sm font-mono font-black ${
-                        selectedPattyCashDetail.topupInfo.balance > 0 ? "text-emerald-600" : "text-slate-400"
-                      }`}>
-                        {formatCurrency(selectedPattyCashDetail.topupInfo.balance)}
-                      </p>
+                      {(() => {
+                        const currentSpent = selectedPattyCashTotalSpent > 0 ? selectedPattyCashTotalSpent : selectedPattyCashDetail.topupInfo.spentAmount;
+                        const currentBalance = selectedPattyCashDetail.topupInfo.initialAmount - currentSpent;
+                        return (
+                          <p className={`text-xs md:text-sm font-mono font-black ${
+                            currentBalance > 0 ? "text-emerald-600" : "text-slate-400"
+                          }`}>
+                            {formatCurrency(currentBalance)}
+                          </p>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
@@ -20981,8 +21008,15 @@ const AdminFinanceScreen = ({
                             <td className="py-2.5 px-3 text-center">
                               <RefIdBankBadgeList refIdBankStr={rec.refIdBank || ""} totalAmount={rec.amount} />
                             </td>
-                            <td className="py-2.5 px-3 text-right font-mono font-black text-rose-600 whitespace-nowrap">
-                              -{formatCurrency(rec.amount)}
+                            <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap">
+                              <span className="font-black text-rose-600 block">
+                                -{formatCurrency(Number(rec.amount || 0) + Number(rec.adminFee || 0))}
+                              </span>
+                              {Number(rec.adminFee || 0) > 0 && (
+                                <span className="text-[10px] text-slate-400 font-semibold block">
+                                  (Pokok: {formatCurrency(rec.amount)} + Adm: {formatCurrency(rec.adminFee)})
+                                </span>
+                              )}
                             </td>
                           </tr>
                         ))}
