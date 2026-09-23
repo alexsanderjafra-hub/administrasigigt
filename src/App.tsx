@@ -6481,13 +6481,10 @@ export const checkIsPersonalFundRecord = (r: any): boolean => {
 export const getDisplaySumberUang = (r: any): string => {
   if (!r) return "-";
   const raw = (r.sumberDana || "").trim().toUpperCase();
-  const cat = (r.category || "").trim().toUpperCase();
   const desc = (r.description || "").trim().toUpperCase();
 
-  // If category is HUTANG, talangan pribadi, or checkIsPersonalFundRecord: strictly REKENING PRIBADI
+  // If explicitly personal funds:
   if (
-    cat === "HUTANG" ||
-    cat.includes("HUTANG") ||
     raw === "REKENING PRIBADI" ||
     raw === "DANA PRIBADI" ||
     raw === "PRIBADI" ||
@@ -6616,6 +6613,44 @@ export const findLinkedDebtForProject = (
     if (title.includes("sumpit") || desc.includes("sumpit")) return false;
     return title.includes(pName) || pName.includes(title);
   });
+};
+
+/**
+ * Resolves the canonical project ID for a financial record.
+ * Handles cases where projectId and referenceId might point to different projects
+ * (e.g., after an edit where referenceId was updated with the newly chosen project,
+ * preventing stale project IDs from leaking into other projects like HRI Karawang).
+ */
+export const getFinancialRecordProjectId = (
+  r: FinancialRecord | Partial<FinancialRecord> | null | undefined,
+  projectsList: Project[] = []
+): string => {
+  if (!r) return "";
+  const refId = (r.referenceId || "").trim();
+  const projId = (r.projectId || "").trim();
+
+  if (projectsList.length > 0) {
+    const refIsProject = projectsList.some((p) => p.id === refId);
+    const projIsProject = projectsList.some((p) => p.id === projId);
+
+    // If both reference valid projects:
+    // referenceId is the authoritative user selection from the edit form.
+    if (refIsProject && projIsProject) {
+      return refId;
+    }
+    if (refIsProject) return refId;
+    if (projIsProject) return projId;
+
+    const refByCustom = projectsList.find((p) => (p as any).customId === refId);
+    if (refByCustom) return refByCustom.id;
+    const projByCustom = projectsList.find((p) => (p as any).customId === projId);
+    if (projByCustom) return projByCustom.id;
+  }
+
+  if (refId && !refId.startsWith("DBT-") && !refId.startsWith("HTG-") && !refId.startsWith("PTG-")) {
+    return refId;
+  }
+  return projId || refId || "";
 };
 
 const resolvePiutangClient = (r: DebtRecord, projectsList: Project[] = []): string => {
@@ -7012,14 +7047,23 @@ const getEffectiveDebtRecords = (
 
     if (!alreadyExists) {
       // Determine Creditor (Pemilik Uang / Talangan Pribadi)
-      const rawCreditor = 
+      let rawCreditor = 
         (f as any).pemilikUangPribadi ||
         f.personalHolder ||
+        (f.refHutang ? (debtRecords.find(d => d.id === f.refHutang || d.customId === f.refHutang)?.contactName) : "") ||
+        (f.linkedDebtId ? (debtRecords.find(d => d.id === f.linkedDebtId || d.customId === f.linkedDebtId)?.contactName) : "") ||
         (descUpper.includes("FAISAL") ? "FAISAL MUSTOPA" :
          descUpper.includes("WELI") ? "WELI MAHESA" :
          descUpper.includes("YASIN") ? "MUHAMMAD YASIN" :
-         descUpper.includes("JIDAN") ? "JIDAN RAMADHAN" :
-         (f.recordedBy || "FAISAL MUSTOPA"));
+         descUpper.includes("JIDAN") ? "JIDAN RAMADHAN" : "");
+
+      if (!rawCreditor && (f.customId === "PRS-120826-006" || descUpper.includes("INVESTOR HANIF"))) {
+        rawCreditor = "JIDAN RAMADHAN";
+      }
+
+      if (!rawCreditor) {
+        rawCreditor = (f.recordedBy || "FAISAL MUSTOPA");
+      }
 
       const creditorName = normalizeContactName(rawCreditor);
       const newCustomId = (f.customId && f.customId.startsWith("PRS-")) ? `HTG-${f.customId}` : `HTG-PRS-${f.customId || f.id}`;
@@ -7223,7 +7267,10 @@ const getScheduleForRecord = (
       }
       return true;
     }
-  });
+  }).map((p) => ({
+    ...p,
+    amount: Math.min(p.amount || 0, contractVal),
+  }));
 
   const allPayments: DebtPayment[] = [...initialPayments];
 
@@ -7327,6 +7374,9 @@ const getScheduleForRecord = (
 
         if (matchingDebtAlloc) {
           matches = true;
+        } else if (f.debtAllocations && f.debtAllocations.length > 0) {
+          // If transaction has explicit debtAllocations for other debts, do NOT fallback to fuzzy matches
+          matches = false;
         } else if (f.linkedDebtId && (
           fLinkedDebt === recIdLower || 
           (recCustomId && fLinkedDebt === recCustomId) ||
@@ -7365,7 +7415,23 @@ const getScheduleForRecord = (
           (a.customId && (a.customId.toUpperCase() === recCustomId || a.customId.toUpperCase() === recCleanId)) ||
           (a.title && record.title && a.title.toUpperCase() === record.title.toUpperCase())
       );
-      const effectivePaymentAmount = matchingAlloc ? matchingAlloc.amount : f.amount;
+      let effectivePaymentAmount = matchingAlloc ? matchingAlloc.amount : f.amount;
+
+      // Check if refHutang contains an explicit allocation like "(Rp 3.200.000)"
+      if (!matchingAlloc && f.refHutang && (recCustomId || recCleanId)) {
+        const idToSearch = (recCustomId || recCleanId).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`${idToSearch}[^)]*?\\(Rp\\s*([\\d\\.,]+)\\)`, 'i');
+        const m = f.refHutang.match(regex);
+        if (m && m[1]) {
+          const parsed = Number(m[1].replace(/\./g, "").replace(/,/g, ""));
+          if (!isNaN(parsed) && parsed > 0) {
+            effectivePaymentAmount = parsed;
+          }
+        }
+      }
+
+      // CRITICAL: A payment for a single debt note can NEVER exceed the note's contract value:
+      effectivePaymentAmount = Math.min(effectivePaymentAmount, contractVal);
 
       // 1. Direct ID match
       let existingSlot = allPayments.find(
@@ -7390,11 +7456,11 @@ const getScheduleForRecord = (
         if (f.date) {
           existingSlot.date = f.date;
         }
-        existingSlot.amount = effectivePaymentAmount;
+        existingSlot.amount = Math.min(effectivePaymentAmount, contractVal);
       } else {
         allPayments.push({
           id: f.id || f.customId || Math.random().toString(36).substr(2, 9),
-          amount: effectivePaymentAmount,
+          amount: Math.min(effectivePaymentAmount, contractVal),
           date: f.date,
           note: f.description || (isPiutang ? "Penerimaan Piutang / Termin Proyek" : "Pembayaran Hutang"),
           financialRecordId: f.id || f.customId,
@@ -7404,7 +7470,8 @@ const getScheduleForRecord = (
     }
   });
 
-  const totalPaid = allPayments.reduce((sum, p) => sum + p.amount, 0);
+  const rawTotalPaid = allPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+  const totalPaid = Math.min(contractVal, rawTotalPaid);
 
   // 2. Build Base Terms Schedule
   if (linkedProj?.paymentTerms && linkedProj.paymentTerms.length > 0) {
@@ -7647,6 +7714,8 @@ const AdminDebtScreen = ({
   } | null>(null);
   const [contactDetailTab, setContactDetailTab] = useState<"DEBTS" | "FINANCIAL">("DEBTS");
   const [contactFinancialFilter, setContactFinancialFilter] = useState<"ALL" | "IN" | "OUT">("ALL");
+  const [contactHutangFinancialFilter, setContactHutangFinancialFilter] = useState<"ALL" | "PEMBAYARAN_HUTANG" | "REIMBURSE">("ALL");
+  const [contactDanaPribadiFilter, setContactDanaPribadiFilter] = useState<"ALL" | "MAJOR" | "MINOR">("ALL");
 
   const [showPdfConfigModal, setShowPdfConfigModal] = useState(false);
   const [pdfConfigRecord, setPdfConfigRecord] = useState<DebtRecord | null>(null);
@@ -8148,9 +8217,48 @@ const AdminDebtScreen = ({
         return false;
       }
 
-      // HUTANG: Strictly debt payments linked by ID or allocations (no regular operational notes)
+      // HUTANG: Strictly debt payments and reimbursements from PT funds to this contact
       if (selectedContactDetail.type === "HUTANG") {
-        // 1. Direct structured debt reference by ID
+        // A payment from PT to a contact CANNOT be personal funds spent (out-of-pocket)!
+        const isPersonalSpend =
+          f.sumberDana === "REKENING PRIBADI" ||
+          f.sumberDana === "DANA PRIBADI" ||
+          f.sumberDana === "PRIBADI" ||
+          (f.sumberDana && f.sumberDana.toUpperCase().includes("PRIBADI")) ||
+          (f.sumberDana && f.sumberDana.toUpperCase().includes("NON-PT")) ||
+          (f.sumberDana && f.sumberDana.toUpperCase().includes("NON PT")) ||
+          f.flowType === "OUT_PERSONAL_SPEND" ||
+          (f.customId && f.customId.startsWith("PRS-"));
+
+        if (isPersonalSpend) {
+          return false;
+        }
+
+        // An expense cannot be its own debt repayment if it's the origin transaction of any debt note
+        const isOriginOfAnyDebt = contactDetailRecords.some((r) => {
+          const rCustom = (r.customId || "").toUpperCase();
+          const rId = (r.id || "").toLowerCase();
+          const rOriginCustom = (((r as any).originCustomId || "") as string).toUpperCase();
+          const rOriginFin = (((r as any).originFinancialRecordId || "") as string).toLowerCase();
+
+          return (
+            (f.customId && rOriginCustom && f.customId.toUpperCase() === rOriginCustom) ||
+            (f.id && rOriginFin && f.id.toLowerCase() === rOriginFin) ||
+            (f.customId && rCustom && (rCustom === f.customId.toUpperCase() || rCustom === `HTG-${f.customId.toUpperCase()}`)) ||
+            (f.id && rId && (rId === f.id.toLowerCase() || rId === `htg-prs-${f.id.toLowerCase()}`))
+          );
+        });
+
+        if (isOriginOfAnyDebt) {
+          return false;
+        }
+
+        // Must be pengeluaran (OUT) from PT funds
+        if (f.type !== "OUT") {
+          return false;
+        }
+
+        // 1. Direct structured debt reference by ID (from PT funds)
         if (fLinkedDebt && (debtIds.has(fLinkedDebt) || customIds.has(fLinkedDebt))) return true;
         if (fRefHutang && (debtIds.has(fRefHutang) || customIds.has(fRefHutang))) return true;
         if (fRefId && (debtIds.has(fRefId) || customIds.has(fRefId))) return true;
@@ -8178,9 +8286,20 @@ const AdminDebtScreen = ({
         );
         if (isPaymentMatch) return true;
 
-        // 4. If transaction category is Pembayaran Hutang, check exact title or exact customId reference
-        const isDebtCat = (f.category || "").toUpperCase().includes("HUTANG");
-        if (isDebtCat) {
+        // 4. Pengeluaran Rekening PT (Kategori Pembayaran Hutang atau Kategori Reimburse) yang ditransfer/masuk ke pihak terkait
+        const catUpper = (f.category || "").toUpperCase();
+        const isReimburse = catUpper.includes("REIMBURSE") || descUpper.includes("REIMBURSE");
+        const isDebtCat = catUpper.includes("HUTANG");
+
+        if (isReimburse || isDebtCat) {
+          const recipientStr = `${f.rekPenerima || ""} ${f.personalHolder || ""} ${(f as any).contactName || ""} ${f.description || ""}`.toUpperCase();
+          const firstToken = targetKey.split(" ")[0];
+          if (
+            recipientStr.includes(targetKey) ||
+            (firstToken.length >= 3 && recipientStr.includes(firstToken))
+          ) {
+            return true;
+          }
           if (
             contactDetailRecords.some(
               (r) => r.title && f.refHutang && f.refHutang.trim().toUpperCase() === r.title.trim().toUpperCase()
@@ -8206,7 +8325,27 @@ const AdminDebtScreen = ({
 
   // Aggregate summary for the selected contact
   const contactDetailSummary = useMemo(() => {
-    if (!selectedContactDetail) return { totalAmount: 0, totalPaid: 0, totalRemaining: 0, totalPemasukan: 0, totalPengeluaran: 0, keuntungan: 0, keuntunganProyeksi: 0, count: 0 };
+    if (!selectedContactDetail) {
+      return {
+        totalAmount: 0,
+        totalPaid: 0,
+        totalRemaining: 0,
+        totalPemasukan: 0,
+        totalPengeluaran: 0,
+        keuntungan: 0,
+        keuntunganProyeksi: 0,
+        count: 0,
+        majorDebtRecords: [] as DebtRecord[],
+        minorReimburseRecords: [] as DebtRecord[],
+        majorDebtAmount: 0,
+        minorReimburseAmount: 0,
+        hutangCategoryRecords: [] as FinancialRecord[],
+        reimburseCategoryRecords: [] as FinancialRecord[],
+        hutangCategoryAmount: 0,
+        reimburseCategoryAmount: 0,
+        totalPtPaidHutang: 0,
+      };
+    }
     let totalAmount = 0;
     let totalPaid = 0;
     let totalRemaining = 0;
@@ -8221,20 +8360,54 @@ const AdminDebtScreen = ({
       totalRemaining += remaining;
     });
 
+    const majorDebtRecords = contactDetailRecords.filter((r) => (r.amount || 0) >= 2000000);
+    const minorReimburseRecords = contactDetailRecords.filter((r) => (r.amount || 0) < 2000000);
+    const majorDebtAmount = majorDebtRecords.reduce((sum, r) => sum + (r.amount || 0), 0);
+    const minorReimburseAmount = minorReimburseRecords.reduce((sum, r) => sum + (r.amount || 0), 0);
+
     const totalPemasukan = contactFinancialRecords.filter((f) => f.type === "IN").reduce((sum, f) => sum + (f.amount || 0), 0);
     const totalPengeluaran = contactFinancialRecords.filter((f) => f.type === "OUT").reduce((sum, f) => sum + (f.amount || 0), 0);
     const keuntungan = totalPemasukan - totalPengeluaran;
     const keuntunganProyeksi = totalAmount - totalPengeluaran;
 
+    // Hutang vs Reimburse categories breakdown for HUTANG type
+    const hutangCategoryRecords = contactFinancialRecords.filter((f) =>
+      (f.category || "").toUpperCase().includes("HUTANG")
+    );
+    const reimburseCategoryRecords = contactFinancialRecords.filter(
+      (f) =>
+        (f.category || "").toUpperCase().includes("REIMBURSE") ||
+        (f.description || "").toUpperCase().includes("REIMBURSE")
+    );
+    const hutangCategoryAmount = hutangCategoryRecords.reduce((sum, f) => sum + (f.amount || 0), 0);
+    const reimburseCategoryAmount = reimburseCategoryRecords.reduce((sum, f) => sum + (f.amount || 0), 0);
+    const totalPtPaidHutang = hutangCategoryAmount + reimburseCategoryAmount;
+
+    // For HUTANG, reconcile totalPaid to reflect PT disbursements (Pembayaran Hutang + Reimburse) without exceeding total debt notes
+    const finalTotalPaid =
+      selectedContactDetail.type === "HUTANG"
+        ? (totalPtPaidHutang > 0 ? Math.min(totalAmount, Math.max(totalPaid, totalPtPaidHutang)) : totalPaid)
+        : totalPaid;
+    const finalTotalRemaining = Math.max(0, totalAmount - finalTotalPaid);
+
     return {
       totalAmount,
-      totalPaid, // strictly Pemasukan / Termin dari Klien
-      totalRemaining,
+      totalPaid: finalTotalPaid,
+      totalRemaining: finalTotalRemaining,
       totalPemasukan,
       totalPengeluaran,
       keuntungan,
       keuntunganProyeksi,
       count: contactDetailRecords.length,
+      majorDebtRecords,
+      minorReimburseRecords,
+      majorDebtAmount,
+      minorReimburseAmount,
+      hutangCategoryRecords,
+      reimburseCategoryRecords,
+      hutangCategoryAmount,
+      reimburseCategoryAmount,
+      totalPtPaidHutang,
     };
   }, [selectedContactDetail, contactDetailRecords, contactFinancialRecords, projects, financialRecords]);
 
@@ -9025,7 +9198,7 @@ const AdminDebtScreen = ({
         doc.setFontSize(9.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(17, 42, 70);
-        doc.text("1. REKAPITULASI TOTAL HUTANG PERUSAHAAN KE MASING-MASING ORANG YANG DIHUTANGI", 14, currentY);
+        doc.text("1. REKAPITULASI DANA TALANGAN & KEWAJIBAN HUTANG PER KREDITUR / PEMBERI PINJAMAN", 14, currentY);
         currentY += 3;
 
         const groupRows = hutangData.contactList.map((c, idx) => {
@@ -9061,11 +9234,11 @@ const AdminDebtScreen = ({
           head: [
             [
               "NO",
-              "NAMA PIHAK / ORANG YANG DIHUTANGI (KREDITUR / VENDOR)",
-              "JML CATATAN",
-              "TOTAL AWAL (RP)",
-              "TELAH DIBAYAR (RP)",
-              "SISA HUTANG (RP)",
+              "NAMA PEMBERI PINJAMAN (KREDITUR)",
+              "JML NOTA",
+              "DANA KELUAR UTK PT (RP)",
+              "PEMBAYARAN DARI PT (RP)",
+              "SISA HUTANG PT (RP)",
               "STATUS",
               "% LUNAS",
             ],
@@ -9082,14 +9255,14 @@ const AdminDebtScreen = ({
           bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
           alternateRowStyles: { fillColor: [248, 250, 252] },
           columnStyles: {
-            0: { halign: "center", cellWidth: 10 },
-            1: { fontStyle: "bold", cellWidth: 70 },
-            2: { halign: "center", cellWidth: 22 },
-            3: { halign: "right", fontStyle: "bold", cellWidth: 42 },
-            4: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 42 },
-            5: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 45 },
-            6: { halign: "center", fontStyle: "bold", cellWidth: 22 },
-            7: { halign: "center", cellWidth: 16 },
+            0: { halign: "center", cellWidth: 8 },
+            1: { fontStyle: "bold", cellWidth: 64 },
+            2: { halign: "center", cellWidth: 20 },
+            3: { halign: "right", fontStyle: "bold", cellWidth: 38 },
+            4: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 38 },
+            5: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 40 },
+            6: { halign: "center", fontStyle: "bold", cellWidth: 24 },
+            7: { halign: "center", cellWidth: 18 },
           },
           didParseCell: (data) => {
             if (data.row.index === groupRows.length - 1) {
@@ -9110,7 +9283,7 @@ const AdminDebtScreen = ({
         doc.setFontSize(9.5);
         doc.setFont("helvetica", "bold");
         doc.setTextColor(17, 42, 70);
-        doc.text("2. RINCIAN LENGKAP SELURUH CATATAN TRANSAKSI HUTANG USAHA", 14, currentY);
+        doc.text("2. RINCIAN PERUNTUKAN BELANJA KEPERLUAN PT & PEMBAYARAN HUTANG", 14, currentY);
         currentY += 3;
 
         const detailRows = hutangData.records.map((r, idx) => {
@@ -9152,13 +9325,13 @@ const AdminDebtScreen = ({
           head: [
             [
               "NO",
-              "KODE REF",
-              "PIHAK DIHUTANGI",
-              "KETERANGAN / PERUNTUKAN",
+              "KODE NOTA",
+              "PEMBERI PINJAMAN",
+              "PERUNTUKAN BELANJA KEPERLUAN PT",
               "PROYEK",
-              "AWAL (RP)",
-              "DIBAYAR (RP)",
-              "SISA (RP)",
+              "DANA KELUAR UTK PT (RP)",
+              "DIBAYAR PT (RP)",
+              "SISA HUTANG (RP)",
               "STATUS",
             ],
           ],
@@ -9174,15 +9347,15 @@ const AdminDebtScreen = ({
           bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
           alternateRowStyles: { fillColor: [248, 250, 252] },
           columnStyles: {
-            0: { halign: "center", cellWidth: 9 },
-            1: { fontStyle: "bold", cellWidth: 28 },
-            2: { fontStyle: "bold", cellWidth: 42 },
-            3: { cellWidth: 65 },
-            4: { cellWidth: 35 },
-            5: { halign: "right", fontStyle: "bold", cellWidth: 26 },
-            6: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 26 },
-            7: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 26 },
-            8: { halign: "center", fontStyle: "bold", cellWidth: 15 },
+            0: { halign: "center", cellWidth: 8 },
+            1: { fontStyle: "bold", cellWidth: 26 },
+            2: { fontStyle: "bold", cellWidth: 36 },
+            3: { cellWidth: 62 },
+            4: { cellWidth: 24 },
+            5: { halign: "right", fontStyle: "bold", cellWidth: 29 },
+            6: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 29 },
+            7: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 30 },
+            8: { halign: "center", fontStyle: "bold", cellWidth: 18 },
           },
           didParseCell: (data) => {
             if (data.row.index === detailRows.length - 1) {
@@ -9982,8 +10155,8 @@ const AdminDebtScreen = ({
       const doc = new jsPDF("p", "mm", "a4");
       const isHutang = contactInfo.type === "HUTANG";
       const titleLabel = isHutang
-        ? "LAPORAN RINCIAN HUTANG & REKAPITULASI VENDOR"
-        : "LAPORAN RINCIAN PIUTANG & REKAPITULASI DEBITUR";
+        ? "LAPORAN REKAPITULASI DANA TALANGAN & PEMBAYARAN HUTANG"
+        : "LAPORAN REKAPITULASI PIUTANG USAHA & TERMIN KLIEN";
 
       // Outer border matching standard app PDF documents
       doc.setDrawColor(226, 232, 240); // slate-200
@@ -10005,11 +10178,15 @@ const AdminDebtScreen = ({
       doc.setFontSize(8.5);
       doc.setFont("helvetica", "normal");
       doc.setTextColor(100);
-      doc.text(`Kontak / Nama Pihak: ${contactInfo.name}`, 12, currentY);
+      doc.text(`Pihak Terkait: ${contactInfo.name}`, 12, currentY);
       doc.text(`Tanggal Cetak: ${new Date().toLocaleString("id-ID")}`, 138, currentY);
 
       currentY += 4.5;
-      doc.text(`Kategori: ${isHutang ? "Kewajiban Hutang Usaha" : "Tagihan Piutang Usaha"} | Total: ${summary.count} Catatan Terdaftar`, 12, currentY);
+      doc.text(
+        `Kategori: ${isHutang ? "Kewajiban Hutang PT (Talangan Belanja Pribadi)" : "Tagihan Piutang Usaha Proyek"} | Total: ${summary.count} Catatan Nota`,
+        12,
+        currentY
+      );
 
       currentY += 5;
       doc.setDrawColor(226, 232, 240);
@@ -10019,22 +10196,20 @@ const AdminDebtScreen = ({
 
       // KPI / Ringkasan Finansial Box
       const paidPct = summary.totalAmount > 0 ? ((summary.totalPaid / summary.totalAmount) * 100).toFixed(1) : "0";
-      const totalPengeluaran = (summary as any).totalPengeluaran || 0;
-      const labaKas = ((summary as any).totalPemasukan || summary.totalPaid) - totalPengeluaran;
 
       const summaryTableData = isHutang
         ? [
             [
-              "TOTAL NILAI AWAL",
+              "DANA KELUAR TALANGAN PT",
               formatCurrencyIDR(summary.totalAmount),
-              "TOTAL TELAH DIBAYAR",
+              "DANA MASUK PEMBAYARAN PT",
               formatCurrencyIDR(summary.totalPaid),
             ],
             [
-              "SISA SALDO HUTANG",
+              "SISA KEWAJIBAN HUTANG PT",
               formatCurrencyIDR(summary.totalRemaining),
               "PERSENTASE REALISASI",
-              `${paidPct}%`,
+              `${paidPct}% (${summary.totalRemaining <= 0 ? "LUNAS" : "BELUM LUNAS"})`,
             ],
           ]
         : [
@@ -10047,14 +10222,8 @@ const AdminDebtScreen = ({
             [
               "SISA PIUTANG KLIEN",
               formatCurrencyIDR(summary.totalRemaining),
-              "TOTAL BELANJA PROYEK",
-              formatCurrencyIDR(totalPengeluaran),
-            ],
-            [
-              "LABA KAS SAAT INI",
-              formatCurrencyIDR(labaKas),
               "PERSENTASE TERBAYAR",
-              `${paidPct}%`,
+              `${paidPct}% (${summary.totalRemaining <= 0 ? "LUNAS" : "BELUM LUNAS"})`,
             ],
           ];
 
@@ -10068,163 +10237,77 @@ const AdminDebtScreen = ({
           textColor: [15, 23, 42],
         },
         columnStyles: {
-          0: { fontStyle: "bold", cellWidth: 42, fillColor: [248, 250, 252], textColor: [71, 85, 105] },
-          1: { fontStyle: "bold", cellWidth: 50, halign: "right", textColor: [15, 23, 42] },
-          2: { fontStyle: "bold", cellWidth: 44, fillColor: [248, 250, 252], textColor: [71, 85, 105] },
-          3: { fontStyle: "bold", cellWidth: 50, halign: "right", textColor: isHutang ? [225, 29, 72] : [16, 185, 129] },
+          0: { fontStyle: "bold", cellWidth: 46, fillColor: [248, 250, 252], textColor: [71, 85, 105] },
+          1: { fontStyle: "bold", cellWidth: 47, halign: "right", textColor: [15, 23, 42] },
+          2: { fontStyle: "bold", cellWidth: 46, fillColor: [248, 250, 252], textColor: [71, 85, 105] },
+          3: { fontStyle: "bold", cellWidth: 47, halign: "right", textColor: isHutang ? [16, 185, 129] : [16, 185, 129] },
         },
       });
 
       currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 8 : currentY + 30;
 
-      // Section 1: Tabel Rincian Rekam Hutang / Piutang
-      doc.setFontSize(9.5);
-      doc.setTextColor(26, 43, 73);
-      doc.setFont("helvetica", "bold");
-      doc.text(`RINCIAN PERUNTUKAN ${isHutang ? "HUTANG" : "PIUTANG"} (${records.length} REKAM)`, 12, currentY);
+      if (isHutang) {
+        // =========================================================================
+        // SECTION A (HUTANG): DANA KELUAR DARI PEMBERI PINJAMAN UNTUK KEPERLUAN PT
+        // =========================================================================
+        doc.setFontSize(9.5);
+        doc.setTextColor(26, 43, 73);
+        doc.setFont("helvetica", "bold");
+        doc.text(`A. DANA PRIBADI TERPAKAI UNTUK KEPERLUAN PT (${records.length} CATATAN NOTA)`, 12, currentY);
 
-      currentY += 3;
+        currentY += 3;
 
-      const debtTableRows = records.map((rec, idx) => {
-        const sched = getScheduleForRecord(rec, projects, financialRecords);
-        const paid = sched.totalPaid;
-        const initialAmt = sched.contractValue || rec.amount || 0;
-        const rem = Math.max(0, initialAmt - paid);
-        const proj = projects.find((p) => p.id === rec.projectId)?.name || "-";
-        const statusLabel = rem <= 0 ? "LUNAS" : paid > 0 ? "DICICIL" : "BELUM BAYAR";
-        const titleAndDesc = rec.description ? `${rec.title}\n(${rec.description})` : rec.title;
+        const majorDebtList = records.filter((r) => (r.amount || 0) >= 2000000);
+        const minorReimburseList = records.filter((r) => (r.amount || 0) < 2000000);
+        const majorDebtTotal = majorDebtList.reduce((sum, r) => sum + (r.amount || 0), 0);
+        const minorReimburseTotal = minorReimburseList.reduce((sum, r) => sum + (r.amount || 0), 0);
 
-        return [
-          idx + 1,
-          rec.customId || rec.id || "-",
-          titleAndDesc,
-          proj,
-          formatCurrencyIDR(initialAmt).replace("Rp ", ""),
-          formatCurrencyIDR(paid).replace("Rp ", ""),
-          formatCurrencyIDR(rem).replace("Rp ", ""),
-          statusLabel,
-        ];
-      });
+        const keluarRows = records.map((rec, idx) => {
+          const sched = getScheduleForRecord(rec, projects, financialRecords);
+          const initialAmt = sched.contractValue || rec.amount || 0;
+          const proj = projects.find((p) => p.id === rec.projectId)?.name || "Umum / Operasional";
+          const titleAndDesc = rec.description ? `${rec.title}\n(${rec.description})` : rec.title;
+          const klasifikasi = initialAmt >= 2000000 ? "Talangan Pokok (>= 2 Jt)" : "Rekam Belanja (< 2 Jt)";
 
-      // Add Total Row
-      debtTableRows.push([
-        "",
-        "",
-        "TOTAL KESELURUHAN",
-        "",
-        formatCurrencyIDR(summary.totalAmount).replace("Rp ", ""),
-        formatCurrencyIDR(summary.totalPaid).replace("Rp ", ""),
-        formatCurrencyIDR(summary.totalRemaining).replace("Rp ", ""),
-        "",
-      ]);
-
-      autoTable(doc, {
-        startY: currentY,
-        margin: { left: 12, right: 12 },
-        head: [
-          [
-            "NO",
-            "KODE REF",
-            "TUJUAN / PERUNTUKAN DANA",
-            "PROYEK",
-            "AWAL (RP)",
-            "DIBAYAR (RP)",
-            "SISA (RP)",
-            "STATUS",
-          ],
-        ],
-        body: debtTableRows,
-        theme: "grid",
-        headStyles: {
-          fillColor: [26, 43, 73],
-          textColor: [255, 255, 255],
-          fontSize: 7.5,
-          fontStyle: "bold",
-          halign: "left",
-        },
-        bodyStyles: {
-          fontSize: 7,
-          textColor: [51, 65, 85],
-        },
-        columnStyles: {
-          0: { cellWidth: 8, halign: "center" },
-          1: { cellWidth: 22, fontStyle: "bold" },
-          2: { cellWidth: 60 },
-          3: { cellWidth: 32 },
-          4: { cellWidth: 22, halign: "right", fontStyle: "bold" },
-          5: { cellWidth: 22, halign: "right", fontStyle: "bold", textColor: [16, 185, 129] },
-          6: { cellWidth: 22, halign: "right", fontStyle: "bold", textColor: isHutang ? [225, 29, 72] : [16, 185, 129] },
-          7: { cellWidth: 20, halign: "center", fontStyle: "bold" },
-        },
-        didParseCell: (data) => {
-          if (data.row.index === debtTableRows.length - 1) {
-            data.cell.styles.fontStyle = "bold";
-            data.cell.styles.fillColor = [241, 245, 249];
-            if (data.column.index === 2) {
-              data.cell.styles.halign = "right";
-            }
-          }
-        },
-      });
-
-      currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 8 : currentY + 40;
-
-      // Section 2: Riwayat Mutasi Transaksi Kas/Bank Terkait (jika ada)
-      if (currentY > 230) {
-        doc.addPage();
-        doc.setDrawColor(226, 232, 240);
-        doc.rect(5, 5, 200, 287);
-        currentY = 18;
-      }
-
-      doc.setFontSize(9.5);
-      doc.setTextColor(26, 43, 73);
-      doc.setFont("helvetica", "bold");
-      doc.text(`RIWAYAT MUTASI TRANSAKSI KAS & BANK TERKAIT (${finRecords.length} TRANSAKSI)`, 12, currentY);
-
-      currentY += 3;
-
-      if (finRecords.length === 0) {
-        autoTable(doc, {
-          startY: currentY,
-          margin: { left: 12, right: 12 },
-          body: [
-            [
-              "Catatan: Belum ada transaksi kas/bank langsung yang tercatat untuk kontak ini (catatan merupakan invoice/saldo awal).",
-            ],
-          ],
-          theme: "grid",
-          bodyStyles: {
-            fontSize: 7.5,
-            textColor: [100, 116, 139],
-            fontStyle: "italic",
-          },
-        });
-      } else {
-        const finRows = finRecords.map((fin, idx) => {
-          const isIncome = fin.type === "IN";
           return [
             idx + 1,
-            fin.date || "-",
-            fin.customId || fin.id || "-",
-            isIncome ? "PEMASUKAN" : "PENGELUARAN",
-            fin.category || "-",
-            fin.description || "-",
-            getDisplaySumberUang(fin),
-            formatCurrencyIDR(fin.amount || 0).replace("Rp ", ""),
+            rec.dueDate || "-",
+            rec.customId || rec.id || "-",
+            titleAndDesc,
+            proj,
+            klasifikasi,
+            formatCurrencyIDR(initialAmt).replace("Rp ", ""),
           ];
         });
 
-        const totalFinAmount = finRecords.reduce((sum, f) => sum + (f.amount || 0), 0);
-        finRows.push([
+        keluarRows.push([
           "",
           "",
           "",
+          "SUBTOTAL TALANGAN POKOK (>= RP 2 JUTA) - ATAS NAMA KONTAK",
+          "",
+          `${majorDebtList.length} Nota`,
+          formatCurrencyIDR(majorDebtTotal).replace("Rp ", ""),
+        ]);
+
+        keluarRows.push([
           "",
           "",
-          "TOTAL MUTASI",
           "",
-          formatCurrencyIDR(totalFinAmount).replace("Rp ", ""),
+          "SUBTOTAL REKAM BELANJA OPERASIONAL (< RP 2 JUTA) - MELEKAT REKAM DATA",
+          "",
+          `${minorReimburseList.length} Nota`,
+          formatCurrencyIDR(minorReimburseTotal).replace("Rp ", ""),
+        ]);
+
+        keluarRows.push([
+          "",
+          "",
+          "",
+          "TOTAL DANA PRIBADI TERPAKAI UNTUK KEPERLUAN PT",
+          "",
+          `${records.length} Nota`,
+          formatCurrencyIDR(summary.totalAmount).replace("Rp ", ""),
         ]);
 
         autoTable(doc, {
@@ -10234,15 +10317,425 @@ const AdminDebtScreen = ({
             [
               "NO",
               "TANGGAL",
-              "NO. BUKTI",
-              "TIPE",
-              "KATEGORI",
-              "KETERANGAN / DESKRIPSI",
-              "SUMBER DANA",
-              "NOMINAL (RP)",
+              "KODE BUKTI",
+              "KEPERLUAN BELANJA PT",
+              "PROYEK",
+              "KLASIFIKASI TRANSAKSI",
+              "NOMINAL TERPAKAI (RP)",
             ],
           ],
-          body: finRows,
+          body: keluarRows,
+          theme: "grid",
+          headStyles: {
+            fillColor: [26, 43, 73],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            halign: "center",
+          },
+          bodyStyles: {
+            fontSize: 7,
+            textColor: [51, 65, 85],
+          },
+          columnStyles: {
+            0: { cellWidth: 7, halign: "center" },
+            1: { cellWidth: 17, halign: "center" },
+            2: { cellWidth: 24, fontStyle: "bold" },
+            3: { cellWidth: 50 },
+            4: { cellWidth: 22 },
+            5: { cellWidth: 38, halign: "center" },
+            6: { cellWidth: 28, halign: "right", fontStyle: "bold", textColor: [15, 23, 42] },
+          },
+          didParseCell: (data) => {
+            if (data.row.index >= keluarRows.length - 3) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+              if (data.column.index === 3) {
+                data.cell.styles.halign = "right";
+              }
+            }
+          },
+        });
+
+        currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 8 : currentY + 40;
+
+        // =========================================================================
+        // SECTION B (HUTANG): DANA MASUK UNTUK PEMBAYARAN HUTANG KE PEMBERI PINJAMAN
+        // =========================================================================
+        if (currentY > 210) {
+          doc.addPage();
+          doc.setDrawColor(226, 232, 240);
+          doc.rect(5, 5, 200, 287);
+          currentY = 18;
+        }
+
+        // Kumpulkan data riil pembayaran hutang dan reimburse dari kas PT ke pemberi pinjaman (tanpa duplikasi dan tanpa saldo awal/pattycash awal)
+        interface HutangPaymentItem {
+          id: string;
+          date: string;
+          refNo: string;
+          categoryType: "PEMBAYARAN HUTANG" | "REIMBURSE";
+          note: string;
+          source: string;
+          amount: number;
+          recipient: string;
+        }
+
+        const pembayaranList: HutangPaymentItem[] = [];
+        const isPaymentAdded = (amt: number, dateStr?: string, ref?: string) => {
+          return pembayaranList.some((p) => {
+            if (ref && p.refNo && (p.refNo === ref || p.id === ref)) return true;
+            const sameAmt = Math.abs((p.amount || 0) - amt) < 100;
+            if (sameAmt) {
+              if (!dateStr || !p.date || dateStr === "-" || p.date === "-" || p.date === dateStr) {
+                return true;
+              }
+            }
+            return false;
+          });
+        };
+
+        // 1. Ambil pembayaran dari sched.allPayments pada tiap catatan hutang
+        records.forEach((r) => {
+          const sched = getScheduleForRecord(r, projects, financialRecords);
+          const contractVal = sched.contractValue || r.amount || 0;
+          (sched.allPayments || []).forEach((ap: any, idx: number) => {
+            const pAmt = Math.min(ap.amount || 0, contractVal);
+            if (pAmt <= 0) return;
+            const ref = ap.financialRecordId || ap.id || `sched-${idx}`;
+            if (isPaymentAdded(pAmt, ap.date, ref)) return;
+
+            const noteLower = (ap.note || "").toLowerCase();
+            const isReimburse = noteLower.includes("reimburse");
+
+            pembayaranList.push({
+              id: ap.id || `pay-${idx}`,
+              date: ap.date || r.dueDate || "-",
+              refNo: ap.financialRecordId || r.customId || "-",
+              categoryType: isReimburse ? "REIMBURSE" : "PEMBAYARAN HUTANG",
+              note: ap.note || `Pelunasan Hutang [${r.customId || r.title}]`,
+              source: ap.financialRecordId ? "Buku Kas PT" : "Kas / Bank PT",
+              amount: pAmt,
+              recipient: contactInfo.name,
+            });
+          });
+        });
+
+        // 2. Ambil dari transaksi kas PT yang bertipe pembayaran hutang atau reimburse kepada kontak ini
+        finRecords.forEach((f) => {
+          // Harus pengeluaran dana PT untuk membayar ke kontak (BUKAN talangan pribadi dan BUKAN petty cash awal)
+          const isPersonal = f.sumberDana === "REKENING PRIBADI" || f.sumberDana === "DANA PRIBADI" || f.sumberDana === "PRIBADI" || f.flowType === "OUT_PERSONAL_SPEND" || (f.customId && f.customId.startsWith("PRS-"));
+          if (isPersonal) return;
+
+          const catUpper = (f.category || "").toUpperCase();
+          const descUpper = (f.description || "").toUpperCase();
+          const isDebtPay = catUpper.includes("HUTANG") || Boolean(f.linkedDebtId) || Boolean(f.refHutang);
+          const isReimburse = catUpper.includes("REIMBURSE") || descUpper.includes("REIMBURSE");
+          if (!isDebtPay && !isReimburse) return;
+
+          const matchingAlloc = f.debtAllocations?.find(
+            (a: any) => records.some((r) => r.id === a.debtId || r.customId === a.debtId || (r.customId && a.customId === r.customId))
+          );
+          let payAmt = matchingAlloc ? matchingAlloc.amount : f.amount;
+          if (payAmt <= 0) return;
+
+          const ref = f.customId || f.id;
+          if (isPaymentAdded(payAmt, f.date, ref)) return;
+
+          pembayaranList.push({
+            id: f.id,
+            date: f.date || "-",
+            refNo: f.customId || f.id || "-",
+            categoryType: isReimburse ? "REIMBURSE" : "PEMBAYARAN HUTANG",
+            note: f.description || (isReimburse ? `Reimbursement PT ke ${contactInfo.name}` : `Pembayaran Hutang PT ke ${contactInfo.name}`),
+            source: getDisplaySumberUang(f) || "Kas / Bank PT",
+            amount: payAmt,
+            recipient: f.rekPenerima || contactInfo.name,
+          });
+        });
+
+        // Urutkan pembayaran berdasarkan tanggal
+        pembayaranList.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+        const totalHutangPayList = pembayaranList
+          .filter((p) => p.categoryType === "PEMBAYARAN HUTANG")
+          .reduce((sum, p) => sum + (p.amount || 0), 0);
+        const totalReimbursePayList = pembayaranList
+          .filter((p) => p.categoryType === "REIMBURSE")
+          .reduce((sum, p) => sum + (p.amount || 0), 0);
+        const totalBayarList = totalHutangPayList + totalReimbursePayList;
+
+        doc.setFontSize(9.5);
+        doc.setTextColor(26, 43, 73);
+        doc.setFont("helvetica", "bold");
+        doc.text(
+          `B. DANA DARI REKENING PT YANG MASUK KE ${contactInfo.name.toUpperCase()} (${pembayaranList.length} TRANSAKSI)`,
+          12,
+          currentY
+        );
+
+        currentY += 3;
+
+        if (pembayaranList.length === 0) {
+          autoTable(doc, {
+            startY: currentY,
+            margin: { left: 12, right: 12 },
+            body: [
+              [
+                "Belum ada catatan transaksi transfer/pembayaran hutang dari PT ke pemberi pinjaman.",
+              ],
+            ],
+            theme: "grid",
+            bodyStyles: {
+              fontSize: 7.5,
+              textColor: [100, 116, 139],
+              fontStyle: "italic",
+            },
+          });
+        } else {
+          const bayarRows = pembayaranList.map((p, idx) => {
+            return [
+              idx + 1,
+              p.date,
+              p.refNo,
+              p.categoryType,
+              p.note,
+              p.source,
+              formatCurrencyIDR(p.amount).replace("Rp ", ""),
+              p.recipient,
+            ];
+          });
+
+          // Subtotal Rows
+          bayarRows.push([
+            "",
+            "",
+            "",
+            "PEMBAYARAN HUTANG",
+            "SUBTOTAL PENGELUARAN PT KATEGORI PEMBAYARAN HUTANG",
+            "",
+            formatCurrencyIDR(totalHutangPayList).replace("Rp ", ""),
+            "",
+          ]);
+          bayarRows.push([
+            "",
+            "",
+            "",
+            "REIMBURSE",
+            "SUBTOTAL PENGELUARAN PT KATEGORI REIMBURSE",
+            "",
+            formatCurrencyIDR(totalReimbursePayList).replace("Rp ", ""),
+            "",
+          ]);
+          bayarRows.push([
+            "",
+            "",
+            "",
+            "TOTAL DANA MASUK",
+            "TOTAL PEMBAYARAN DARI REKENING PT (HUTANG + REIMBURSE)",
+            "",
+            formatCurrencyIDR(summary.totalPaid > 0 ? summary.totalPaid : totalBayarList).replace("Rp ", ""),
+            "",
+          ]);
+
+          autoTable(doc, {
+            startY: currentY,
+            margin: { left: 12, right: 12 },
+            head: [
+              [
+                "NO",
+                "TANGGAL",
+                "NO. BUKTI PT",
+                "KATEGORI",
+                "KETERANGAN / NOTA YANG DILUNASI",
+                "DIBAYAR DARI REK PT",
+                "NOMINAL DIBAYAR (RP)",
+                "PENERIMA",
+              ],
+            ],
+            body: bayarRows,
+            theme: "grid",
+            headStyles: {
+              fillColor: [26, 43, 73],
+              textColor: [255, 255, 255],
+              fontSize: 7,
+              fontStyle: "bold",
+              halign: "center",
+            },
+            bodyStyles: {
+              fontSize: 6.5,
+              textColor: [51, 65, 85],
+            },
+            columnStyles: {
+              0: { cellWidth: 7, halign: "center" },
+              1: { cellWidth: 17, halign: "center" },
+              2: { cellWidth: 23, fontStyle: "bold" },
+              3: { cellWidth: 25, halign: "center", fontStyle: "bold" },
+              4: { cellWidth: 44 },
+              5: { cellWidth: 22 },
+              6: { cellWidth: 26, halign: "right", fontStyle: "bold", textColor: [16, 185, 129] },
+              7: { cellWidth: 22 },
+            },
+            didParseCell: (data) => {
+              const lastIdx = bayarRows.length - 1;
+              if (data.row.index >= lastIdx - 2) {
+                data.cell.styles.fontStyle = "bold";
+                data.cell.styles.fillColor = [241, 245, 249];
+                if (data.column.index === 4) {
+                  data.cell.styles.halign = "right";
+                }
+              }
+            },
+          });
+        }
+
+        currentY = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 8 : currentY + 30;
+
+        // =========================================================================
+        // SECTION C (HUTANG): REKONSILIASI AKHIR KEWAJIBAN HUTANG PERUSAHAAN
+        // =========================================================================
+        if (currentY > 230) {
+          doc.addPage();
+          doc.setDrawColor(226, 232, 240);
+          doc.rect(5, 5, 200, 287);
+          currentY = 18;
+        }
+
+        doc.setFontSize(9.5);
+        doc.setTextColor(26, 43, 73);
+        doc.setFont("helvetica", "bold");
+        doc.text("C. REKONSILIASI AKHIR KEWAJIBAN HUTANG PERUSAHAAN", 12, currentY);
+
+        currentY += 3;
+
+        const effectiveTotalPaidFinal = summary.totalPaid > 0 ? summary.totalPaid : totalBayarList;
+        const effectiveRemainingFinal = Math.max(0, summary.totalAmount - effectiveTotalPaidFinal);
+
+        const rekonRows = [
+          [
+            "Total Dana Keluar Pribadi untuk Keperluan PT (A)",
+            formatCurrencyIDR(summary.totalAmount),
+            `Total pokok talangan yang dibelanjakan oleh ${contactInfo.name} untuk membiayai operasional / proyek PT (${records.length} Nota)`,
+          ],
+          [
+            "Pengeluaran Rekening PT: Kategori Pembayaran Hutang",
+            formatCurrencyIDR(totalHutangPayList),
+            "Pencairan dana dari kas/bank PT dengan peruntukan pelunasan pokok hutang",
+          ],
+          [
+            "Pengeluaran Rekening PT: Kategori Reimburse",
+            formatCurrencyIDR(totalReimbursePayList),
+            `Penggantian belanja (reimbursement) dari kas/bank PT yang ditransfer ke ${contactInfo.name}`,
+          ],
+          [
+            "Total Dana Masuk Pembayaran dari Rekening PT (B)",
+            formatCurrencyIDR(effectiveTotalPaidFinal),
+            "Total seluruh realisasi dana yang telah dibayarkan oleh kas/bank PT (Pembayaran Hutang + Reimburse)",
+          ],
+          [
+            "SISA KEWAJIBAN HUTANG PT YANG BELUM LUNAS (A - B)",
+            formatCurrencyIDR(effectiveRemainingFinal),
+            effectiveRemainingFinal <= 0
+              ? "LUNAS PENUH (100% Kewajiban Hutang PT telah diselesaikan)"
+              : `BELUM LUNAS (Sisa kewajiban PT yang masih harus diselesaikan kepada ${contactInfo.name})`,
+          ],
+        ];
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: 12, right: 12 },
+          head: [["URAIAN REKONSILIASI", "NOMINAL (RP)", "KETERANGAN & STATUS"]],
+          body: rekonRows,
+          theme: "grid",
+          headStyles: {
+            fillColor: [17, 42, 70],
+            textColor: [255, 255, 255],
+            fontSize: 7.5,
+            fontStyle: "bold",
+            halign: "left",
+          },
+          bodyStyles: {
+            fontSize: 7.5,
+            textColor: [51, 65, 85],
+          },
+          columnStyles: {
+            0: { cellWidth: 70, fontStyle: "bold" },
+            1: { cellWidth: 36, halign: "right", fontStyle: "bold" },
+            2: { cellWidth: 80 },
+          },
+          didParseCell: (data) => {
+            if (data.row.index === 1 || data.row.index === 2) {
+              if (data.column.index === 1) data.cell.styles.textColor = [99, 102, 241];
+            } else if (data.row.index === 3) {
+              if (data.column.index === 1) data.cell.styles.textColor = [16, 185, 129];
+            } else if (data.row.index === 4) {
+              data.cell.styles.fontStyle = "bold";
+              data.cell.styles.fillColor = [241, 245, 249];
+              if (data.column.index === 1) {
+                data.cell.styles.textColor = effectiveRemainingFinal > 0 ? [225, 29, 72] : [16, 185, 129];
+              }
+            }
+          },
+        });
+      } else {
+        // =========================================================================
+        // PIUTANG SECTION
+        // =========================================================================
+        doc.setFontSize(9.5);
+        doc.setTextColor(26, 43, 73);
+        doc.setFont("helvetica", "bold");
+        doc.text(`RINCIAN PERUNTUKAN PIUTANG (${records.length} REKAM)`, 12, currentY);
+
+        currentY += 3;
+
+        const debtTableRows = records.map((rec, idx) => {
+          const sched = getScheduleForRecord(rec, projects, financialRecords);
+          const paid = sched.totalPaid;
+          const initialAmt = sched.contractValue || rec.amount || 0;
+          const rem = Math.max(0, initialAmt - paid);
+          const proj = projects.find((p) => p.id === rec.projectId)?.name || "-";
+          const statusLabel = rem <= 0 ? "LUNAS" : paid > 0 ? "DICICIL" : "BELUM BAYAR";
+          const titleAndDesc = rec.description ? `${rec.title}\n(${rec.description})` : rec.title;
+
+          return [
+            idx + 1,
+            rec.customId || rec.id || "-",
+            titleAndDesc,
+            proj,
+            formatCurrencyIDR(initialAmt).replace("Rp ", ""),
+            formatCurrencyIDR(paid).replace("Rp ", ""),
+            formatCurrencyIDR(rem).replace("Rp ", ""),
+            statusLabel,
+          ];
+        });
+
+        debtTableRows.push([
+          "",
+          "",
+          "TOTAL KESELURUHAN",
+          "",
+          formatCurrencyIDR(summary.totalAmount).replace("Rp ", ""),
+          formatCurrencyIDR(summary.totalPaid).replace("Rp ", ""),
+          formatCurrencyIDR(summary.totalRemaining).replace("Rp ", ""),
+          "",
+        ]);
+
+        autoTable(doc, {
+          startY: currentY,
+          margin: { left: 12, right: 12 },
+          head: [
+            [
+              "NO",
+              "KODE REF",
+              "TUJUAN / PERUNTUKAN DANA",
+              "PROYEK",
+              "AWAL (RP)",
+              "DIBAYAR (RP)",
+              "SISA (RP)",
+              "STATUS",
+            ],
+          ],
+          body: debtTableRows,
           theme: "grid",
           headStyles: {
             fillColor: [26, 43, 73],
@@ -10257,25 +10750,27 @@ const AdminDebtScreen = ({
           },
           columnStyles: {
             0: { cellWidth: 8, halign: "center" },
-            1: { cellWidth: 18, halign: "center" },
-            2: { cellWidth: 22, fontStyle: "bold" },
-            3: { cellWidth: 22, halign: "center", fontStyle: "bold" },
-            4: { cellWidth: 22 },
-            5: { cellWidth: 52 },
-            6: { cellWidth: 22 },
-            7: { cellWidth: 20, halign: "right", fontStyle: "bold" },
+            1: { cellWidth: 22, fontStyle: "bold" },
+            2: { cellWidth: 60 },
+            3: { cellWidth: 32 },
+            4: { cellWidth: 22, halign: "right", fontStyle: "bold" },
+            5: { cellWidth: 22, halign: "right", fontStyle: "bold", textColor: [16, 185, 129] },
+            6: { cellWidth: 22, halign: "right", fontStyle: "bold", textColor: [16, 185, 129] },
+            7: { cellWidth: 20, halign: "center", fontStyle: "bold" },
           },
           didParseCell: (data) => {
-            if (data.row.index === finRows.length - 1) {
+            if (data.row.index === debtTableRows.length - 1) {
               data.cell.styles.fontStyle = "bold";
               data.cell.styles.fillColor = [241, 245, 249];
+              if (data.column.index === 2) {
+                data.cell.styles.halign = "right";
+              }
             }
           },
         });
       }
 
       // Strictly NO KOP & NO SIGNATURES/MENGETAHUI as requested!
-
       const sanitizedContact = contactInfo.name.replace(/[^a-zA-Z0-9]/g, "_");
       doc.save(
         `Laporan_Rincian_${contactInfo.type}_${sanitizedContact}_${new Date().toISOString().split("T")[0]}.pdf`
@@ -10349,10 +10844,15 @@ const AdminDebtScreen = ({
 
     currentY += 7;
     // Document title
+    const isSingleHutang = record.type === "HUTANG";
     doc.setFontSize(13);
     doc.setTextColor(26, 43, 73);
     doc.setFont("helvetica", "bold");
-    doc.text("LAPORAN REALISASI TERMIN & PIUTANG PROYEK", 15, currentY);
+    doc.text(
+      isSingleHutang ? "LAPORAN DANA TALANGAN & PEMBAYARAN HUTANG" : "LAPORAN REALISASI TERMIN & PIUTANG PROYEK",
+      15,
+      currentY
+    );
 
     currentY += 5;
     doc.setFontSize(8.5);
@@ -10363,13 +10863,20 @@ const AdminDebtScreen = ({
 
     currentY += 5;
 
-    // Table 1: INFORMASI PROYEK & KONTRAK (Left Side)
-    const table1Body = [
-      ["Nama Proyek", sched.projectName || "-"],
-      ["No. Kontrak", sched.contractNo || "-"],
-      ["Client / Owner", sched.owner || record.contactName || "-"],
-      ["Tanggal Mulai", sched.startDate || "-"],
-    ];
+    // Table 1: Left Side
+    const table1Body = isSingleHutang
+      ? [
+          ["Pemberi Pinjaman", record.contactName || "-"],
+          ["Peruntukan Belanja", record.title || "-"],
+          ["Proyek Terkait", sched.projectName || "Umum / Operasional"],
+          ["Tgl Jatuh Tempo", record.dueDate || "-"],
+        ]
+      : [
+          ["Nama Proyek", sched.projectName || "-"],
+          ["No. Kontrak", sched.contractNo || "-"],
+          ["Client / Owner", sched.owner || record.contactName || "-"],
+          ["Tanggal Mulai", sched.startDate || "-"],
+        ];
 
     // PPN setup for PDF calculations (extracting PPN from Gross contract value)
     const linkedProj = projects.find((p) => p.id === record.projectId);
@@ -10382,24 +10889,32 @@ const AdminDebtScreen = ({
     const ppnRemaining = isPpnEnabled ? remaining - dppRemaining : 0;
     const pct = record.amount > 0 ? ((totalPaid / record.amount) * 100).toFixed(1) : "0";
 
-    // Table 2: REALISASI & TAGIHAN KONTRAK (Right Side)
-    const table2Body = [
-      ["Nilai Kontrak Inc. PPN", formatCurrencyIDR(record.amount)],
-      ["Nilai Sebelum PPN (DPP)", formatCurrencyIDR(dppTotal)],
-      ["Total Diterima", formatCurrencyIDR(totalPaid)],
-      ["Sisa Tagihan", formatCurrencyIDR(remaining)],
-      ["Persentase Lunas", `${pct}%`],
-      [`PPN ${isPpnEnabled ? "11%" : "0%"} (Total Kontrak)`, formatCurrencyIDR(ppnTotal)],
-      ["PPN Realisasi", formatCurrencyIDR(ppnPaid)],
-      ["Sisa PPN Belum Realisasi", formatCurrencyIDR(ppnRemaining)],
-    ];
+    // Table 2: Right Side
+    const table2Body = isSingleHutang
+      ? [
+          ["Pokok Hutang / Talangan", formatCurrencyIDR(record.amount)],
+          ["Telah Dibayarkan PT", formatCurrencyIDR(totalPaid)],
+          ["Sisa Kewajiban Hutang PT", formatCurrencyIDR(remaining)],
+          ["Persentase Pelunasan", `${pct}%`],
+          ["Status Pelunasan", remaining <= 0 ? "LUNAS (100%)" : totalPaid > 0 ? "DICICIL" : "BELUM LUNAS"],
+        ]
+      : [
+          ["Nilai Kontrak Inc. PPN", formatCurrencyIDR(record.amount)],
+          ["Nilai Sebelum PPN (DPP)", formatCurrencyIDR(dppTotal)],
+          ["Total Diterima", formatCurrencyIDR(totalPaid)],
+          ["Sisa Tagihan", formatCurrencyIDR(remaining)],
+          ["Persentase Lunas", `${pct}%`],
+          [`PPN ${isPpnEnabled ? "11%" : "0%"} (Total Kontrak)`, formatCurrencyIDR(ppnTotal)],
+          ["PPN Realisasi", formatCurrencyIDR(ppnPaid)],
+          ["Sisa PPN Belum Realisasi", formatCurrencyIDR(ppnRemaining)],
+        ];
 
     // Render Table 1 (Left Side)
     autoTable(doc, {
       startY: currentY,
       margin: { left: 12 },
       tableWidth: 88,
-      head: [["INFORMASI PROYEK & KONTRAK", ""]],
+      head: [[isSingleHutang ? "INFORMASI TALANGAN KEPERLUAN PT" : "INFORMASI PROYEK & KONTRAK", ""]],
       body: table1Body,
       theme: "grid",
       headStyles: {
@@ -10414,7 +10929,7 @@ const AdminDebtScreen = ({
         textColor: [51, 65, 85],
       },
       columnStyles: {
-        0: { fontStyle: "bold", cellWidth: 30, fillColor: [248, 250, 252] },
+        0: { fontStyle: "bold", cellWidth: 32, fillColor: [248, 250, 252] },
         1: { fontStyle: "bold", textColor: [15, 23, 42] },
       },
     });
@@ -10424,7 +10939,7 @@ const AdminDebtScreen = ({
       startY: currentY,
       margin: { left: 104 },
       tableWidth: 94,
-      head: [["REALISASI & TAGIHAN KONTRAK", ""]],
+      head: [[isSingleHutang ? "REKONSILIASI HUTANG & PELUNASAN PT" : "REALISASI & TAGIHAN KONTRAK", ""]],
       body: table2Body,
       theme: "grid",
       headStyles: {
@@ -10452,36 +10967,53 @@ const AdminDebtScreen = ({
     doc.setFontSize(9.5);
     doc.setTextColor(26, 43, 73);
     doc.setFont("helvetica", "bold");
-    doc.text("TABEL DETAIL TAHAPAN TERMIN & REALISASI PEMBAYARAN", 12, nextTableY);
+    doc.text(
+      isSingleHutang ? "TABEL DETAIL RIWAYAT PEMBAYARAN OLEH PT" : "TABEL DETAIL TAHAPAN TERMIN & REALISASI PEMBAYARAN",
+      12,
+      nextTableY
+    );
 
-    // Build Table Data for Terms (NO ID column!)
-    const tableBody = sched.terms.map((t: any) => {
-      const termAmt = t.amount && t.amount > 0 ? t.amount : (t.expectedAmount || 0);
-      return [
-        t.name,
-        t.description || "-",
-        termAmt > 0 ? formatCurrencyIDR(termAmt).replace("Rp ", "") : "-",
-        t.percentage > 0 ? `${t.percentage}%` : "-",
-        t.invoiceDate || "-",
-        t.paymentDate || "-",
-        t.status,
-        t.notes || "-",
-      ];
-    });
+    // Build Table Data
+    const tableBody = isSingleHutang
+      ? (sched.allPayments && sched.allPayments.length > 0
+          ? sched.allPayments.map((p: any, idx: number) => [
+              `Bayar #${idx + 1}`,
+              p.note || `Pelunasan Nota ${record.customId || ""}`,
+              formatCurrencyIDR(p.amount || 0).replace("Rp ", ""),
+              "-",
+              "-",
+              p.date || "-",
+              "LUNAS",
+              p.financialRecordId || "Kas/Bank PT",
+            ])
+          : [["-", "Belum ada transaksi pembayaran hutang oleh PT untuk nota ini.", "-", "-", "-", "-", "BELUM BAYAR", "-"]])
+      : sched.terms.map((t: any) => {
+          const termAmt = t.amount && t.amount > 0 ? t.amount : (t.expectedAmount || 0);
+          return [
+            t.name,
+            t.description || "-",
+            termAmt > 0 ? formatCurrencyIDR(termAmt).replace("Rp ", "") : "-",
+            t.percentage > 0 ? `${t.percentage}%` : "-",
+            t.invoiceDate || "-",
+            t.paymentDate || "-",
+            t.status,
+            t.notes || "-",
+          ];
+        });
 
     autoTable(doc, {
       startY: nextTableY + 3,
       margin: { left: 12, right: 12 },
       head: [
         [
-          "TERMIN/TAHAP",
-          "DESKRIPSI",
+          isSingleHutang ? "TRANSAKSI" : "TERMIN/TAHAP",
+          "DESKRIPSI / KETERANGAN",
           "JUMLAH (RP)",
           "PROP.",
           "TGL INVOICE",
           "TGL BAYAR",
           "STATUS",
-          "KETERANGAN",
+          isSingleHutang ? "SUMBER KAS PT" : "KETERANGAN",
         ],
       ],
       body: tableBody,
@@ -12093,12 +12625,13 @@ const AdminDebtScreen = ({
 
           // 1. Dari payments array di record (pembayaran yang dicatat pada data piutang/hutang)
           paymentsList.forEach((p, idx) => {
-            if (isAlreadyAdded(p.amount, p.date, p.financialRecordId || p.id)) return;
+            const pAmt = Math.min(p.amount || 0, contractValue);
+            if (isAlreadyAdded(pAmt, p.date, p.financialRecordId || p.id)) return;
             const recorderName = resolveHumanRecorder(p.recordedBy);
             unifiedPayments.push({
               id: p.id || `pay-${idx}`,
               date: p.date || rec.dueDate || "-",
-              amount: p.amount,
+              amount: pAmt,
               note: p.note || `Pembayaran ${rec.type === "HUTANG" ? "Hutang" : "Piutang"}`,
               recordedBy: recorderName,
               source: p.financialRecordId ? "Buku Kas PT" : "Pembayaran Kas PT",
@@ -12109,12 +12642,30 @@ const AdminDebtScreen = ({
 
           // 2. Dari related financial records (transaksi kas riil dari Buku Kas PT)
           relatedFin.forEach((f) => {
-            if (isAlreadyAdded(f.amount, f.date, f.customId || f.id)) return;
+            const matchingAlloc = f.debtAllocations?.find(
+              (a) =>
+                a.debtId === rec.id ||
+                a.debtId === rec.customId ||
+                (rec.customId && a.debtId?.toUpperCase() === rec.customId.toUpperCase()) ||
+                (a.customId && (a.customId.toUpperCase() === rec.customId?.toUpperCase()))
+            );
+            let payAmt = matchingAlloc ? matchingAlloc.amount : f.amount;
+            if (!matchingAlloc && f.refHutang && rec.customId) {
+              const escapedId = rec.customId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const regex = new RegExp(`${escapedId}[^)]*?\\(Rp\\s*([\\d\\.,]+)\\)`, 'i');
+              const m = f.refHutang.match(regex);
+              if (m && m[1]) {
+                const parsed = Number(m[1].replace(/\./g, "").replace(/,/g, ""));
+                if (!isNaN(parsed) && parsed > 0) payAmt = parsed;
+              }
+            }
+            payAmt = Math.min(payAmt, contractValue);
+            if (isAlreadyAdded(payAmt, f.date, f.customId || f.id)) return;
             const recorderName = resolveHumanRecorder(f.recordedBy || f.senderName || f.personalHolder);
             unifiedPayments.push({
               id: f.id,
               date: f.date,
-              amount: f.amount,
+              amount: payAmt,
               note: f.description || (isPiutang ? "Pembayaran Termin / DP Proyek" : "Pembayaran Hutang"),
               recordedBy: recorderName,
               source: f.paymentMethod ? `Kas PT (${f.paymentMethod})` : "Buku Kas PT",
@@ -12125,12 +12676,13 @@ const AdminDebtScreen = ({
 
           // 3. Dari sched.allPayments (kalkulasi pembayaran jadwal proyek)
           (sched.allPayments || []).forEach((ap: any, idx: number) => {
-            if (isAlreadyAdded(ap.amount, ap.date, ap.financialRecordId || ap.id)) return;
+            const apAmt = Math.min(ap.amount || 0, contractValue);
+            if (isAlreadyAdded(apAmt, ap.date, ap.financialRecordId || ap.id)) return;
             const recorderName = resolveHumanRecorder(ap.recordedBy);
             unifiedPayments.push({
               id: ap.id || `sched-pay-${idx}`,
               date: ap.date || rec.dueDate || "-",
-              amount: ap.amount,
+              amount: apAmt,
               note: ap.note || `Pembayaran ${isPiutang ? "Termin Piutang" : "Hutang"}`,
               recordedBy: recorderName,
               source: ap.financialRecordId ? "Buku Kas PT" : "Pembayaran Kas PT",
@@ -12173,8 +12725,8 @@ const AdminDebtScreen = ({
           }));
 
           // Hitung total terbayar murni dari transaksi pembayaran yang valid (tidak tercampur pengeluaran)
-          const computedTotalPaid = displayPayments.reduce((acc, u) => acc + (u.amount || 0), 0);
-          const totalPaid = computedTotalPaid > 0 ? computedTotalPaid : (sched.totalPaid || 0);
+          const computedTotalPaid = Math.min(contractValue, displayPayments.reduce((acc, u) => acc + (u.amount || 0), 0));
+          const totalPaid = Math.min(contractValue, computedTotalPaid > 0 ? computedTotalPaid : (sched.totalPaid || 0));
           const remaining = Math.max(0, contractValue - totalPaid);
           const isFullyPaid = remaining === 0 || (rec.status === "PAID" && remaining <= 100);
 
@@ -13508,22 +14060,35 @@ const AdminDebtScreen = ({
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="bg-slate-50/70 p-4 rounded-2xl border border-slate-100">
-                    <p className="text-[9.5px] font-black uppercase text-slate-400 tracking-wider">Total Catatan</p>
-                    <p className="text-lg font-black text-slate-800 mt-1">{contactDetailSummary.count} Rekam</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
+                  <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 shadow-xs">
+                    <p className="text-[9.5px] font-black uppercase text-slate-500 tracking-wider">Total Dana Terpakai</p>
+                    <p className="text-base sm:text-lg font-black text-slate-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalAmount)}</p>
+                    <p className="text-[10px] text-slate-400 font-medium mt-0.5">{contactDetailSummary.count} Catatan Terdata</p>
                   </div>
-                  <div className="bg-slate-50/70 p-4 rounded-2xl border border-slate-100">
-                    <p className="text-[9.5px] font-black uppercase text-slate-400 tracking-wider">Total Nilai Awal</p>
-                    <p className="text-lg font-black text-slate-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalAmount)}</p>
+                  <div className="bg-purple-50/70 p-4 rounded-2xl border border-purple-200/80 shadow-xs">
+                    <p className="text-[9.5px] font-black uppercase text-purple-700 tracking-wider">Talangan Pokok (≥ 2 Jt)</p>
+                    <p className="text-base sm:text-lg font-black text-purple-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.majorDebtAmount)}</p>
+                    <p className="text-[10px] text-purple-600 font-medium mt-0.5">{contactDetailSummary.majorDebtRecords.length} Atas Nama Kontak</p>
                   </div>
-                  <div className="bg-emerald-50/50 p-4 rounded-2xl border border-emerald-100/60">
-                    <p className="text-[9.5px] font-black uppercase text-emerald-600 tracking-wider">Telah Dibayar</p>
-                    <p className="text-lg font-black text-emerald-700 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalPaid)}</p>
+                  <div className="bg-amber-50/70 p-4 rounded-2xl border border-amber-200/80 shadow-xs">
+                    <p className="text-[9.5px] font-black uppercase text-amber-700 tracking-wider">Rekam Belanja (&lt; 2 Jt)</p>
+                    <p className="text-base sm:text-lg font-black text-amber-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.minorReimburseAmount)}</p>
+                    <p className="text-[10px] text-amber-600 font-medium mt-0.5">{contactDetailSummary.minorReimburseRecords.length} Melekat Rekam Data</p>
                   </div>
-                  <div className="bg-rose-50/60 p-4 rounded-2xl border border-rose-100/80">
-                    <p className="text-[9.5px] font-black uppercase text-rose-600 tracking-wider">Sisa Saldo Hutang</p>
-                    <p className="text-lg font-black text-rose-700 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalRemaining)}</p>
+                  <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200/80 shadow-xs">
+                    <p className="text-[9.5px] font-black uppercase text-emerald-700 tracking-wider">Total Masuk dari PT</p>
+                    <p className="text-base sm:text-lg font-black text-emerald-700 mt-1 font-mono">
+                      {formatCurrencyIDR(contactDetailSummary.totalPtPaidHutang > 0 ? contactDetailSummary.totalPtPaidHutang : contactDetailSummary.totalPaid)}
+                    </p>
+                    <p className="text-[10px] text-emerald-600 font-medium mt-0.5">{contactFinancialRecords.length} Trx Transfer PT</p>
+                  </div>
+                  <div className="bg-rose-50/70 p-4 rounded-2xl border border-rose-200/80 shadow-xs">
+                    <p className="text-[9.5px] font-black uppercase text-rose-700 tracking-wider">Sisa Kewajiban PT</p>
+                    <p className="text-base sm:text-lg font-black text-rose-700 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalRemaining)}</p>
+                    <p className="text-[10px] text-rose-600 font-medium mt-0.5">
+                      {contactDetailSummary.totalRemaining <= 0 ? "Lunas Penuh (100%)" : "Belum Diselesaikan"}
+                    </p>
                   </div>
                 </div>
               )}
@@ -13538,7 +14103,11 @@ const AdminDebtScreen = ({
                       : "text-slate-500 hover:text-slate-900"
                   }`}
                 >
-                  <FileText size={14} /> Daftar Rekam {selectedContactDetail.type === "HUTANG" ? "Hutang" : "Piutang"} ({contactDetailRecords.length})
+                  <FileText size={14} />{" "}
+                  {selectedContactDetail.type === "HUTANG"
+                    ? "Daftar Catatan Dana Pribadi Terpakai"
+                    : "Daftar Rekam Piutang"}{" "}
+                  ({contactDetailRecords.length})
                 </button>
                 <button
                   onClick={() => setContactDetailTab("FINANCIAL")}
@@ -13550,7 +14119,7 @@ const AdminDebtScreen = ({
                 >
                   <Receipt size={14} />{" "}
                   {selectedContactDetail.type === "HUTANG"
-                    ? "Rincian Pembayaran Hutang ke Pihak Terkait"
+                    ? "Catatan Pembayaran dari Rekening PT"
                     : "Mutasi Kas/Bank Terkait"}{" "}
                   ({contactFinancialRecords.length})
                 </button>
@@ -13559,159 +14128,373 @@ const AdminDebtScreen = ({
               {/* Tab 1: Daftar Rekam Hutang / Piutang */}
               {contactDetailTab === "DEBTS" && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between text-xs text-slate-500">
-                    <p className="font-semibold">
-                      Berikut daftar seluruh invoice/catatan {selectedContactDetail.type === "HUTANG" ? "kewajiban hutang ke" : "piutang dari"}{" "}
-                      <span className="font-bold text-slate-900">{selectedContactDetail.name}</span> beserta peruntukan dana dan status pelunasannya:
-                    </p>
-                  </div>
-
-                  {contactDetailRecords.length === 0 ? (
-                    <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100 text-center">
-                      <p className="text-xs font-semibold text-slate-400">Tidak ada rekam data hutang/piutang ditemukan untuk kontak ini.</p>
-                    </div>
-                  ) : (
-                    <div className="border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
-                      <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
-                        <table className="w-full text-left border-collapse text-xs">
-                          <thead className="sticky top-0 bg-slate-800 text-white font-mono font-black text-[10px] uppercase tracking-wider z-10">
-                            <tr>
-                              <th className="p-3.5 pl-4">NO</th>
-                              <th className="p-3.5">ID REKAM</th>
-                              <th className="p-3.5 min-w-[220px]">TUJUAN / JUDUL HUTANG</th>
-                              <th className="p-3.5">PROYEK</th>
-                              <th className="p-3.5">TANGGAL</th>
-                              <th className="p-3.5 text-right font-mono">NILAI AWAL</th>
-                              <th className="p-3.5 text-right font-mono">DIBAYAR</th>
-                              <th className="p-3.5 text-right font-mono">SISA SALDO</th>
-                              <th className="p-3.5 text-center">STATUS</th>
-                              <th className="p-3.5 pr-4 text-center">AKSI</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
-                            {contactDetailRecords.map((rec, rIdx) => {
-                              const sched = getScheduleForRecord(rec, projects, financialRecords);
-                              const paid = sched.totalPaid;
-                              const initialAmt = sched.contractValue || rec.amount || 0;
-                              const remaining = Math.max(0, initialAmt - paid);
-                              const projName = projects.find((p) => p.id === rec.projectId)?.name || "-";
-                              const status = remaining <= 0 ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID";
-
-                              return (
-                                <tr key={rec.id || rIdx} className="hover:bg-slate-50/70 transition-colors">
-                                  <td className="p-3.5 pl-4 font-mono text-slate-400 text-[11px]">{rIdx + 1}</td>
-                                  <td className="p-3.5 font-mono text-indigo-600 font-black text-[11px]">
-                                    {rec.customId || rec.id}
-                                  </td>
-                                  <td className="p-3.5">
-                                    <div>
-                                      <p className="font-extrabold text-slate-800 uppercase tracking-tight text-xs">
-                                        {rec.title || "Tanpa Judul"}
-                                      </p>
-                                      {rec.description && (
-                                        <p className="text-[11px] text-slate-500 font-medium mt-0.5 max-w-sm">
-                                          {rec.description}
-                                        </p>
-                                      )}
-                                    </div>
-                                  </td>
-                                  <td className="p-3.5">
-                                    <span className="text-slate-600 font-semibold text-[11px] truncate block max-w-[140px]" title={projName}>
-                                      {projName}
-                                    </span>
-                                  </td>
-                                  <td className="p-3.5 font-mono text-slate-600 text-[11px]">
-                                    {rec.dueDate || "-"}
-                                  </td>
-                                  <td className="p-3.5 text-right font-mono text-slate-800">
-                                    {formatCurrencyIDR(initialAmt)}
-                                  </td>
-                                  <td className="p-3.5 text-right font-mono text-emerald-600">
-                                    {formatCurrencyIDR(paid)}
-                                  </td>
-                                  <td className="p-3.5 text-right font-mono">
-                                    <span className={remaining > 0 ? (selectedContactDetail.type === "HUTANG" ? "text-rose-600 font-black" : "text-emerald-600 font-black") : "text-slate-400"}>
-                                      {formatCurrencyIDR(remaining)}
-                                    </span>
-                                  </td>
-                                  <td className="p-3.5 text-center">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleOpenStatusModal(rec)}
-                                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border cursor-pointer hover:scale-105 transition-all shadow-xs ${
-                                        status === "PAID"
-                                          ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
-                                          : status === "PARTIAL"
-                                            ? "bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100"
-                                            : "bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100"
-                                      }`}
-                                      title="Klik untuk ganti status Lunas / Belum Lunas"
-                                    >
-                                      {status === "PAID" ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
-                                      <span>{status === "PAID" ? "Lunas" : status === "PARTIAL" ? "Dicicil" : "Belum Bayar"}</span>
-                                      <SlidersHorizontal size={8} className="opacity-50 ml-0.5" />
-                                    </button>
-                                  </td>
-                                  <td className="p-3.5 pr-4">
-                                    <div className="flex items-center justify-center gap-1.5">
-                                      {remaining > 0 && (
-                                        <button
-                                          onClick={() => setShowPaymentModal(rec)}
-                                          className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors cursor-pointer"
-                                          title="Bayar Cicilan Item Ini"
-                                        >
-                                          Bayar
-                                        </button>
-                                      )}
-                                      <button
-                                        onClick={() => {
-                                          setShowEditModal(rec);
-                                          setEditForm({
-                                            title: rec.title,
-                                            contactName: rec.contactName,
-                                            amount: rec.amount.toString(),
-                                            dueDate: rec.dueDate,
-                                            description: rec.description || "",
-                                            projectId: rec.projectId || "",
-                                            type: rec.type,
-                                          });
-                                        }}
-                                        className="p-1.5 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 rounded-lg transition-colors cursor-pointer"
-                                        title="Edit Rincian"
-                                      >
-                                        <Edit size={12} />
-                                      </button>
-                                      <button
-                                        onClick={() => {
-                                          setSelectedContactDetail(null);
-                                          const { query } = getOriginFinanceQueryAndRecord(rec, financialRecords);
-                                          if (onNavigateToFinance) {
-                                            onNavigateToFinance(query);
-                                          } else {
-                                            onNavigate("admin-finance");
-                                          }
-                                        }}
-                                        className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors cursor-pointer flex items-center justify-center"
-                                        title="Buka Catatan Transaksi di Data Keuangan Keseluruhan"
-                                      >
-                                        <ArrowRightLeft size={12} />
-                                      </button>
-                                      <button
-                                        onClick={() => setSelectedTerminRecord(rec)}
-                                        className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors cursor-pointer"
-                                        title="Lihat Rincian Termin / Cicilan"
-                                      >
-                                        <Eye size={12} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                  {selectedContactDetail.type === "HUTANG" ? (
+                    <>
+                      {/* Filter Bar Klasifikasi Dana Pribadi */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-200/80">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setContactDanaPribadiFilter("ALL")}
+                            className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                              contactDanaPribadiFilter === "ALL"
+                                ? "bg-white text-slate-900 shadow-xs border border-slate-200"
+                                : "text-slate-500 hover:text-slate-900"
+                            }`}
+                          >
+                            Semua Catatan ({contactDetailRecords.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setContactDanaPribadiFilter("MAJOR")}
+                            className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                              contactDanaPribadiFilter === "MAJOR"
+                                ? "bg-purple-600 text-white shadow-xs"
+                                : "text-purple-700 bg-purple-50 hover:bg-purple-100/80 border border-purple-200/60"
+                            }`}
+                          >
+                            <CreditCard size={11} />
+                            Talangan Pokok (≥ Rp 2 Jt) ({contactDetailSummary.majorDebtRecords.length})
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setContactDanaPribadiFilter("MINOR")}
+                            className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                              contactDanaPribadiFilter === "MINOR"
+                                ? "bg-amber-600 text-white shadow-xs"
+                                : "text-amber-800 bg-amber-50 hover:bg-amber-100/80 border border-amber-200/60"
+                            }`}
+                          >
+                            <Receipt size={11} />
+                            Rekam Belanja (&lt; Rp 2 Jt) ({contactDetailSummary.minorReimburseRecords.length})
+                          </button>
+                        </div>
+                        <p className="text-[11px] text-slate-500 font-medium">
+                          {contactDanaPribadiFilter === "MAJOR"
+                            ? "Catatan talangan pokok terikat langsung pada nama kontak."
+                            : contactDanaPribadiFilter === "MINOR"
+                            ? "Catatan belanja operasional yang melekat langsung pada rekam data transaksi/nota."
+                            : "Daftar seluruh dana talangan pribadi yang telah terpakai untuk keperluan PT."}
+                        </p>
                       </div>
-                    </div>
+
+                      {/* Tabel Catatan Dana Pribadi Terpakai */}
+                      {contactDetailRecords.length === 0 ? (
+                        <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100 text-center">
+                          <p className="text-xs font-semibold text-slate-400">Tidak ada rekam data dana pribadi ditemukan untuk kontak ini.</p>
+                        </div>
+                      ) : (
+                        <div className="border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
+                          <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead className="sticky top-0 bg-slate-900 text-white font-mono font-black text-[10px] uppercase tracking-wider z-10">
+                                <tr>
+                                  <th className="p-3.5 pl-4 w-12 text-center">NO</th>
+                                  <th className="p-3.5 w-28">ID REKAM</th>
+                                  <th className="p-3.5 w-24">TANGGAL</th>
+                                  <th className="p-3.5 min-w-[240px]">KEPERLUAN / TUJUAN BELANJA PT</th>
+                                  <th className="p-3.5 w-36">PROYEK</th>
+                                  <th className="p-3.5 w-44 text-center">KLASIFIKASI TRANSAKSI</th>
+                                  <th className="p-3.5 text-right font-mono w-40">NOMINAL TERPAKAI</th>
+                                  <th className="p-3.5 pr-4 text-center w-28">AKSI</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
+                                {contactDetailRecords
+                                  .filter((rec) => {
+                                    const amt = rec.amount || 0;
+                                    if (contactDanaPribadiFilter === "MAJOR") return amt >= 2000000;
+                                    if (contactDanaPribadiFilter === "MINOR") return amt < 2000000;
+                                    return true;
+                                  })
+                                  .map((rec, rIdx) => {
+                                    const sched = getScheduleForRecord(rec, projects, financialRecords);
+                                    const initialAmt = sched.contractValue || rec.amount || 0;
+                                    const projName = projects.find((p) => p.id === rec.projectId)?.name || "Umum / Operasional";
+                                    const isMajor = initialAmt >= 2000000;
+
+                                    return (
+                                      <tr key={rec.id || rIdx} className="hover:bg-slate-50/70 transition-colors">
+                                        <td className="p-3.5 pl-4 text-center font-mono text-slate-400 text-[11px]">{rIdx + 1}</td>
+                                        <td className="p-3.5 font-mono text-indigo-600 font-black text-[11px]">
+                                          {rec.customId || rec.id}
+                                        </td>
+                                        <td className="p-3.5 font-mono text-slate-600 text-[11px]">
+                                          {rec.dueDate || "-"}
+                                        </td>
+                                        <td className="p-3.5">
+                                          <div>
+                                            <p className="font-extrabold text-slate-800 uppercase tracking-tight text-xs">
+                                              {rec.title || "Tanpa Keterangan"}
+                                            </p>
+                                            {rec.description && (
+                                              <p className="text-[11px] text-slate-500 font-medium mt-0.5 max-w-md">
+                                                {rec.description}
+                                              </p>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td className="p-3.5">
+                                          <span className="text-slate-600 font-semibold text-[11px] truncate block max-w-[130px]" title={projName}>
+                                            {projName}
+                                          </span>
+                                        </td>
+                                        <td className="p-3.5 text-center">
+                                          {isMajor ? (
+                                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-200">
+                                              <CreditCard size={10} /> Talangan Pokok (≥ 2 Jt)
+                                            </span>
+                                          ) : (
+                                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200">
+                                              <Receipt size={10} /> Rekam Belanja (&lt; 2 Jt)
+                                            </span>
+                                          )}
+                                        </td>
+                                        <td className="p-3.5 text-right font-mono text-slate-900 font-black">
+                                          {formatCurrencyIDR(initialAmt)}
+                                        </td>
+                                        <td className="p-3.5 pr-4">
+                                          <div className="flex items-center justify-center gap-1.5">
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setSelectedContactDetail(null);
+                                                const { query } = getOriginFinanceQueryAndRecord(rec, financialRecords);
+                                                if (onNavigateToFinance) {
+                                                  onNavigateToFinance(query);
+                                                } else {
+                                                  onNavigate("admin-finance");
+                                                }
+                                              }}
+                                              className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors cursor-pointer flex items-center justify-center"
+                                              title="Buka Catatan Transaksi di Data Keuangan Keseluruhan"
+                                            >
+                                              <ArrowRightLeft size={12} />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => {
+                                                setShowEditModal(rec);
+                                                setEditForm({
+                                                  title: rec.title,
+                                                  contactName: rec.contactName,
+                                                  amount: rec.amount.toString(),
+                                                  dueDate: rec.dueDate,
+                                                  description: rec.description || "",
+                                                  projectId: rec.projectId || "",
+                                                  type: rec.type,
+                                                });
+                                              }}
+                                              className="p-1.5 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 rounded-lg transition-colors cursor-pointer"
+                                              title="Edit Rincian Catatan"
+                                            >
+                                              <Edit size={12} />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => setSelectedTerminRecord(rec)}
+                                              className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors cursor-pointer"
+                                              title="Lihat Rincian Termin / Cicilan"
+                                            >
+                                              <Eye size={12} />
+                                            </button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                              </tbody>
+                              <tfoot className="bg-slate-50 border-t-2 border-slate-200 text-slate-800 font-mono text-xs">
+                                <tr>
+                                  <td colSpan={6} className="p-3 pl-4 text-right font-black uppercase text-[10px] text-purple-700">
+                                    Subtotal Talangan Pokok (≥ Rp 2 Juta):
+                                  </td>
+                                  <td className="p-3 text-right font-black text-purple-700">
+                                    {formatCurrencyIDR(contactDetailSummary.majorDebtAmount)}
+                                  </td>
+                                  <td></td>
+                                </tr>
+                                <tr>
+                                  <td colSpan={6} className="p-3 pl-4 text-right font-black uppercase text-[10px] text-amber-700">
+                                    Subtotal Rekam Belanja Operasional (&lt; Rp 2 Juta):
+                                  </td>
+                                  <td className="p-3 text-right font-black text-amber-800">
+                                    {formatCurrencyIDR(contactDetailSummary.minorReimburseAmount)}
+                                  </td>
+                                  <td></td>
+                                </tr>
+                                <tr className="bg-slate-100/80 font-black">
+                                  <td colSpan={6} className="p-3.5 pl-4 text-right uppercase text-[11px] text-slate-900 tracking-wider">
+                                    Total Seluruh Catatan Dana Pribadi Terpakai PT:
+                                  </td>
+                                  <td className="p-3.5 text-right text-sm text-slate-900">
+                                    {formatCurrencyIDR(contactDetailSummary.totalAmount)}
+                                  </td>
+                                  <td></td>
+                                </tr>
+                              </tfoot>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    /* Tampilan Standar untuk PIUTANG */
+                    <>
+                      <div className="flex items-center justify-between text-xs text-slate-500">
+                        <p className="font-semibold">
+                          Berikut daftar invoice/tagihan piutang dari <span className="font-bold text-slate-900">{selectedContactDetail.name}</span>:
+                        </p>
+                      </div>
+
+                      {contactDetailRecords.length === 0 ? (
+                        <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100 text-center">
+                          <p className="text-xs font-semibold text-slate-400">Tidak ada rekam data piutang ditemukan untuk klien ini.</p>
+                        </div>
+                      ) : (
+                        <div className="border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
+                          <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+                            <table className="w-full text-left border-collapse text-xs">
+                              <thead className="sticky top-0 bg-slate-800 text-white font-mono font-black text-[10px] uppercase tracking-wider z-10">
+                                <tr>
+                                  <th className="p-3.5 pl-4">NO</th>
+                                  <th className="p-3.5">ID REKAM</th>
+                                  <th className="p-3.5 min-w-[220px]">JUDUL PIUTANG</th>
+                                  <th className="p-3.5">PROYEK</th>
+                                  <th className="p-3.5">TANGGAL</th>
+                                  <th className="p-3.5 text-right font-mono">NILAI AWAL</th>
+                                  <th className="p-3.5 text-right font-mono">DIBAYAR</th>
+                                  <th className="p-3.5 text-right font-mono">SISA SALDO</th>
+                                  <th className="p-3.5 text-center">STATUS</th>
+                                  <th className="p-3.5 pr-4 text-center">AKSI</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
+                                {contactDetailRecords.map((rec, rIdx) => {
+                                  const sched = getScheduleForRecord(rec, projects, financialRecords);
+                                  const paid = sched.totalPaid;
+                                  const initialAmt = sched.contractValue || rec.amount || 0;
+                                  const remaining = Math.max(0, initialAmt - paid);
+                                  const projName = projects.find((p) => p.id === rec.projectId)?.name || "-";
+                                  const status = remaining <= 0 ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID";
+
+                                  return (
+                                    <tr key={rec.id || rIdx} className="hover:bg-slate-50/70 transition-colors">
+                                      <td className="p-3.5 pl-4 font-mono text-slate-400 text-[11px]">{rIdx + 1}</td>
+                                      <td className="p-3.5 font-mono text-indigo-600 font-black text-[11px]">
+                                        {rec.customId || rec.id}
+                                      </td>
+                                      <td className="p-3.5">
+                                        <div>
+                                          <p className="font-extrabold text-slate-800 uppercase tracking-tight text-xs">
+                                            {rec.title || "Tanpa Judul"}
+                                          </p>
+                                          {rec.description && (
+                                            <p className="text-[11px] text-slate-500 font-medium mt-0.5 max-w-sm">
+                                              {rec.description}
+                                            </p>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="p-3.5">
+                                        <span className="text-slate-600 font-semibold text-[11px] truncate block max-w-[140px]" title={projName}>
+                                          {projName}
+                                        </span>
+                                      </td>
+                                      <td className="p-3.5 font-mono text-slate-600 text-[11px]">
+                                        {rec.dueDate || "-"}
+                                      </td>
+                                      <td className="p-3.5 text-right font-mono text-slate-800">
+                                        {formatCurrencyIDR(initialAmt)}
+                                      </td>
+                                      <td className="p-3.5 text-right font-mono text-emerald-600">
+                                        {formatCurrencyIDR(paid)}
+                                      </td>
+                                      <td className="p-3.5 text-right font-mono">
+                                        <span className={remaining > 0 ? "text-emerald-600 font-black" : "text-slate-400"}>
+                                          {formatCurrencyIDR(remaining)}
+                                        </span>
+                                      </td>
+                                      <td className="p-3.5 text-center">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenStatusModal(rec)}
+                                          className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider border cursor-pointer hover:scale-105 transition-all shadow-xs ${
+                                            status === "PAID"
+                                              ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100"
+                                              : status === "PARTIAL"
+                                                ? "bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100"
+                                                : "bg-rose-50 text-rose-700 border-rose-300 hover:bg-rose-100"
+                                          }`}
+                                          title="Klik untuk ganti status Lunas / Belum Lunas"
+                                        >
+                                          {status === "PAID" ? <CheckCircle2 size={10} /> : <XCircle size={10} />}
+                                          <span>{status === "PAID" ? "Lunas" : status === "PARTIAL" ? "Dicicil" : "Belum Bayar"}</span>
+                                          <SlidersHorizontal size={8} className="opacity-50 ml-0.5" />
+                                        </button>
+                                      </td>
+                                      <td className="p-3.5 pr-4">
+                                        <div className="flex items-center justify-center gap-1.5">
+                                          {remaining > 0 && (
+                                            <button
+                                              onClick={() => setShowPaymentModal(rec)}
+                                              className="px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors cursor-pointer"
+                                              title="Bayar Cicilan Tagihan Ini"
+                                            >
+                                              Terima
+                                            </button>
+                                          )}
+                                          <button
+                                            onClick={() => {
+                                              setShowEditModal(rec);
+                                              setEditForm({
+                                                title: rec.title,
+                                                contactName: rec.contactName,
+                                                amount: rec.amount.toString(),
+                                                dueDate: rec.dueDate,
+                                                description: rec.description || "",
+                                                projectId: rec.projectId || "",
+                                                type: rec.type,
+                                              });
+                                            }}
+                                            className="p-1.5 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-600 rounded-lg transition-colors cursor-pointer"
+                                            title="Edit Rincian"
+                                          >
+                                            <Edit size={12} />
+                                          </button>
+                                          <button
+                                            onClick={() => {
+                                              setSelectedContactDetail(null);
+                                              const { query } = getOriginFinanceQueryAndRecord(rec, financialRecords);
+                                              if (onNavigateToFinance) {
+                                                onNavigateToFinance(query);
+                                              } else {
+                                                onNavigate("admin-finance");
+                                              }
+                                            }}
+                                            className="p-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors cursor-pointer flex items-center justify-center"
+                                            title="Buka Catatan Transaksi di Data Keuangan Keseluruhan"
+                                          >
+                                            <ArrowRightLeft size={12} />
+                                          </button>
+                                          <button
+                                            onClick={() => setSelectedTerminRecord(rec)}
+                                            className="p-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-lg transition-colors cursor-pointer"
+                                            title="Lihat Rincian Termin / Cicilan"
+                                          >
+                                            <Eye size={12} />
+                                          </button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -13721,32 +14504,54 @@ const AdminDebtScreen = ({
                 <div className="space-y-4">
                   {/* Financial Flow Overview */}
                   {selectedContactDetail.type === "HUTANG" ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200/80 flex items-center justify-between shadow-2xs">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                      <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200/80 flex flex-col justify-between shadow-2xs">
                         <div>
-                          <p className="text-[9.5px] font-black uppercase text-slate-500 tracking-wider">Total Pokok Hutang</p>
+                          <p className="text-[9.5px] font-black uppercase text-slate-500 tracking-wider">Total Dana Terpakai</p>
                           <p className="text-base font-black text-slate-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.totalAmount)}</p>
                         </div>
-                        <span className="px-2.5 py-1 bg-slate-200/70 text-slate-700 text-[10px] font-black rounded-lg">
-                          {contactDetailRecords.length} Nota
+                        <span className="mt-2 w-fit px-2.5 py-0.5 bg-slate-200/70 text-slate-700 text-[10px] font-black rounded-lg">
+                          {contactDetailRecords.length} Catatan Dana
                         </span>
                       </div>
-                      <div className="bg-emerald-50/70 p-3.5 rounded-2xl border border-emerald-200/80 flex items-center justify-between shadow-2xs">
+                      <div className="bg-purple-50/70 p-3.5 rounded-2xl border border-purple-200/80 flex flex-col justify-between shadow-2xs">
                         <div>
-                          <p className="text-[9.5px] font-black uppercase text-emerald-700 tracking-wider">Total Dana Pelunasan Dibayar</p>
-                          <p className="text-base font-black text-emerald-800 mt-0.5 font-mono">{formatCurrencyIDR(contactFinancialRecords.reduce((sum, f) => sum + (f.amount || 0), 0))}</p>
+                          <p className="text-[9.5px] font-black uppercase text-purple-700 tracking-wider">Talangan Pokok (≥ 2 Jt)</p>
+                          <p className="text-base font-black text-purple-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.majorDebtAmount)}</p>
                         </div>
-                        <span className="px-2.5 py-1 bg-emerald-200/60 text-emerald-800 text-[10px] font-black rounded-lg">
-                          {contactFinancialRecords.length} Trx Bayar
+                        <span className="mt-2 w-fit px-2.5 py-0.5 bg-purple-200/60 text-purple-800 text-[10px] font-black rounded-lg flex items-center gap-1">
+                          <CreditCard size={10} />
+                          {contactDetailSummary.majorDebtRecords.length} Atas Nama Kontak
                         </span>
                       </div>
-                      <div className="bg-rose-50/70 p-3.5 rounded-2xl border border-rose-200/80 flex items-center justify-between shadow-2xs">
+                      <div className="bg-amber-50/70 p-3.5 rounded-2xl border border-amber-200/80 flex flex-col justify-between shadow-2xs">
                         <div>
-                          <p className="text-[9.5px] font-black uppercase text-rose-700 tracking-wider">Sisa Saldo Hutang</p>
+                          <p className="text-[9.5px] font-black uppercase text-amber-700 tracking-wider">Rekam Belanja (&lt; 2 Jt)</p>
+                          <p className="text-base font-black text-amber-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.minorReimburseAmount)}</p>
+                        </div>
+                        <span className="mt-2 w-fit px-2.5 py-0.5 bg-amber-200/60 text-amber-800 text-[10px] font-black rounded-lg flex items-center gap-1">
+                          <Receipt size={10} />
+                          {contactDetailSummary.minorReimburseRecords.length} Melekat Rekam Data
+                        </span>
+                      </div>
+                      <div className="bg-emerald-50/70 p-3.5 rounded-2xl border border-emerald-200/80 flex flex-col justify-between shadow-2xs">
+                        <div>
+                          <p className="text-[9.5px] font-black uppercase text-emerald-700 tracking-wider">Total Masuk dari PT</p>
+                          <p className="text-base font-black text-emerald-800 mt-0.5 font-mono">
+                            {formatCurrencyIDR(contactDetailSummary.totalPtPaidHutang > 0 ? contactDetailSummary.totalPtPaidHutang : contactDetailSummary.totalPaid)}
+                          </p>
+                        </div>
+                        <span className="mt-2 w-fit px-2.5 py-0.5 bg-emerald-200/60 text-emerald-800 text-[10px] font-black rounded-lg">
+                          {contactFinancialRecords.length} Trx Transfer PT
+                        </span>
+                      </div>
+                      <div className="bg-rose-50/70 p-3.5 rounded-2xl border border-rose-200/80 flex flex-col justify-between shadow-2xs">
+                        <div>
+                          <p className="text-[9.5px] font-black uppercase text-rose-700 tracking-wider">Sisa Kewajiban PT</p>
                           <p className="text-base font-black text-rose-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.totalRemaining)}</p>
                         </div>
-                        <span className="px-2.5 py-1 bg-rose-200/60 text-rose-800 text-[10px] font-black rounded-lg">
-                          {contactDetailSummary.totalRemaining <= 0 ? "Lunas" : "Belum Lunas"}
+                        <span className="mt-2 w-fit px-2.5 py-0.5 bg-rose-200/60 text-rose-800 text-[10px] font-black rounded-lg">
+                          {contactDetailSummary.totalRemaining <= 0 ? "Lunas Penuh (100%)" : "Belum Selesai"}
                         </span>
                       </div>
                     </div>
@@ -13812,17 +14617,45 @@ const AdminDebtScreen = ({
                         </button>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
-                        <span className="px-3.5 py-1.5 bg-rose-50 text-rose-700 border border-rose-200/80 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-2xs">
-                          <Receipt size={13} />
-                          <span>Daftar Bukti Bayar / Kas Keluar ({contactFinancialRecords.length} Transaksi)</span>
-                        </span>
+                      <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-xl w-fit">
+                        <button
+                          onClick={() => setContactHutangFinancialFilter("ALL")}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                            contactHutangFinancialFilter === "ALL"
+                              ? "bg-white text-slate-900 shadow-xs"
+                              : "text-slate-500 hover:text-slate-800"
+                          }`}
+                        >
+                          Semua Dana Masuk dari PT ({contactFinancialRecords.length})
+                        </button>
+                        <button
+                          onClick={() => setContactHutangFinancialFilter("PEMBAYARAN_HUTANG")}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                            contactHutangFinancialFilter === "PEMBAYARAN_HUTANG"
+                              ? "bg-purple-600 text-white shadow-xs"
+                              : "text-purple-700 hover:bg-purple-50"
+                          }`}
+                        >
+                          <CreditCard size={12} />
+                          Kategori Pembayaran Hutang ({contactDetailSummary.hutangCategoryRecords.length})
+                        </button>
+                        <button
+                          onClick={() => setContactHutangFinancialFilter("REIMBURSE")}
+                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
+                            contactHutangFinancialFilter === "REIMBURSE"
+                              ? "bg-amber-600 text-white shadow-xs"
+                              : "text-amber-700 hover:bg-amber-50"
+                          }`}
+                        >
+                          <RefreshCw size={12} />
+                          Kategori Reimburse ({contactDetailSummary.reimburseCategoryRecords.length})
+                        </button>
                       </div>
                     )}
 
                     <p className="text-xs text-slate-400 font-medium">
                       {selectedContactDetail.type === "HUTANG"
-                        ? `Menampilkan rincian transaksi kas & bank untuk pembayaran hutang ke pihak ${selectedContactDetail.name}.`
+                        ? `Menampilkan mutasi pengeluaran kas & bank PT yang masuk ke ${selectedContactDetail.name} (Pembayaran Hutang & Reimburse).`
                         : "Menampilkan mutasi kas & bank yang terhubung dengan proyek / kontak ini."}
                     </p>
                   </div>
@@ -13837,8 +14670,8 @@ const AdminDebtScreen = ({
                           Belum Ada Mutasi Transaksi Kas/Bank
                         </h4>
                         <p className="text-xs text-slate-500 font-medium leading-relaxed">
-                          Belum ditemukan catatan transaksi langsung di data pemasukan/pengeluaran untuk kontak{" "}
-                          <span className="font-bold text-slate-700">{selectedContactDetail.name}</span>. Hal ini wajar karena tanggal pencatatan mutasi kas/bank di sistem baru dimulai dari periode terkini, atau pencatatan hutang/piutang di atas merupakan saldo awal/tagihan yang belum dicairkan melalui buku kas.
+                          Belum ditemukan catatan transaksi pembayaran atau reimbursement dari rekening PT untuk kontak{" "}
+                          <span className="font-bold text-slate-700">{selectedContactDetail.name}</span>.
                         </p>
                       </div>
                     </div>
@@ -13855,14 +14688,33 @@ const AdminDebtScreen = ({
                               <th className="p-3.5">KATEGORI</th>
                               <th className="p-3.5 min-w-[200px]">KETERANGAN / DESKRIPSI</th>
                               <th className="p-3.5">REKENING / SUMBER DANA</th>
-                              <th className="p-3.5 pr-4 text-right font-mono">NOMINAL (IDR)</th>
+                              <th className="p-3.5 pr-4 text-right font-mono">NOMINAL MASUK (IDR)</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
                             {contactFinancialRecords
-                              .filter((fin) => (contactFinancialFilter === "ALL" ? true : fin.type === contactFinancialFilter))
+                              .filter((fin) => {
+                                if (selectedContactDetail.type === "HUTANG") {
+                                  if (contactHutangFinancialFilter === "ALL") return true;
+                                  const catUpper = (fin.category || "").toUpperCase();
+                                  const descUpper = (fin.description || "").toUpperCase();
+                                  if (contactHutangFinancialFilter === "PEMBAYARAN_HUTANG") {
+                                    return catUpper.includes("HUTANG");
+                                  }
+                                  if (contactHutangFinancialFilter === "REIMBURSE") {
+                                    return catUpper.includes("REIMBURSE") || descUpper.includes("REIMBURSE");
+                                  }
+                                  return true;
+                                }
+                                return contactFinancialFilter === "ALL" ? true : fin.type === contactFinancialFilter;
+                              })
                               .map((fin, fIdx) => {
                                 const isIncome = fin.type === "IN";
+                                const isHutangModal = selectedContactDetail.type === "HUTANG";
+                                const isReimburse =
+                                  (fin.category || "").toUpperCase().includes("REIMBURSE") ||
+                                  (fin.description || "").toUpperCase().includes("REIMBURSE");
+
                                 return (
                                   <tr key={fin.id || fIdx} className="hover:bg-slate-50/70 transition-colors">
                                     <td className="p-3.5 pl-4 font-mono text-slate-400 text-[11px]">{fIdx + 1}</td>
@@ -13871,24 +14723,77 @@ const AdminDebtScreen = ({
                                     <td className="p-3.5 text-center">
                                       <span
                                         className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                                          isIncome
+                                          isHutangModal
+                                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                            : isIncome
                                             ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                                             : "bg-rose-50 text-rose-700 border-rose-200"
                                         }`}
                                       >
-                                        {isIncome ? "Pemasukan" : "Pengeluaran (Belanja)"}
+                                        {isHutangModal ? "Dana Masuk ke Kontak" : isIncome ? "Pemasukan" : "Pengeluaran (Belanja)"}
                                       </span>
                                     </td>
-                                    <td className="p-3.5 text-slate-700 text-[11px]">{fin.category || "-"}</td>
+                                    <td className="p-3.5">
+                                      {isHutangModal ? (
+                                        <span
+                                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9.5px] font-black uppercase tracking-wider border ${
+                                            isReimburse
+                                              ? "bg-amber-50 text-amber-800 border-amber-200/80 shadow-2xs"
+                                              : "bg-purple-50 text-purple-800 border-purple-200/80 shadow-2xs"
+                                          }`}
+                                        >
+                                          {isReimburse ? <RefreshCw size={10} /> : <CreditCard size={10} />}
+                                          <span>{isReimburse ? "Reimburse" : "Pembayaran Hutang"}</span>
+                                        </span>
+                                      ) : (
+                                        <span className="text-slate-700 text-[11px]">{fin.category || "-"}</span>
+                                      )}
+                                    </td>
                                     <td className="p-3.5 text-slate-600 text-[11px] max-w-sm">{fin.description || "-"}</td>
-                                    <td className="p-3.5 text-slate-500 text-[11px]">{getDisplaySumberUang(fin)}</td>
-                                    <td className={`p-3.5 pr-4 text-right font-mono font-black ${isIncome ? "text-emerald-600" : "text-rose-600"}`}>
+                                    <td className="p-3.5 text-slate-500 text-[11px]">
+                                      {isHutangModal
+                                        ? `Dari: ${getDisplaySumberUang(fin)} ➔ Penerima: ${fin.rekPenerima || selectedContactDetail.name}`
+                                        : getDisplaySumberUang(fin)}
+                                    </td>
+                                    <td className={`p-3.5 pr-4 text-right font-mono font-black ${isHutangModal || isIncome ? "text-emerald-600" : "text-rose-600"}`}>
                                       {formatCurrencyIDR(fin.amount || 0)}
                                     </td>
                                   </tr>
                                 );
                               })}
                           </tbody>
+                          {selectedContactDetail.type === "HUTANG" && contactFinancialRecords.length > 0 && (
+                            <tfoot className="bg-slate-50/90 font-mono text-[11px] border-t-2 border-slate-200 text-slate-800 font-black">
+                              <tr>
+                                <td colSpan={5} className="p-3 pl-4 text-right text-purple-700 uppercase tracking-wider font-sans text-xs">
+                                  Subtotal Kategori Pembayaran Hutang PT:
+                                </td>
+                                <td colSpan={3} className="p-3 pr-4 text-right text-purple-700 font-black">
+                                  {formatCurrencyIDR(contactDetailSummary.hutangCategoryAmount)}
+                                </td>
+                              </tr>
+                              <tr>
+                                <td colSpan={5} className="p-3 pl-4 text-right text-amber-700 uppercase tracking-wider font-sans text-xs">
+                                  Subtotal Kategori Reimburse PT:
+                                </td>
+                                <td colSpan={3} className="p-3 pr-4 text-right text-amber-700 font-black">
+                                  {formatCurrencyIDR(contactDetailSummary.reimburseCategoryAmount)}
+                                </td>
+                              </tr>
+                              <tr className="bg-emerald-50/80 border-t border-emerald-200/80 text-emerald-900">
+                                <td colSpan={5} className="p-3.5 pl-4 text-right uppercase tracking-wider font-sans text-xs font-black">
+                                  Total Seluruh Dana Masuk Pembayaran dari PT (Hutang + Reimburse):
+                                </td>
+                                <td colSpan={3} className="p-3.5 pr-4 text-right text-emerald-800 text-sm font-black">
+                                  {formatCurrencyIDR(
+                                    contactDetailSummary.totalPtPaidHutang > 0
+                                      ? contactDetailSummary.totalPtPaidHutang
+                                      : contactDetailSummary.totalPaid
+                                  )}
+                                </td>
+                              </tr>
+                            </tfoot>
+                          )}
                         </table>
                       </div>
                     </div>
@@ -14631,7 +15536,7 @@ const AdminFinanceScreen = ({
         adminFee: String(editingTransaction.adminFee || ""),
         category: editingTransaction.category || "",
         description: editingTransaction.description || "",
-        projectId: editingTransaction.referenceId || "",
+        projectId: getFinancialRecordProjectId(editingTransaction, projects),
         linkedDebtId: editingTransaction.linkedDebtId || "",
         customId: editingTransaction.customId || "",
         sumberDana: editingTransaction.sumberDana || "",
@@ -16416,6 +17321,7 @@ const AdminFinanceScreen = ({
           personalHolder: formData.personalHolder || "",
           amount: alloc.amount,
           adminFee: i === 0 && formData.paymentMethod === "TRANSFER" ? Number(formData.adminFee || 0) : 0,
+          projectId: formData.projectId || "",
           referenceId: formData.projectId || formData.linkedDebtId || "",
           recordedBy: user.name,
           timestamp: Date.now() + i, // slight time offset to preserve sequential order
@@ -16885,6 +17791,7 @@ const AdminFinanceScreen = ({
       personalHolder: editFormData.personalHolder || "",
       amount: Number(editFormData.amount),
       adminFee: editFormData.paymentMethod === "TRANSFER" ? Number(editFormData.adminFee || 0) : 0,
+      projectId: editFormData.projectId || "",
       referenceId: editFormData.projectId || editFormData.linkedDebtId || "",
       customId: finalCustomId,
       sumberDana: editFormData.sumberDana || "",
@@ -17612,9 +18519,11 @@ const AdminFinanceScreen = ({
       .filter((r) => r.type === "IN")
       .reduce((sum, r) => sum + r.amount, 0);
 
-    // 1. Total Pengeluaran Bank PT (Direct) - SEMUA mutasi uang keluar / transfer dari rekening bank PT (sesuai history bank PT)
+    // 1. Total Pengeluaran Bank PT (Direct) - Mutasi uang keluar / transfer dari rekening bank PT (sesuai history bank PT)
+    // PENTING: Untuk pengeluaran riil (Actual Cost), jika ada transfer pencairan awal kas kecil (Petty Cash/Custody Transfer dari PT ke admin),
+    // uang awal tersebut dikecualikan agar tidak terhitung ganda (double-counted) dengan nota-nota belanja riil turunannya!
     let periodPtBankExpense = periodRecords
-      .filter((r) => isPtBankDirectOutRecord(r))
+      .filter((r) => isPtBankDirectOutRecord(r) && !isCustodyTransfer(r))
       .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
 
     // 2. Total Pengeluaran dari Dana Pribadi (Non-Uang PT) - HANYA talangan uang pribadi yang terpakai
@@ -17622,9 +18531,14 @@ const AdminFinanceScreen = ({
       .filter((r) => r.type === "OUT" && isPersonalFundRecord(r))
       .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
 
-    // Total Belanja Riil = Bank PT Direct + Dana Pribadi Terpakai
-    // (Belanja petty cash & kasbon uang PT TIDAK ditambahkan lagi agar tidak double!)
-    let periodExpense = periodPtBankExpense + periodPersonalExpense;
+    // 3. Total Belanja Riil dari Petty Cash PT (Realisasi belanja kas kecil langsung oleh admin/karyawan lapangan)
+    // Jika laporan difilter untuk kategori yang mencakup transaksi petty cash lapangan, tambahkan belanja downstream petty cash
+    let periodPattyCashSpend = periodRecords
+      .filter((r) => r.type === "OUT" && isPattyCashChildRecord(r))
+      .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
+
+    // Total Belanja Riil = Bank PT Direct (non-transfer) + Realisasi Belanja Petty Cash + Dana Pribadi Terpakai
+    let periodExpense = periodPtBankExpense + periodPattyCashSpend + periodPersonalExpense;
 
     const isCoveringJune2026 = exportRange.start <= "2026-06-30" && exportRange.end >= "2026-06-01";
     // Fallback baseline Juni 2026 hanya berlaku jika kategori SEMUA (ALL), bukan saat difilter per kategori
@@ -17647,12 +18561,15 @@ const AdminFinanceScreen = ({
     });
 
     const allTimePtBankExpense = targetAllTimeExpenseRecords
-      .filter((r) => isPtBankDirectOutRecord(r))
+      .filter((r) => isPtBankDirectOutRecord(r) && !isCustodyTransfer(r))
+      .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
+    const allTimePattyCashSpend = targetAllTimeExpenseRecords
+      .filter((r) => r.type === "OUT" && isPattyCashChildRecord(r))
       .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
     const allTimePersonalExpense = targetAllTimeExpenseRecords
       .filter((r) => r.type === "OUT" && isPersonalFundRecord(r))
       .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
-    const allTimeTotalExpense = (hasJune2026 && filterProject === "ALL" && isAllCategoriesActive ? Math.max(allTimePtBankExpense, totalPengeluaranBank) : allTimePtBankExpense) + allTimePersonalExpense;
+    const allTimeTotalExpense = (hasJune2026 && filterProject === "ALL" && isAllCategoriesActive ? Math.max(allTimePtBankExpense, totalPengeluaranBank) : allTimePtBankExpense) + allTimePattyCashSpend + allTimePersonalExpense;
 
     // Table Theme Settings (Landscape A4: width 297mm, printable 267mm with 15mm margins)
     const autoTableStyles = {
@@ -17834,13 +18751,22 @@ const AdminFinanceScreen = ({
       p1TableHead = [["Uraian Rekapitulasi", "Status / Deskripsi", "Jumlah Nilai Buku (Rupiah)"]];
 
       if (!isAllCategoriesActive) {
-        // Mode filter kategori: HANYA tampilkan rekapan pos kategori yang dipilih (Pengeluaran dari Uang Bank PT vs Dana Pribadi)
+        // Mode filter kategori: HANYA tampilkan rekapan pos kategori yang dipilih (Pengeluaran dari Uang Bank PT vs Dana Pribadi vs Petty Cash)
         p1TableBody = [
-          ["PENGELUARAN DARI REKENING BANK PT", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} yang dibayar dari kas/bank PT`, formatCurrency(allTimePtBankExpense)],
+          ["PENGELUARAN DARI REKENING BANK PT", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} yang dibayar langsung dari kas/bank PT (non-transfer)`, formatCurrency(allTimePtBankExpense)],
+        ];
+        if (allTimePattyCashSpend > 0) {
+          p1TableBody.push([
+            "PENGELUARAN DARI PATTYCASH PT (KAS KECIL)",
+            `Total belanja riil kategori ${exportSelectedCategories.join(", ")} yang dibayar dari dana kas kecil / lapangan (uang awal transfer PT tidak dihitung double)`,
+            formatCurrency(allTimePattyCashSpend),
+          ]);
+        }
+        p1TableBody.push(
           ["PENGELUARAN DARI DANA PRIBADI (TALANGAN)", `Total belanja kategori ${exportSelectedCategories.join(", ")} yang ditalangi uang pribadi (bukan uang PT)`, formatCurrency(allTimePersonalExpense)],
           ...personalRowsAllTime,
-          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran riil kategori ${exportSelectedCategories.join(", ")} (Bank PT + Dana Pribadi)`, formatCurrency(allTimeTotalExpense)],
-        ];
+          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran riil kategori ${exportSelectedCategories.join(", ")} (Bank PT Direct + Petty Cash + Dana Pribadi)`, formatCurrency(allTimeTotalExpense)]
+        );
       } else {
         p1TableBody = [
           ["TOTAL PEMASUKAN RIIL PT", "Pemasukan akumulatif seluruh proyek & piutang", formatCurrency(income)],
@@ -17875,10 +18801,19 @@ const AdminFinanceScreen = ({
       if (!isAllCategoriesActive) {
         // Mode filter kategori: HANYA tampilkan rekapan kategori yang dipilih
         p1TableBody.push(
-          ["PENGELUARAN DARI REKENING BANK PT", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} periode ini via bank PT`, formatCurrency(periodPtBankExpense)],
+          ["PENGELUARAN DARI REKENING BANK PT", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} periode ini via bank PT (non-transfer)`, formatCurrency(periodPtBankExpense)],
+        );
+        if (periodPattyCashSpend > 0) {
+          p1TableBody.push([
+            "PENGELUARAN DARI PATTYCASH PT (KAS KECIL)",
+            `Pengeluaran kategori ${exportSelectedCategories.join(", ")} dari dana kas kecil / lapangan (uang awal transfer PT tidak dihitung double)`,
+            formatCurrency(periodPattyCashSpend),
+          ]);
+        }
+        p1TableBody.push(
           ["PENGELUARAN DARI DANA PRIBADI (TALANGAN)", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} yang ditalangi uang pribadi`, formatCurrency(periodPersonalExpense)],
           ...personalRowsWeekly,
-          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} periode ini (Bank PT + Dana Pribadi)`, formatCurrency(periodExpense)]
+          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} periode ini (Bank PT Direct + Petty Cash + Dana Pribadi)`, formatCurrency(periodExpense)]
         );
       } else {
         if (!isFirstMonthJune) {
@@ -17931,10 +18866,19 @@ const AdminFinanceScreen = ({
       if (!isAllCategoriesActive) {
         // Mode filter kategori: HANYA tampilkan rekapan kategori yang dipilih
         p1TableBody.push(
-          ["PENGELUARAN DARI REKENING BANK PT", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} bulan ${MONTHS_ID[targetMonth]} via bank PT`, formatCurrency(periodPtBankExpense)],
+          ["PENGELUARAN DARI REKENING BANK PT", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} bulan ${MONTHS_ID[targetMonth]} via bank PT (non-transfer)`, formatCurrency(periodPtBankExpense)],
+        );
+        if (periodPattyCashSpend > 0) {
+          p1TableBody.push([
+            "PENGELUARAN DARI PATTYCASH PT (KAS KECIL)",
+            `Pengeluaran kategori ${exportSelectedCategories.join(", ")} bulan ${MONTHS_ID[targetMonth]} dari dana kas kecil / lapangan (uang awal transfer PT tidak dihitung double)`,
+            formatCurrency(periodPattyCashSpend),
+          ]);
+        }
+        p1TableBody.push(
           ["PENGELUARAN DARI DANA PRIBADI (TALANGAN)", `Pengeluaran talangan kategori ${exportSelectedCategories.join(", ")} bulan ${MONTHS_ID[targetMonth]} yang memakai uang pribadi`, formatCurrency(periodPersonalExpense)],
           ...personalRowsMonthly,
-          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} bulan ${MONTHS_ID[targetMonth]} (Bank PT + Dana Pribadi)`, formatCurrency(periodExpense)]
+          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} bulan ${MONTHS_ID[targetMonth]} (Bank PT Direct + Petty Cash + Dana Pribadi)`, formatCurrency(periodExpense)]
         );
       } else {
         // Saldo Opening hanya ada mulai bulan Juli 2026 dan seterusnya (bulan Juni adalah bulan awal pertama aplikasi)
@@ -17986,10 +18930,19 @@ const AdminFinanceScreen = ({
       if (!isAllCategoriesActive) {
         // Mode filter kategori: HANYA tampilkan rekapan kategori yang dipilih
         p1TableBody.push(
-          ["PENGELUARAN DARI REKENING BANK PT", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} periode ini via bank PT`, formatCurrency(periodPtBankExpense)],
+          ["PENGELUARAN DARI REKENING BANK PT", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} periode ini via bank PT (non-transfer)`, formatCurrency(periodPtBankExpense)],
+        );
+        if (periodPattyCashSpend > 0) {
+          p1TableBody.push([
+            "PENGELUARAN DARI PATTYCASH PT (KAS KECIL)",
+            `Pengeluaran kategori ${exportSelectedCategories.join(", ")} periode ini dari dana kas kecil / lapangan (uang awal transfer PT tidak dihitung double)`,
+            formatCurrency(periodPattyCashSpend),
+          ]);
+        }
+        p1TableBody.push(
           ["PENGELUARAN DARI DANA PRIBADI (TALANGAN)", `Pengeluaran kategori ${exportSelectedCategories.join(", ")} yang ditalangi uang pribadi`, formatCurrency(periodPersonalExpense)],
           ...personalRowsCustom,
-          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} periode terpilih (Bank PT + Dana Pribadi)`, formatCurrency(periodExpense)]
+          ["TOTAL PENGELUARAN KATEGORI (ACTUAL COST)", `Total pengeluaran kategori ${exportSelectedCategories.join(", ")} periode terpilih (Bank PT Direct + Petty Cash + Dana Pribadi)`, formatCurrency(periodExpense)]
         );
       } else {
         if (!isFirstMonthJune) {
@@ -18019,7 +18972,7 @@ const AdminFinanceScreen = ({
     }
 
     // ================= RINCIAN PENGELUARAN BERDASARKAN KATEGORI TRANSAKSI =================
-    // Ambil data pengeluaran riil sesuai cakupan laporan (Bank PT Direct + Pengeluaran Dana Pribadi)
+    // Ambil data pengeluaran riil sesuai cakupan laporan (Bank PT Direct non-transfer + Petty Cash downstream + Pengeluaran Dana Pribadi)
     const targetPeriodExpenseRecords = (isAllTime ? financialRecords : periodRecords).filter((r) => {
       if (r.type !== "OUT") return false;
       if (isAllTime) {
@@ -18031,7 +18984,9 @@ const AdminFinanceScreen = ({
         }
         if (!projMatch || !categoryMatch) return false;
       }
-      return isPtBankDirectOutRecord(r) || isPersonalFundRecord(r);
+      // Pengecualian mutasi custody transfer (pencairan awal kas kecil PT ke admin) agar tidak double-counted dengan nota riil
+      if (isCustodyTransfer(r)) return false;
+      return isPtBankDirectOutRecord(r) || isPattyCashChildRecord(r) || isPersonalFundRecord(r);
     });
 
     let opProjekTotal = 0;
@@ -18618,7 +19573,9 @@ const AdminFinanceScreen = ({
         });
 
         let inc = wRecords.filter(r => r.type === "IN").reduce((sum, r) => sum + r.amount, 0);
-        let exp = wRecords.filter(r => isPtBankDirectOutRecord(r) || isPersonalFundRecord(r)).reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
+        let exp = wRecords
+          .filter(r => (isPtBankDirectOutRecord(r) && !isCustodyTransfer(r)) || isPattyCashChildRecord(r) || isPersonalFundRecord(r))
+          .reduce((sum, r) => sum + r.amount + (r.adminFee || 0), 0);
 
         if (isJune2026 && filterProject === "ALL") {
           if (index === 0) {
@@ -33390,6 +34347,38 @@ export default function App() {
     });
   }, [currentUser, isFinanceLoaded, projects, debtRecords]);
 
+  // Auto-heal financial records project associations (e.g., BNK-040926-001 or any record where referenceId and projectId conflict)
+  useEffect(() => {
+    if (!currentUser || !isFinanceLoaded || financialRecords.length === 0 || projects.length === 0) return;
+
+    const misaligned = financialRecords.filter((r) => {
+      const refId = (r.referenceId || "").trim();
+      const projId = (r.projectId || "").trim();
+      if (!refId && !projId) return false;
+      const refIsProject = projects.some((p) => p.id === refId);
+      const projIsProject = projects.some((p) => p.id === projId);
+
+      return refIsProject && projIsProject && refId !== projId;
+    });
+
+    if (misaligned.length > 0) {
+      misaligned.forEach(async (rec) => {
+        const canonicalProjId = getFinancialRecordProjectId(rec, projects);
+        if (canonicalProjId && (rec.projectId !== canonicalProjId || rec.referenceId !== canonicalProjId)) {
+          try {
+            await dbService.updateDocument("financialRecords", rec.id, {
+              projectId: canonicalProjId,
+              referenceId: canonicalProjId,
+            });
+            console.log(`[Auto-heal] Synchronized project for ${rec.customId || rec.id} to ${canonicalProjId}`);
+          } catch (e) {
+            console.error("Auto-heal sync failed for record", rec.id, e);
+          }
+        }
+      });
+    }
+  }, [currentUser, isFinanceLoaded, financialRecords, projects]);
+
   // Sync today's attendance status
   useEffect(() => {
     if (!currentUser || attendanceHistory.length === 0) return;
@@ -37693,9 +38682,9 @@ export default function App() {
           {projectManageTab === "keuangan" && (
             <div className="space-y-8">
               {(() => {
-                // Extract actual transactions for this project from the main ledger
+                // Extract actual transactions for this project using canonical project resolver to prevent data leaking
                 const projectFinancials = financialRecords.filter(
-                  (r) => r.referenceId === projectToManage.id || r.projectId === projectToManage.id
+                  (r) => getFinancialRecordProjectId(r, projects) === projectToManage.id
                 );
 
                 const isPersonalFund = (sumber?: string) => {
@@ -37737,6 +38726,396 @@ export default function App() {
                 const projectReceivables = debtRecords.filter(
                   (r) => r.projectId === projectToManage.id && r.type === "PIUTANG"
                 );
+
+                // Export/Download Report PDF
+                const handleDownloadProjectFinancialReport = () => {
+                  try {
+                    const doc = new jsPDF("p", "mm", "a4");
+                    const pageWidth = doc.internal.pageSize.getWidth();
+                    let currentY = 14;
+
+                    // Header Bar (Navy/Slate)
+                    doc.setFillColor(15, 23, 42); // slate-900
+                    doc.rect(14, currentY, pageWidth - 28, 22, "F");
+
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(12);
+                    doc.setTextColor(255, 255, 255);
+                    doc.text("PT GELORA INTI GUNA TEKNOLOGI", 20, currentY + 8);
+
+                    doc.setFont("helvetica", "normal");
+                    doc.setFontSize(8.5);
+                    doc.setTextColor(203, 213, 225); // slate-300
+                    doc.text("LAPORAN KEUANGAN, LABA RUGI & ARUS KAS PROYEK", 20, currentY + 15);
+
+                    const printDate = new Date().toLocaleDateString("id-ID", {
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    });
+                    doc.setFontSize(7.5);
+                    doc.setTextColor(148, 163, 184);
+                    doc.text(`Tgl Cetak: ${printDate}`, pageWidth - 20, currentY + 15, { align: "right" });
+
+                    currentY += 26;
+
+                    // Project Metadata Box
+                    doc.setFillColor(248, 250, 252);
+                    doc.setDrawColor(226, 232, 240);
+                    doc.roundedRect(14, currentY, pageWidth - 28, 20, 2.5, 2.5, "FD");
+
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(7.5);
+                    doc.setTextColor(100, 116, 139);
+                    doc.text("INFORMASI PROYEK", 18, currentY + 5.5);
+
+                    doc.setFontSize(10.5);
+                    doc.setTextColor(15, 23, 42);
+                    doc.text(projectToManage.name || "Nama Proyek", 18, currentY + 12);
+
+                    doc.setFont("helvetica", "normal");
+                    doc.setFontSize(7.5);
+                    doc.setTextColor(100, 116, 139);
+                    const projMeta = `Klien: ${projectToManage.client || "-"}   |   Tipe: ${projectToManage.projectType || "STP / IPAL"}   |   Status: ${projectToManage.status || "Pelaksanaan"} (${projectToManage.progress || 0}%)`;
+                    doc.text(projMeta, 18, currentY + 17);
+
+                    currentY += 24;
+
+                    // 4 KPI Summary Cards (Nilai Kontrak, Pemasukan, Pengeluaran, Keuntungan)
+                    const cardGap = 3;
+                    const cardW = (pageWidth - 28 - cardGap * 3) / 4;
+                    const cardH = 22;
+
+                    // 1. Nilai Kontrak
+                    doc.setFillColor(248, 250, 252);
+                    doc.setDrawColor(203, 213, 225);
+                    doc.roundedRect(14, currentY, cardW, cardH, 2, 2, "FD");
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(6.5);
+                    doc.setTextColor(100, 116, 139);
+                    doc.text("NILAI KONTRAK (SPK)", 17, currentY + 5.5);
+                    doc.setFontSize(9);
+                    doc.setTextColor(15, 23, 42);
+                    doc.text(`Rp ${currentContractValue.toLocaleString("id-ID")}`, 17, currentY + 13);
+                    doc.setFont("helvetica", "normal");
+                    doc.setFontSize(6.5);
+                    doc.setTextColor(148, 163, 184);
+                    doc.text(projectToManage.hasPpn !== false ? "Termasuk PPN 11%" : "Non-PPN", 17, currentY + 18.5);
+
+                    // 2. Total Pemasukan
+                    const c2X = 14 + cardW + cardGap;
+                    doc.setFillColor(240, 253, 244);
+                    doc.setDrawColor(187, 247, 208);
+                    doc.roundedRect(c2X, currentY, cardW, cardH, 2, 2, "FD");
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(6.5);
+                    doc.setTextColor(5, 150, 105);
+                    doc.text("TOTAL PEMASUKAN (IN)", c2X + 3, currentY + 5.5);
+                    doc.setFontSize(9);
+                    doc.setTextColor(4, 120, 87);
+                    doc.text(`Rp ${actualIncome.toLocaleString("id-ID")}`, c2X + 3, currentY + 13);
+                    doc.setFont("helvetica", "normal");
+                    doc.setFontSize(6.5);
+                    doc.setTextColor(5, 150, 105);
+                    const incomePercent = currentContractValue > 0 ? ((actualIncome / currentContractValue) * 100).toFixed(1) : "0";
+                    doc.text(`Realisasi Termin: ${incomePercent}%`, c2X + 3, currentY + 18.5);
+
+                    // 3. Total Pengeluaran
+                    const c3X = c2X + cardW + cardGap;
+                    doc.setFillColor(255, 241, 242);
+                    doc.setDrawColor(254, 205, 211);
+                    doc.roundedRect(c3X, currentY, cardW, cardH, 2, 2, "FD");
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(6.5);
+                    doc.setTextColor(225, 29, 72);
+                    doc.text("TOTAL PENGELUARAN (OUT)", c3X + 3, currentY + 5.5);
+                    doc.setFontSize(9);
+                    doc.setTextColor(190, 18, 60);
+                    doc.text(`Rp ${actualExpense.toLocaleString("id-ID")}`, c3X + 3, currentY + 13);
+                    doc.setFont("helvetica", "normal");
+                    doc.setFontSize(6);
+                    doc.setTextColor(159, 18, 57);
+                    doc.text(`PT: ${expenseViaCompany.toLocaleString("id-ID")} | Tlg: ${expenseViaPersonal.toLocaleString("id-ID")}`, c3X + 3, currentY + 18.5);
+
+                    // 4. Keuntungan / Net Margin
+                    const c4X = c3X + cardW + cardGap;
+                    const isNetPos = actualNetMargin >= 0;
+                    doc.setFillColor(isNetPos ? 240 : 255, isNetPos ? 253 : 241, isNetPos ? 244 : 242);
+                    doc.setDrawColor(isNetPos ? 187 : 254, isNetPos ? 247 : 205, isNetPos ? 208 : 211);
+                    doc.roundedRect(c4X, currentY, cardW, cardH, 2, 2, "FD");
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(6.5);
+                    doc.setTextColor(isNetPos ? 22 : 225, isNetPos ? 163 : 29, isNetPos ? 74 : 72);
+                    doc.text("KEUNTUNGAN KAS BERJALAN", c4X + 3, currentY + 5.5);
+                    doc.setFontSize(9);
+                    doc.setTextColor(isNetPos ? 21 : 190, isNetPos ? 128 : 18, isNetPos ? 61 : 60);
+                    doc.text(`Rp ${actualNetMargin.toLocaleString("id-ID")}`, c4X + 3, currentY + 13);
+                    doc.setFont("helvetica", "normal");
+                    doc.setFontSize(6);
+                    doc.setTextColor(100, 116, 139);
+                    doc.text(`Proyeksi Laba: Rp ${projectedProfitRealTime.toLocaleString("id-ID")}`, c4X + 3, currentY + 18.5);
+
+                    currentY += 26;
+
+                    // Table 1: Rencana vs Realisasi Anggaran Proyek
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(8.5);
+                    doc.setTextColor(30, 41, 59);
+                    doc.text("1. IKHTISAR RENCANA ANGGARAN VS REALISASI BIAYA & LABA", 14, currentY);
+                    currentY += 2;
+
+                    const budgetRows = [
+                      [
+                        "Nilai Kontrak Proyek (SPK)",
+                        `Rp ${currentContractValue.toLocaleString("id-ID")}`,
+                        `Rp ${actualIncome.toLocaleString("id-ID")}`,
+                        `Rp ${Math.max(0, currentContractValue - actualIncome).toLocaleString("id-ID")}`,
+                        actualIncome >= currentContractValue ? "100% Lunas" : `${((actualIncome / (currentContractValue || 1)) * 100).toFixed(1)}% Terbayar`
+                      ],
+                      [
+                        "Biaya Lapangan (Operasional/Bahan)",
+                        `Rp ${(currentOperationalCost || 0).toLocaleString("id-ID")}`,
+                        `Rp ${actualExpense.toLocaleString("id-ID")}`,
+                        `Rp ${(currentOperationalCost ? currentOperationalCost - actualExpense : 0).toLocaleString("id-ID")}`,
+                        currentOperationalCost > 0
+                          ? (actualExpense <= currentOperationalCost ? "Efisien (Under Budget)" : "Over Budget")
+                          : "Sesuai Realisasi"
+                      ],
+                      [
+                        "Pengeluaran via Rekening Resmi PT",
+                        "-",
+                        `Rp ${expenseViaCompany.toLocaleString("id-ID")}`,
+                        "-",
+                        "Kas Utama Perusahaan"
+                      ],
+                      [
+                        "Pengeluaran via Talangan Dana Pribadi",
+                        "-",
+                        `Rp ${expenseViaPersonal.toLocaleString("id-ID")}`,
+                        "-",
+                        "Hutang PT ke Pemilik Dana"
+                      ],
+                      [
+                        "Keuntungan Kas Berjalan (Kas Masuk - Kas Keluar)",
+                        "-",
+                        `Rp ${actualNetMargin.toLocaleString("id-ID")}`,
+                        "-",
+                        actualNetMargin >= 0 ? "Surplus Arus Kas" : "Defisit Kas Berjalan"
+                      ],
+                      [
+                        "Proyeksi Laba Bersih Akhir (Nilai Kontrak - Realisasi Biaya)",
+                        `Rp ${(currentContractValue - (currentOperationalCost || 0)).toLocaleString("id-ID")}`,
+                        `Rp ${projectedProfitRealTime.toLocaleString("id-ID")}`,
+                        "-",
+                        projectedProfitRealTime >= 0 ? "Target Profit Tercapai" : "Margin Kritis"
+                      ],
+                    ];
+
+                    autoTable(doc, {
+                      startY: currentY + 1,
+                      margin: { left: 14, right: 14 },
+                      head: [["Komponen Finansial", "Rencana (SPK/RAB)", "Realisasi Kas", "Selisih / Sisa", "Keterangan"]],
+                      body: budgetRows,
+                      theme: "grid",
+                      headStyles: {
+                        fillColor: [51, 65, 85], // Slate-700
+                        textColor: [255, 255, 255],
+                        fontSize: 7,
+                        fontStyle: "bold",
+                      },
+                      bodyStyles: {
+                        fontSize: 6.8,
+                        textColor: [30, 41, 59],
+                      },
+                      columnStyles: {
+                        0: { cellWidth: 58, fontStyle: "bold" },
+                        1: { cellWidth: 32, halign: "right" },
+                        2: { cellWidth: 32, halign: "right", fontStyle: "bold" },
+                        3: { cellWidth: 30, halign: "right" },
+                        4: { cellWidth: "auto", halign: "center" },
+                      },
+                      alternateRowStyles: {
+                        fillColor: [248, 250, 252],
+                      },
+                    });
+
+                    currentY = (doc as any).lastAutoTable.finalY + 8;
+
+                    // Check if new page needed for Transaction Ledger
+                    if (currentY > 210) {
+                      doc.addPage();
+                      currentY = 16;
+                    }
+
+                    // Table 2: Jurnal Mutasi Kas Lengkap
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(8.5);
+                    doc.setTextColor(30, 41, 59);
+                    doc.text(`2. JURNAL MUTASI KAS & REALISASI TRANSAKSI PROYEK (${projectFinancials.length} TRANSAKSI)`, 14, currentY);
+                    currentY += 2;
+
+                    const txRows = projectFinancials.map((rec, idx) => {
+                      const isInc = rec.type === "IN";
+                      const sumber = rec.sumberDana === "REKENING PRIBADI"
+                        ? "Talangan Pribadi"
+                        : (rec.sumberDana || (rec.flowType === "OUT_BANK_DIRECT" ? "Rekening PT" : "PT"));
+                      return [
+                        String(idx + 1),
+                        rec.date || "-",
+                        rec.customId || rec.id || "-",
+                        rec.description || "-",
+                        rec.category || "-",
+                        sumber,
+                        isInc ? "MASUK" : "KELUAR",
+                        `${isInc ? "+" : "-"} Rp ${(rec.amount || 0).toLocaleString("id-ID")}`,
+                      ];
+                    });
+
+                    autoTable(doc, {
+                      startY: currentY + 1,
+                      margin: { left: 14, right: 14 },
+                      head: [["No", "Tanggal", "Kode", "Keterangan", "Kategori", "Sumber Dana", "Tipe", "Jumlah"]],
+                      body: txRows,
+                      foot: [
+                        ["", "", "", "TOTAL KAS MASUK (IN)", "", "", "MASUK", `+ Rp ${actualIncome.toLocaleString("id-ID")}`],
+                        ["", "", "", "TOTAL KAS KELUAR (OUT)", "", "", "KELUAR", `- Rp ${actualExpense.toLocaleString("id-ID")}`],
+                        ["", "", "", "SURPLUS / LABA BERJALAN", "", "", isNetPos ? "SURPLUS" : "DEFISIT", `Rp ${actualNetMargin.toLocaleString("id-ID")}`],
+                      ],
+                      theme: "grid",
+                      headStyles: {
+                        fillColor: [30, 41, 59], // Slate-800
+                        textColor: [255, 255, 255],
+                        fontSize: 6.8,
+                        fontStyle: "bold",
+                      },
+                      bodyStyles: {
+                        fontSize: 6.5,
+                        textColor: [51, 65, 85],
+                      },
+                      footStyles: {
+                        fillColor: [241, 245, 249],
+                        textColor: [15, 23, 42],
+                        fontSize: 7,
+                        fontStyle: "bold",
+                      },
+                      columnStyles: {
+                        0: { cellWidth: 7, halign: "center" },
+                        1: { cellWidth: 16 },
+                        2: { cellWidth: 22, font: "courier" },
+                        3: { cellWidth: "auto" },
+                        4: { cellWidth: 22 },
+                        5: { cellWidth: 20 },
+                        6: { cellWidth: 13, halign: "center" },
+                        7: { cellWidth: 25, halign: "right", fontStyle: "bold" },
+                      },
+                      didParseCell: (data) => {
+                        if (data.section === "body") {
+                          if (data.column.index === 6) {
+                            if (data.cell.raw === "MASUK") {
+                              data.cell.styles.textColor = [5, 150, 105]; // emerald-600
+                              data.cell.styles.fontStyle = "bold";
+                            } else {
+                              data.cell.styles.textColor = [225, 29, 72]; // rose-600
+                              data.cell.styles.fontStyle = "bold";
+                            }
+                          }
+                          if (data.column.index === 7) {
+                            const isIncome = projectFinancials[data.row.index]?.type === "IN";
+                            data.cell.styles.textColor = isIncome ? [5, 150, 105] : [225, 29, 72];
+                          }
+                        }
+                      },
+                    });
+
+                    currentY = (doc as any).lastAutoTable.finalY + 10;
+
+                    // Check if new page needed for signature block
+                    if (currentY > 240) {
+                      doc.addPage();
+                      currentY = 20;
+                    }
+
+                    // Signature Block (Lembar Pengesahan)
+                    doc.setDrawColor(226, 232, 240);
+                    doc.line(14, currentY, pageWidth - 14, currentY);
+                    currentY += 6;
+
+                    const sigW = (pageWidth - 28) / 3;
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(7.5);
+                    doc.setTextColor(100, 116, 139);
+
+                    doc.text("Dibuat Oleh,", 14 + sigW * 0 + 10, currentY);
+                    doc.text("Diperiksa Oleh,", 14 + sigW * 1 + 10, currentY);
+                    doc.text("Disetujui Oleh,", 14 + sigW * 2 + 10, currentY);
+
+                    currentY += 18;
+
+                    doc.setTextColor(15, 23, 42);
+                    doc.text(currentUser?.name || "Admin Keuangan", 14 + sigW * 0 + 10, currentY);
+                    doc.text("Project Manager / PIC", 14 + sigW * 1 + 10, currentY);
+                    doc.text("Direktur Utama / Owner", 14 + sigW * 2 + 10, currentY);
+
+                    doc.setFont("helvetica", "normal");
+                    doc.setFontSize(6.5);
+                    doc.setTextColor(148, 163, 184);
+                    doc.text("Staf Administrasi & Kas", 14 + sigW * 0 + 10, currentY + 4);
+                    doc.text("Divisi Operasional Lapangan", 14 + sigW * 1 + 10, currentY + 4);
+                    doc.text("PT GELORA INTI GUNA TEKNOLOGI", 14 + sigW * 2 + 10, currentY + 4);
+
+                    // Save document
+                    const cleanProjName = (projectToManage.name || "Proyek").replace(/[^a-zA-Z0-9_-]/g, "_");
+                    const filename = `Laporan_Keuangan_${cleanProjName}_${new Date().toISOString().split("T")[0]}.pdf`;
+                    doc.save(filename);
+                  } catch (err) {
+                    console.error("Gagal mendownload laporan keuangan:", err);
+                    alert("Terjadi kendala saat membuat PDF laporan keuangan.");
+                  }
+                };
+
+                // Export/Download Report CSV
+                const handleExportProjectFinancialCSV = () => {
+                  try {
+                    const csvRows: string[] = [];
+                    csvRows.push(`"LAPORAN KEUANGAN DAN LABA RUGI PROYEK"`);
+                    csvRows.push(`"PT GELORA INTI GUNA TEKNOLOGI"`);
+                    csvRows.push(`"Nama Proyek:","${(projectToManage.name || "").replace(/"/g, '""')}"`);
+                    csvRows.push(`"Klien:","${(projectToManage.client || "-").replace(/"/g, '""')}"`);
+                    csvRows.push(`"Status:","${(projectToManage.status || "Pelaksanaan").replace(/"/g, '""')} (${projectToManage.progress || 0}%)"`);
+                    csvRows.push(`"Tanggal Cetak:","${new Date().toLocaleDateString("id-ID")}"`);
+                    csvRows.push("");
+                    csvRows.push(`"RINGKASAN EKSEKUTIF KEUANGAN"`);
+                    csvRows.push(`"Nilai Kontrak (SPK)","Rp ${currentContractValue.toLocaleString("id-ID")}"`);
+                    csvRows.push(`"Realisasi Pemasukan (IN)","Rp ${actualIncome.toLocaleString("id-ID")}"`);
+                    csvRows.push(`"Realisasi Pengeluaran (OUT)","Rp ${actualExpense.toLocaleString("id-ID")}"`);
+                    csvRows.push(`"Keuntungan Kas Berjalan (Net Margin)","Rp ${actualNetMargin.toLocaleString("id-ID")}"`);
+                    csvRows.push(`"Proyeksi Laba Bersih Akhir","Rp ${projectedProfitRealTime.toLocaleString("id-ID")}"`);
+                    csvRows.push("");
+                    csvRows.push(`"DAFTAR MUTASI TRANSAKSI PROYEK"`);
+                    csvRows.push(`"No","Tanggal","Kode Transaksi","Keterangan","Kategori","Sumber Dana","Tipe","Jumlah (Rp)"`);
+
+                    projectFinancials.forEach((rec, idx) => {
+                      const amtStr = `${rec.type === "IN" ? "+" : "-"}${rec.amount || 0}`;
+                      const desc = (rec.description || "").replace(/"/g, '""');
+                      const cat = (rec.category || "").replace(/"/g, '""');
+                      const sumber = (rec.sumberDana || (rec.flowType === "OUT_BANK_DIRECT" ? "Rekening PT" : "Talangan")).replace(/"/g, '""');
+                      csvRows.push(`"${idx + 1}","${rec.date || "-"}","${rec.customId || rec.id || "-"}","${desc}","${cat}","${sumber}","${rec.type === "IN" ? "MASUK" : "KELUAR"}","${amtStr}"`);
+                    });
+
+                    const blob = new Blob(["\uFEFF" + csvRows.join("\n")], { type: "text/csv;charset=utf-8;" });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    const cleanName = (projectToManage.name || "Proyek").replace(/[^a-zA-Z0-9_-]/g, "_");
+                    a.download = `Keuangan_${cleanName}_${new Date().toISOString().split("T")[0]}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                  } catch (err) {
+                    console.error("Gagal export CSV:", err);
+                  }
+                };
 
                 return (
                   <>
@@ -37800,9 +39179,36 @@ export default function App() {
 
                     {/* Section 1: Dashboard Perbandingan Rencana vs Realisasi Arus Kas */}
                     <div className="space-y-4">
-                      <h4 className="text-sm font-black text-slate-950 uppercase tracking-wider pl-1">
-                        Ringkasan Laporan Realisasi vs Rencana Anggaran
-                      </h4>
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div>
+                          <h4 className="text-sm font-black text-slate-950 uppercase tracking-wider pl-1">
+                            Ringkasan Laporan Realisasi vs Rencana Anggaran
+                          </h4>
+                          <p className="text-xs font-semibold text-slate-400 pl-1">
+                            Monitoring nilai kontrak, keuntungan, realisasi pengeluaran, dan pemasukan kas proyek.
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={handleDownloadProjectFinancialReport}
+                            className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-md shadow-indigo-600/20 active:scale-95 cursor-pointer"
+                            title="Download Laporan Lengkap Nilai Kontrak, Keuntungan, Pemasukan, Pengeluaran (PDF)"
+                          >
+                            <Download size={14} />
+                            Download Laporan Keuangan (PDF)
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleExportProjectFinancialCSV}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-2xl text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 cursor-pointer"
+                            title="Export Data ke Spreadsheet CSV / Excel"
+                          >
+                            <FileText size={14} className="text-slate-400" />
+                            CSV
+                          </button>
+                        </div>
+                      </div>
                       
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         {/* Box Rencana (SPK/Budget) */}
@@ -37913,24 +39319,36 @@ export default function App() {
                           </p>
                         </div>
                         
-                        {/* Local filtering buttons */}
-                        <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl">
-                          {(["ALL", "IN", "OUT", "PRIBADI"] as const).map((mode) => (
-                            <button
-                              key={mode}
-                              onClick={() => setProjectFinFilter(mode)}
-                              className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${
-                                projectFinFilter === mode
-                                  ? "bg-white text-slate-900 shadow-sm"
-                                  : "text-slate-400 hover:text-slate-700"
-                              }`}
-                            >
-                              {mode === "ALL" && "Semua"}
-                              {mode === "IN" && "Masuk"}
-                              {mode === "OUT" && "Keluar"}
-                              {mode === "PRIBADI" && "Talangan Pribadi"}
-                            </button>
-                          ))}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {/* Local filtering buttons */}
+                          <div className="flex flex-wrap gap-1 bg-slate-100 p-1 rounded-xl">
+                            {(["ALL", "IN", "OUT", "PRIBADI"] as const).map((mode) => (
+                              <button
+                                key={mode}
+                                onClick={() => setProjectFinFilter(mode)}
+                                className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${
+                                  projectFinFilter === mode
+                                    ? "bg-white text-slate-900 shadow-sm"
+                                    : "text-slate-400 hover:text-slate-700"
+                                }`}
+                              >
+                                {mode === "ALL" && "Semua"}
+                                {mode === "IN" && "Masuk"}
+                                {mode === "OUT" && "Keluar"}
+                                {mode === "PRIBADI" && "Talangan Pribadi"}
+                              </button>
+                            ))}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={handleDownloadProjectFinancialReport}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border border-indigo-200 active:scale-95 cursor-pointer"
+                            title="Download Laporan PDF"
+                          >
+                            <Download size={12} />
+                            Download PDF
+                          </button>
                         </div>
                       </div>
 
@@ -43639,7 +45057,7 @@ export default function App() {
                     );
                     const projectExpenses = financialRecords.filter(
                       (rec) =>
-                        (rec.referenceId === selectedProjectForTracking.id || rec.projectId === selectedProjectForTracking.id) &&
+                        getFinancialRecordProjectId(rec, projects) === selectedProjectForTracking.id &&
                         rec.type === "OUT" &&
                         !isReimbursementOrDebtRepayment(rec),
                     );
