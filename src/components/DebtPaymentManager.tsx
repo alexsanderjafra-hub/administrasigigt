@@ -138,10 +138,23 @@ export const DebtPaymentManager: React.FC<DebtPaymentManagerProps> = ({
         setMode("BY_CREDITOR");
       }
     } else if (refHutang && !selectedCreditor) {
-      const match = creditorGroups.find((g) => refHutang.toUpperCase().includes(g.name.toUpperCase()));
-      if (match) {
-        setSelectedCreditor(match.name.toUpperCase());
+      const firstDebt = hutangRecords.find(
+        (d) =>
+          d.id === refHutang ||
+          d.customId === refHutang ||
+          (d.id && refHutang.includes(d.id)) ||
+          (d.customId && refHutang.includes(d.customId))
+      );
+      if (firstDebt) {
+        const norm = normalizeContactName(firstDebt.contactName || firstDebt.title);
+        setSelectedCreditor(norm.toUpperCase());
         setMode("BY_CREDITOR");
+      } else {
+        const match = creditorGroups.find((g) => refHutang.toUpperCase().includes(g.name.toUpperCase()));
+        if (match) {
+          setSelectedCreditor(match.name.toUpperCase());
+          setMode("BY_CREDITOR");
+        }
       }
     }
   }, [allocations, hutangRecords, refHutang, creditorGroups, selectedCreditor]);

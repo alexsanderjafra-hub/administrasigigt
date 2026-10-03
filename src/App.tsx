@@ -15674,7 +15674,11 @@ const AdminFinanceScreen = ({
             doc.id === editingTransaction.linkedDebtId ||
             doc.customId === editingTransaction.linkedDebtId ||
             doc.title === editingTransaction.refHutang ||
-            doc.customId === editingTransaction.refHutang
+            doc.customId === editingTransaction.refHutang ||
+            (Boolean(editingTransaction.refHutang) && (
+              (Boolean(doc.id) && editingTransaction.refHutang.includes(doc.id)) ||
+              (Boolean(doc.customId) && editingTransaction.refHutang.includes(doc.customId))
+            ))
         );
         if (d) {
           setEditDebtAllocations([
@@ -21110,7 +21114,8 @@ const AdminFinanceScreen = ({
                             <th className="py-3 px-3 font-black uppercase tracking-wider border-r border-[#334155] min-w-[280px]">Detail Pembayaran</th>
                             <th className="py-3 px-3 font-black uppercase tracking-wider border-r border-[#334155]">Sumber Uang</th>
                             <th className="py-3 px-3 text-right font-black uppercase tracking-wider border-r border-[#334155]">Jumlah (Rp)</th>
-                            <th className="py-3 px-3 font-black uppercase tracking-wider text-center">Ref ID Bank</th>
+                            <th className="py-3 px-3 font-black uppercase tracking-wider text-center border-r border-[#334155]">Ref ID Bank</th>
+                            <th className="py-3 px-3 font-black uppercase tracking-wider text-center">Ref ID Hutang</th>
                           </>
                         )}
                         {user?.role !== "owner" && user?.role !== "direktur" && (
@@ -21222,6 +21227,20 @@ const AdminFinanceScreen = ({
                                         </span>
                                       </div>
                                     )}
+                                    {record.refHutang && (
+                                      <div className="mt-1">
+                                        <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 normal-case" title={`Hutang/Reimburse terkait: ${record.refHutang}`}>
+                                          🔗 Ref Hutang: {record.refHutang}
+                                        </span>
+                                      </div>
+                                    )}
+                                    {record.refPiutang && (
+                                      <div className="mt-1">
+                                        <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-emerald-800 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 normal-case">
+                                          🔗 Ref Piutang: {record.refPiutang}
+                                        </span>
+                                      </div>
+                                    )}
                                   </td>
                                   <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 border-r border-slate-100">
                                     {record.type === "IN" ? (
@@ -21270,7 +21289,15 @@ const AdminFinanceScreen = ({
                                     Rp {record.amount.toLocaleString("id-ID")}
                                   </td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-mono font-semibold text-slate-500">{record.refPiutang || "-"}</td>
-                                  <td className="py-3 px-3 font-mono font-semibold text-slate-500">{record.refHutang || "-"}</td>
+                                  <td className="py-3 px-3 font-mono font-semibold text-slate-500 whitespace-nowrap">
+                                    {record.refHutang ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-xs font-mono font-bold" title={`Hutang terkait: ${record.refHutang}`}>
+                                        🔗 {record.refHutang}
+                                      </span>
+                                    ) : (
+                                      "-"
+                                    )}
+                                  </td>
                                 </>
                               )}
 
@@ -21348,7 +21375,15 @@ const AdminFinanceScreen = ({
                                       "-"
                                     )}
                                   </td>
-                                  <td className="py-3 px-3 font-mono font-semibold text-slate-500 whitespace-nowrap">{record.refHutang || "-"}</td>
+                                  <td className="py-3 px-3 font-mono font-semibold text-slate-500 whitespace-nowrap">
+                                    {record.refHutang ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-xs font-mono font-bold" title={`Hutang/Reimburse terkait: ${record.refHutang}`}>
+                                        🔗 {record.refHutang}
+                                      </span>
+                                    ) : (
+                                      "-"
+                                    )}
+                                  </td>
                                 </>
                               )}
 
@@ -21366,13 +21401,31 @@ const AdminFinanceScreen = ({
                                       {record.category}
                                     </span>
                                   </td>
-                                  <td className="py-3 px-3 border-r border-slate-100 font-semibold text-slate-700 w-64 uppercase">{record.description}</td>
+                                  <td className="py-3 px-3 border-r border-slate-100 font-semibold text-slate-700 w-64 uppercase">
+                                    <div>{record.description}</div>
+                                    {record.refHutang && (
+                                      <div className="mt-1">
+                                        <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 normal-case" title={`Hutang/Reimburse terkait: ${record.refHutang}`}>
+                                          🔗 Ref Hutang: {record.refHutang}
+                                        </span>
+                                      </div>
+                                    )}
+                                  </td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-extrabold text-slate-500 whitespace-nowrap">{getDisplaySumberUang(record)}</td>
                                   <td className="py-3 px-3 text-right border-r border-slate-100 font-mono font-black text-purple-600">
                                     -Rp {record.amount.toLocaleString("id-ID")}
                                   </td>
                                   <td className="py-3 px-3 text-center border-r border-slate-100" title={record.refIdBank}>
                                     <RefIdBankBadgeList refIdBankStr={record.refIdBank || ""} totalAmount={record.amount} />
+                                  </td>
+                                  <td className="py-3 px-3 text-center border-r border-slate-100 whitespace-nowrap">
+                                    {record.refHutang ? (
+                                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 text-xs font-mono font-bold" title={`Hutang/Reimburse terkait: ${record.refHutang}`}>
+                                        🔗 {record.refHutang}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400 font-medium italic">-</span>
+                                    )}
                                   </td>
                                 </>
                               )}
@@ -21406,7 +21459,7 @@ const AdminFinanceScreen = ({
                         })
                       ) : (
                         <tr>
-                          <td colSpan={12} className="py-20 text-center">
+                          <td colSpan={13} className="py-20 text-center">
                             <div className="w-16 h-16 bg-slate-50 rounded-[2rem] flex items-center justify-center text-slate-200 mx-auto mb-4">
                               <History size={32} />
                             </div>
@@ -21733,7 +21786,16 @@ const AdminFinanceScreen = ({
                                     {rec.category}
                                   </span>
                                 </td>
-                                <td className="py-2.5 px-3 text-slate-600 font-semibold">{rec.description}</td>
+                                <td className="py-2.5 px-3 text-slate-600 font-semibold">
+                                  <div>{rec.description}</div>
+                                  {rec.refHutang && (
+                                    <div className="mt-1">
+                                      <span className="inline-flex items-center gap-1 text-[10px] font-mono font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 normal-case" title={`Hutang/Reimburse terkait: ${rec.refHutang}`}>
+                                        🔗 Ref Hutang: {rec.refHutang}
+                                      </span>
+                                    </div>
+                                  )}
+                                </td>
                                 <td className="py-2.5 px-3 text-center">
                                   <RefIdBankBadgeList refIdBankStr={rec.refIdBank || ""} totalAmount={rec.amount} />
                                 </td>
@@ -24421,23 +24483,26 @@ const AdminFinanceScreen = ({
                       )}
                     </div>
 
-                    {(editFormData.category === "Pembayaran Hutang" ||
-                      editFormData.category === "Penerimaan Piutang" ||
-                      editFormData.category === "Pembayaran Proyek" ||
-                      editFormData.category === "Cicilan Pembayaran Proyek" ||
-                      editFormData.category === "Termin" ||
-                      (editFormData.category && (
-                        editFormData.category.toLowerCase().includes("gaji") ||
-                        editFormData.category.toLowerCase().includes("proyek") ||
-                        editFormData.category.toLowerCase().includes("termin") ||
-                        editFormData.category.toLowerCase().includes("cicilan")
-                      ))) && (
+                    {(editFormData.type === "OUT" ||
+                      editFormData.type === "IN" ||
+                      Boolean(editFormData.linkedDebtId) ||
+                      Boolean(editFormData.refHutang) ||
+                      Boolean(editFormData.refPiutang) ||
+                      Boolean(
+                        editFormData.category &&
+                          (editFormData.category.toLowerCase().includes("hutang") ||
+                            editFormData.category.toLowerCase().includes("reimburse") ||
+                            editFormData.category.toLowerCase().includes("gaji") ||
+                            editFormData.category.toLowerCase().includes("proyek") ||
+                            editFormData.category.toLowerCase().includes("termin") ||
+                            editFormData.category.toLowerCase().includes("cicilan"))
+                      )) && (
                       <div className="space-y-4 pt-4 p-8 bg-amber-50/30 border border-amber-200 rounded-[36px]">
                         <label className="text-xs md:text-sm font-black text-amber-700 uppercase tracking-widest ml-1 flex items-center gap-2">
                           <span>🔗</span> {editFormData.category && editFormData.category.toLowerCase().includes("gaji")
                             ? "Pilih Catatan Kasbon Karyawan (Untuk Dipotong dari Gaji)"
-                            : editFormData.category === "Pembayaran Hutang"
-                              ? "Hubungkan Ke Data Hutang Supplier"
+                            : (editFormData.type === "OUT" || (editFormData.category && (editFormData.category.toLowerCase().includes("hutang") || editFormData.category.toLowerCase().includes("reimburse"))))
+                              ? "Hubungkan Ke Data Hutang Supplier / Pelunasan / Reimbursement"
                               : "Hubungkan Ke Data Piutang Client / Proyek (Termin)"}
                         </label>
 
