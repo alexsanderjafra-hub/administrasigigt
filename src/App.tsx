@@ -6776,6 +6776,21 @@ const getEffectiveDebtRecords = (
       return false;
     }
 
+    // Sesuai instruksi resmi: Data hutang awal maksimal mentok di 1 Juli 2026 (HTG-001 s/d HTG-010).
+    // Transaksi/hutang setelah 1 Juli tidak dimasukkan default, biar user yang edit/tambah sendiri nanti saat berjalan.
+    if (r.type === "HUTANG" && !((r as any).originFinancialRecordId)) {
+      const customUpper = (r.customId || r.id || "").toUpperCase();
+      if (customUpper.startsWith("HTG-")) {
+        const numPart = parseInt(customUpper.replace("HTG-", ""), 10);
+        if (!isNaN(numPart) && numPart > 10) {
+          return false;
+        }
+      }
+      if (r.dueDate && r.dueDate > "2026-07-01" && customUpper !== "HTG-003") {
+        return false;
+      }
+    }
+
     return true;
   });
 
@@ -6946,145 +6961,6 @@ const getEffectiveDebtRecords = (
     }
   });
 
-  // Synthesize and auto-integrate personal spending (Talangan Pribadi / Duit Pribadi) into Hutang PT
-  (financialRecords || []).forEach((f) => {
-    if (f.type !== "OUT") return;
-
-    const fIdLower = (f.id || "").toLowerCase();
-    const fCustomUpper = (f.customId || "").toUpperCase();
-    const fCustomLower = (f.customId || "").toLowerCase();
-
-    // If user explicitly deleted this debt from Hutang Piutang, NEVER re-add it!
-    if (deletedOrigins.has(fIdLower) || (fCustomLower && deletedOrigins.has(fCustomLower))) {
-      return;
-    }
-
-    // Must not be an internal custody transfer from PT to staff
-    if (f.flowType === "OUT_PERSONAL_TRANSFER") return;
-
-    // Check sumberDana:
-    // "sumber uang rekening pribadi hutang, sumber uang rekening pt itu bukan hutang"
-    // "sumber uang rekening pribadi dan aliran dana nomor 3 itu juga hutang"
-    // "sumber uang rekening pt dan aliran dana pengeluaran itu nomor 3 itu buan hutang"
-    const sumberRaw = (f.sumberDana || "").trim().toUpperCase();
-    const descUpper = (f.description || "").toUpperCase();
-    const isDescPersonal =
-      descUpper.includes("DUIT PRIBADI") ||
-      descUpper.includes("DANA PRIBADI") ||
-      descUpper.includes("UANG PRIBADI") ||
-      descUpper.includes("TALANGAN PRIBADI") ||
-      descUpper.includes("TALANGAN");
-
-    const isPtSource = (sumberRaw === "REKENING PT" || (sumberRaw.includes("PT") && !sumberRaw.includes("NON-PT") && !sumberRaw.includes("PRIBADI"))) && !isDescPersonal;
-
-    // If source is explicitly REKENING PT and not personal spending, IT IS NEVER A HUTANG!
-    if (isPtSource) {
-      return;
-    }
-
-    const isExplicitPersonalSumber =
-      sumberRaw === "REKENING PRIBADI" ||
-      sumberRaw === "DANA PRIBADI" ||
-      sumberRaw === "PRIBADI" ||
-      sumberRaw.includes("PRIBADI") ||
-      sumberRaw.includes("NON-PT") ||
-      sumberRaw.includes("NON PT") ||
-      checkIsPersonalFundRecord(f);
-
-    // Must not be Kasbon or Salary (these have their own dedicated ledger)
-    const catLower = (f.category || "").toLowerCase();
-    if (catLower.includes("kasbon") || catLower.includes("gaji") || (f as any).isKasbon) return;
-    if (descUpper.includes("KASBON") && !isDescPersonal) return;
-
-    const isPersonalSpendFlow = f.flowType === "OUT_PERSONAL_SPEND";
-    const isPrsCustomId = fCustomUpper.startsWith("PRS-");
-
-    // Has a direct PT bank source allocation
-    const hasPtBankAlloc = f.refIdBank && f.refIdBank.trim() !== "" && !isExplicitPersonalSumber;
-    if (hasPtBankAlloc && !isDescPersonal) return;
-
-    // Determine if this is personal out-of-pocket spending
-    const isPersonalOutOfPocket =
-      isExplicitPersonalSumber ||
-      isDescPersonal ||
-      ((isPersonalSpendFlow || isPrsCustomId) && (!f.refIdBank || f.refIdBank.trim() === ""));
-    if (!isPersonalOutOfPocket) {
-      return;
-    }
-
-    // Check if already registered in debtRecords or list (match by ID, origin, or identical amount & date)
-    const alreadyExists = list.some((r) => {
-      if (r.type !== "HUTANG") return false;
-      const rCustomUpper = (r.customId || "").toUpperCase();
-      const rIdLower = (r.id || "").toLowerCase();
-      const originFinId = (((r as any).originFinancialRecordId || "") as string).toLowerCase();
-      const originCustom = (((r as any).originCustomId || "") as string).toUpperCase();
-
-      if (rIdLower === `htg-prs-${fCustomUpper.toLowerCase()}` || rIdLower === `htg-prs-${fIdLower}`) return true;
-      if (rCustomUpper === `HTG-${fCustomUpper}` || rCustomUpper === fCustomUpper) return true;
-      if (originFinId && (originFinId === fIdLower || (fCustomLower && originFinId === fCustomLower))) return true;
-      if (originCustom && ((fCustomUpper && originCustom === fCustomUpper) || originCustom === fIdLower.toUpperCase())) return true;
-      if (rIdLower === fIdLower || (fCustomUpper && rCustomUpper === fCustomUpper)) return true;
-      if (f.refHutang && (rCustomUpper === f.refHutang.toUpperCase() || (r.title && r.title.toUpperCase() === f.refHutang.toUpperCase()))) return true;
-      if (f.linkedDebtId && (r.id === f.linkedDebtId || r.customId === f.linkedDebtId)) return true;
-      if (r.amount === f.amount) {
-        const rawC = (f as any).pemilikUangPribadi || f.personalHolder || "";
-        const cMatches = rawC && normalizeContactName(rawC) === normalizeContactName(r.contactName);
-        if (cMatches) {
-          if (r.dueDate === f.date) return true;
-          const rT = (r.title || "").toLowerCase();
-          const fD = (f.description || "").toLowerCase();
-          if (rT && fD && (rT.includes(fD) || fD.includes(rT) || fD.split(" ").some(w => w.length > 4 && rT.includes(w)))) {
-            return true;
-          }
-        }
-      }
-      return false;
-    });
-
-    if (!alreadyExists) {
-      // Determine Creditor (Pemilik Uang / Talangan Pribadi)
-      let rawCreditor = 
-        (f as any).pemilikUangPribadi ||
-        f.personalHolder ||
-        (f.refHutang ? (debtRecords.find(d => d.id === f.refHutang || d.customId === f.refHutang)?.contactName) : "") ||
-        (f.linkedDebtId ? (debtRecords.find(d => d.id === f.linkedDebtId || d.customId === f.linkedDebtId)?.contactName) : "") ||
-        (descUpper.includes("FAISAL") ? "FAISAL MUSTOPA" :
-         descUpper.includes("WELI") ? "WELI MAHESA" :
-         descUpper.includes("YASIN") ? "MUHAMMAD YASIN" :
-         descUpper.includes("JIDAN") ? "JIDAN RAMADHAN" : "");
-
-      if (!rawCreditor && (f.customId === "PRS-120826-006" || descUpper.includes("INVESTOR HANIF"))) {
-        rawCreditor = "JIDAN RAMADHAN";
-      }
-
-      if (!rawCreditor) {
-        rawCreditor = (f.recordedBy || "FAISAL MUSTOPA");
-      }
-
-      const creditorName = normalizeContactName(rawCreditor);
-      const newCustomId = (f.customId && f.customId.startsWith("PRS-")) ? `HTG-${f.customId}` : `HTG-PRS-${f.customId || f.id}`;
-
-      list.push({
-        id: newCustomId,
-        customId: newCustomId,
-        projectId: f.referenceId || (f as any).projectId || "",
-        type: "HUTANG",
-        title: `[TALANGAN PRIBADI] ${f.description || f.category || "Pengeluaran Pribadi"}`,
-        contactName: creditorName,
-        amount: f.amount || 0,
-        dueDate: f.date || new Date().toISOString().split('T')[0],
-        status: "UNPAID",
-        description: `Dana talangan pribadi oleh ${creditorName} untuk operasional/proyek PT (Ref Transaksi: ${f.customId || f.id})`,
-        recordedBy: f.recordedBy || creditorName || "Admin Keuangan",
-        timestamp: f.timestamp || Date.now(),
-        payments: [],
-        originFinancialRecordId: f.id,
-        originCustomId: f.customId,
-      } as any);
-    }
-  });
-
   return list;
 };
 
@@ -7203,7 +7079,7 @@ const getScheduleForRecord = (
   const isPiutang = record.type === "PIUTANG" || !record.type;
   const targetFlow = isPiutang ? "IN" : "OUT";
 
-  // Filter record.payments so expenses never bleed into Piutang payments
+  // Filter record.payments so expenses never bleed into Piutang payments, and Hutang respects 1 July cutoff
   const initialPayments: DebtPayment[] = (record.payments || []).filter((p) => {
     if (isPiutang) {
       if (p.financialRecordId) {
@@ -7254,13 +7130,32 @@ const getScheduleForRecord = (
       }
       return true;
     } else {
+      // Sesuai aturan user: Data hutang awal & pembayaran hutang mentok di 1 Juli 2026.
+      // Catatan uang masuk / pembayaran setelah 1 Juli jangan dimasukkan dulu kecuali ada ID yang terhubung resmi lewat edit user.
       if (p.financialRecordId) {
         const linkedFin = (financialRecordsList || []).find(
           (f) => f.id === p.financialRecordId || f.customId === p.financialRecordId
         );
-        if (linkedFin && linkedFin.type === "IN") {
-          return false; // Exclude income from debt repayment
+        if (linkedFin) {
+          if (linkedFin.type === "IN") {
+            return false; // Exclude income from debt repayment
+          }
+          if (linkedFin.date && linkedFin.date > "2026-07-01") {
+            const fLink = (linkedFin.linkedDebtId || "").toLowerCase();
+            const fRef = (linkedFin.refHutang || "").toLowerCase();
+            const isExplicitId =
+              (fLink && (fLink === recIdLower || fLink === recCustomId || fLink === recCleanId)) ||
+              (fRef && (fRef === recIdLower || fRef === recCustomId || fRef === recCleanId)) ||
+              linkedFin.debtAllocations?.some(
+                (a: any) =>
+                  (a.debtId && (a.debtId.toLowerCase() === recIdLower || a.debtId.toLowerCase() === recCustomId)) ||
+                  (a.customId && (a.customId.toLowerCase() === recIdLower || a.customId.toLowerCase() === recCustomId))
+              );
+            if (!isExplicitId) return false;
+          }
         }
+      } else if (p.date && p.date > "2026-07-01") {
+        return false;
       }
       return true;
     }
@@ -7366,8 +7261,7 @@ const getScheduleForRecord = (
             a.debtId === record.customId ||
             (recCustomId && a.debtId?.toUpperCase() === recCustomId) ||
             (recCleanId && a.debtId?.toUpperCase() === recCleanId) ||
-            (a.customId && (a.customId.toUpperCase() === recCustomId || a.customId.toUpperCase() === recCleanId)) ||
-            (a.title && record.title && a.title.toUpperCase() === record.title.toUpperCase())
+            (a.customId && (a.customId.toUpperCase() === recCustomId || a.customId.toUpperCase() === recCleanId))
         );
 
         if (matchingDebtAlloc) {
@@ -7393,45 +7287,6 @@ const getScheduleForRecord = (
           (recCleanId && fRefHutang.includes(recCleanId))
         )) {
           matches = true;
-        } else if (f.referenceId && (
-          fRefId === recIdLower ||
-          (recCustomId && fRefId === recCustomId) ||
-          (recOriginCustomId && fRefId === recOriginCustomId) ||
-          (recOriginFinId && fRefId === recOriginFinId)
-        )) {
-          matches = true;
-        } else if (
-          ((f.category || "").toUpperCase().includes("HUTANG") || (f.category || "").toUpperCase().includes("REIMBURSE")) &&
-          f.sumberDana === "REKENING PT" &&
-          !f.linkedDebtId &&
-          !f.refHutang &&
-          (!f.debtAllocations || f.debtAllocations.length === 0)
-        ) {
-          const contactCanonical = normalizeContactName(record.contactName || "").toUpperCase();
-          const descUpper = (f.description || "").toUpperCase();
-          const rekUpper = (f.rekPenerima || "").toUpperCase();
-
-          if (contactCanonical.includes("DODO")) {
-            if (descUpper.includes("DODO") || rekUpper.includes("DODO")) matches = true;
-          } else if (contactCanonical.includes("YASIN")) {
-            if (descUpper.includes("YASIN") || rekUpper.includes("YASIN") || descUpper.includes("OWNER") || rekUpper.includes("OWNER")) matches = true;
-          } else if (contactCanonical.includes("YOGA")) {
-            if (descUpper.includes("YOGA") || rekUpper.includes("YOGA")) matches = true;
-          } else if (contactCanonical.includes("FAISAL")) {
-            if (descUpper.includes("FAISAL") || rekUpper.includes("FAISAL")) matches = true;
-          } else if (contactCanonical.includes("JIDAN")) {
-            if (descUpper.includes("JIDAN") || rekUpper.includes("JIDAN")) matches = true;
-          } else if (contactCanonical.includes("WINGGI")) {
-            if (descUpper.includes("WINGGI") || rekUpper.includes("WINGGI")) matches = true;
-          } else if (contactCanonical.includes("WELI")) {
-            if (descUpper.includes("WELI") || rekUpper.includes("WELI")) matches = true;
-          } else if (contactCanonical.includes("HANIF")) {
-            if (descUpper.includes("HANIF") || rekUpper.includes("HANIF")) matches = true;
-          } else if (contactCanonical && contactCanonical !== "TANPA NAMA") {
-            if (normalizeContactName(rekUpper) === contactCanonical || normalizeContactName(descUpper) === contactCanonical) {
-              matches = true;
-            }
-          }
         }
       }
     }
@@ -8292,7 +8147,6 @@ const AdminDebtScreen = ({
         // 1. Direct structured debt reference by ID (from PT funds)
         if (fLinkedDebt && (debtIds.has(fLinkedDebt) || customIds.has(fLinkedDebt))) return true;
         if (fRefHutang && (debtIds.has(fRefHutang) || customIds.has(fRefHutang))) return true;
-        if (fRefId && (debtIds.has(fRefId) || customIds.has(fRefId))) return true;
 
         // 2. Multi-debt allocations array
         if (
@@ -8306,59 +8160,17 @@ const AdminDebtScreen = ({
           return true;
         }
 
-        // 3. Matched in recorded payments slot of this contact's debts
+        // 3. Matched in recorded payments slot of this contact's debts (only if payment is on or before 1 July 2026)
         const isPaymentMatch = contactDetailRecords.some((r) =>
           (r.payments || []).some(
             (p) =>
-              (p.financialRecordId && (p.financialRecordId === f.id || p.financialRecordId === f.customId)) ||
-              p.id === f.id ||
-              p.id === f.customId
+              (!p.date || p.date <= "2026-07-01") &&
+              ((p.financialRecordId && (p.financialRecordId === f.id || p.financialRecordId === f.customId)) ||
+                p.id === f.id ||
+                p.id === f.customId)
           )
         );
-        if (isPaymentMatch) return true;
-
-        // 4. Pengeluaran Rekening PT (Kategori Pembayaran Hutang atau Kategori Reimburse) yang ditransfer/masuk ke pihak terkait
-        const catUpper = (f.category || "").toUpperCase();
-        const isReimburse = catUpper.includes("REIMBURSE") || descUpper.includes("REIMBURSE");
-        const isDebtCat = catUpper.includes("HUTANG");
-
-        if (isReimburse || isDebtCat) {
-          const recipientStr = `${f.rekPenerima || ""} ${f.personalHolder || ""} ${(f as any).contactName || ""} ${f.description || ""}`.toUpperCase();
-
-          if (targetKey.includes("DODO")) {
-            if (recipientStr.includes("DODO")) return true;
-          } else if (targetKey.includes("YASIN")) {
-            if (recipientStr.includes("YASIN") || recipientStr.includes("OWNER")) return true;
-          } else if (targetKey.includes("YOGA")) {
-            if (recipientStr.includes("YOGA")) return true;
-          } else if (targetKey.includes("FAISAL")) {
-            if (recipientStr.includes("FAISAL")) return true;
-          } else if (targetKey.includes("JIDAN")) {
-            if (recipientStr.includes("JIDAN")) return true;
-          } else if (targetKey.includes("WINGGI")) {
-            if (recipientStr.includes("WINGGI")) return true;
-          } else if (targetKey.includes("WELI")) {
-            if (recipientStr.includes("WELI")) return true;
-          } else if (targetKey.includes("HANIF")) {
-            if (recipientStr.includes("HANIF")) return true;
-          } else if (recipientStr.includes(targetKey)) {
-            return true;
-          }
-          if (
-            contactDetailRecords.some(
-              (r) => r.title && f.refHutang && f.refHutang.trim().toUpperCase() === r.title.trim().toUpperCase()
-            )
-          ) {
-            return true;
-          }
-          if (
-            contactDetailRecords.some(
-              (r) => r.customId && r.customId.length > 3 && descUpper.includes(r.customId.toUpperCase())
-            )
-          ) {
-            return true;
-          }
-        }
+        if (isPaymentMatch && (!f.date || f.date <= "2026-07-01")) return true;
 
         return false;
       }
@@ -8427,11 +8239,7 @@ const AdminDebtScreen = ({
     const reimburseCategoryAmount = reimburseCategoryRecords.reduce((sum, f) => sum + (f.amount || 0), 0);
     const totalPtPaidHutang = hutangCategoryAmount + reimburseCategoryAmount;
 
-    // For HUTANG, reconcile totalPaid to reflect PT disbursements (Pembayaran Hutang + Reimburse) without exceeding total debt notes
-    const finalTotalPaid =
-      selectedContactDetail.type === "HUTANG"
-        ? (totalPtPaidHutang > 0 ? Math.min(totalAmount, Math.max(totalPaid, totalPtPaidHutang)) : totalPaid)
-        : totalPaid;
+    const finalTotalPaid = totalPaid;
     const finalTotalRemaining = Math.max(0, totalAmount - finalTotalPaid);
 
     return {
@@ -8451,7 +8259,7 @@ const AdminDebtScreen = ({
       reimburseCategoryRecords,
       hutangCategoryAmount,
       reimburseCategoryAmount,
-      totalPtPaidHutang,
+      totalPtPaidHutang: finalTotalPaid,
     };
   }, [selectedContactDetail, contactDetailRecords, contactFinancialRecords, projects, financialRecords]);
 
@@ -14104,34 +13912,49 @@ const AdminDebtScreen = ({
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
-                  <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/70 shadow-xs">
-                    <p className="text-[9.5px] font-black uppercase text-slate-500 tracking-wider">Total Dana Terpakai</p>
-                    <p className="text-base sm:text-lg font-black text-slate-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalAmount)}</p>
-                    <p className="text-[10px] text-slate-400 font-medium mt-0.5">{contactDetailSummary.count} Catatan Terdata</p>
-                  </div>
-                  <div className="bg-purple-50/70 p-4 rounded-2xl border border-purple-200/80 shadow-xs">
-                    <p className="text-[9.5px] font-black uppercase text-purple-700 tracking-wider">Talangan Pokok (≥ 2 Jt)</p>
-                    <p className="text-base sm:text-lg font-black text-purple-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.majorDebtAmount)}</p>
-                    <p className="text-[10px] text-purple-600 font-medium mt-0.5">{contactDetailSummary.majorDebtRecords.length} Atas Nama Kontak</p>
-                  </div>
-                  <div className="bg-amber-50/70 p-4 rounded-2xl border border-amber-200/80 shadow-xs">
-                    <p className="text-[9.5px] font-black uppercase text-amber-700 tracking-wider">Rekam Belanja (&lt; 2 Jt)</p>
-                    <p className="text-base sm:text-lg font-black text-amber-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.minorReimburseAmount)}</p>
-                    <p className="text-[10px] text-amber-600 font-medium mt-0.5">{contactDetailSummary.minorReimburseRecords.length} Melekat Rekam Data</p>
-                  </div>
-                  <div className="bg-emerald-50/70 p-4 rounded-2xl border border-emerald-200/80 shadow-xs">
-                    <p className="text-[9.5px] font-black uppercase text-emerald-700 tracking-wider">Total Masuk dari PT</p>
-                    <p className="text-base sm:text-lg font-black text-emerald-700 mt-1 font-mono">
-                      {formatCurrencyIDR(contactDetailSummary.totalPtPaidHutang > 0 ? contactDetailSummary.totalPtPaidHutang : contactDetailSummary.totalPaid)}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+                  <div className="bg-slate-50/90 p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-black uppercase text-slate-500 tracking-wider">
+                        1. TOTAL DANA PRIBADI TERPAKAI
+                      </p>
+                      <CreditCard size={15} className="text-slate-400" />
+                    </div>
+                    <p className="text-xl sm:text-2xl font-black text-slate-900 mt-2 font-mono">
+                      {formatCurrencyIDR(contactDetailSummary.totalAmount)}
                     </p>
-                    <p className="text-[10px] text-emerald-600 font-medium mt-0.5">{contactFinancialRecords.length} Trx Transfer PT</p>
+                    <p className="text-[10.5px] text-slate-400 font-medium mt-1">
+                      {contactDetailSummary.count} Catatan Terdaftar (per 1 Juli 2026)
+                    </p>
                   </div>
-                  <div className="bg-rose-50/70 p-4 rounded-2xl border border-rose-200/80 shadow-xs">
-                    <p className="text-[9.5px] font-black uppercase text-rose-700 tracking-wider">Sisa Kewajiban PT</p>
-                    <p className="text-base sm:text-lg font-black text-rose-700 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.totalRemaining)}</p>
-                    <p className="text-[10px] text-rose-600 font-medium mt-0.5">
-                      {contactDetailSummary.totalRemaining <= 0 ? "Lunas Penuh (100%)" : "Belum Diselesaikan"}
+
+                  <div className="bg-emerald-50/80 p-4 sm:p-5 rounded-2xl border border-emerald-200/80 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-black uppercase text-emerald-700 tracking-wider">
+                        2. TOTAL PEMBAYARAN HUTANG DARI PT
+                      </p>
+                      <CheckCircle size={15} className="text-emerald-600" />
+                    </div>
+                    <p className="text-xl sm:text-2xl font-black text-emerald-700 mt-2 font-mono">
+                      {formatCurrencyIDR(contactDetailSummary.totalPaid)}
+                    </p>
+                    <p className="text-[10.5px] text-emerald-600 font-medium mt-1">
+                      {contactFinancialRecords.length} Pembayaran Sah Terhubung ID
+                    </p>
+                  </div>
+
+                  <div className="bg-rose-50/80 p-4 sm:p-5 rounded-2xl border border-rose-200/80 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] font-black uppercase text-rose-700 tracking-wider">
+                        3. SISA HUTANG YANG BELUM TERBAYAR
+                      </p>
+                      <AlertCircle size={15} className="text-rose-600" />
+                    </div>
+                    <p className="text-xl sm:text-2xl font-black text-rose-700 mt-2 font-mono">
+                      {formatCurrencyIDR(contactDetailSummary.totalRemaining)}
+                    </p>
+                    <p className="text-[10.5px] text-rose-600 font-medium mt-1">
+                      = Total Dana Terpakai - Total Pembayaran PT
                     </p>
                   </div>
                 </div>
@@ -14174,54 +13997,6 @@ const AdminDebtScreen = ({
                 <div className="space-y-4">
                   {selectedContactDetail.type === "HUTANG" ? (
                     <>
-                      {/* Filter Bar Klasifikasi Dana Pribadi */}
-                      <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-200/80">
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() => setContactDanaPribadiFilter("ALL")}
-                            className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                              contactDanaPribadiFilter === "ALL"
-                                ? "bg-white text-slate-900 shadow-xs border border-slate-200"
-                                : "text-slate-500 hover:text-slate-900"
-                            }`}
-                          >
-                            Semua Catatan ({contactDetailRecords.length})
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setContactDanaPribadiFilter("MAJOR")}
-                            className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
-                              contactDanaPribadiFilter === "MAJOR"
-                                ? "bg-purple-600 text-white shadow-xs"
-                                : "text-purple-700 bg-purple-50 hover:bg-purple-100/80 border border-purple-200/60"
-                            }`}
-                          >
-                            <CreditCard size={11} />
-                            Talangan Pokok (≥ Rp 2 Jt) ({contactDetailSummary.majorDebtRecords.length})
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setContactDanaPribadiFilter("MINOR")}
-                            className={`px-3.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
-                              contactDanaPribadiFilter === "MINOR"
-                                ? "bg-amber-600 text-white shadow-xs"
-                                : "text-amber-800 bg-amber-50 hover:bg-amber-100/80 border border-amber-200/60"
-                            }`}
-                          >
-                            <Receipt size={11} />
-                            Rekam Belanja (&lt; Rp 2 Jt) ({contactDetailSummary.minorReimburseRecords.length})
-                          </button>
-                        </div>
-                        <p className="text-[11px] text-slate-500 font-medium">
-                          {contactDanaPribadiFilter === "MAJOR"
-                            ? "Catatan talangan pokok terikat langsung pada nama kontak."
-                            : contactDanaPribadiFilter === "MINOR"
-                            ? "Catatan belanja operasional yang melekat langsung pada rekam data transaksi/nota."
-                            : "Daftar seluruh dana talangan pribadi yang telah terpakai untuk keperluan PT."}
-                        </p>
-                      </div>
-
                       {/* Tabel Catatan Dana Pribadi Terpakai */}
                       {contactDetailRecords.length === 0 ? (
                         <div className="bg-slate-50 p-8 rounded-2xl border border-slate-100 text-center">
@@ -14238,24 +14013,16 @@ const AdminDebtScreen = ({
                                   <th className="p-3.5 w-24">TANGGAL</th>
                                   <th className="p-3.5 min-w-[240px]">KEPERLUAN / TUJUAN BELANJA PT</th>
                                   <th className="p-3.5 w-36">PROYEK</th>
-                                  <th className="p-3.5 w-44 text-center">KLASIFIKASI TRANSAKSI</th>
                                   <th className="p-3.5 text-right font-mono w-40">NOMINAL TERPAKAI</th>
                                   <th className="p-3.5 pr-4 text-center w-28">AKSI</th>
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
                                 {contactDetailRecords
-                                  .filter((rec) => {
-                                    const amt = rec.amount || 0;
-                                    if (contactDanaPribadiFilter === "MAJOR") return amt >= 2000000;
-                                    if (contactDanaPribadiFilter === "MINOR") return amt < 2000000;
-                                    return true;
-                                  })
                                   .map((rec, rIdx) => {
                                     const sched = getScheduleForRecord(rec, projects, financialRecords);
                                     const initialAmt = sched.contractValue || rec.amount || 0;
                                     const projName = projects.find((p) => p.id === rec.projectId)?.name || "Umum / Operasional";
-                                    const isMajor = initialAmt >= 2000000;
 
                                     return (
                                       <tr key={rec.id || rIdx} className="hover:bg-slate-50/70 transition-colors">
@@ -14282,17 +14049,6 @@ const AdminDebtScreen = ({
                                           <span className="text-slate-600 font-semibold text-[11px] truncate block max-w-[130px]" title={projName}>
                                             {projName}
                                           </span>
-                                        </td>
-                                        <td className="p-3.5 text-center">
-                                          {isMajor ? (
-                                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-purple-50 text-purple-700 border border-purple-200">
-                                              <CreditCard size={10} /> Talangan Pokok (≥ 2 Jt)
-                                            </span>
-                                          ) : (
-                                            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200">
-                                              <Receipt size={10} /> Rekam Belanja (&lt; 2 Jt)
-                                            </span>
-                                          )}
                                         </td>
                                         <td className="p-3.5 text-right font-mono text-slate-900 font-black">
                                           {formatCurrencyIDR(initialAmt)}
@@ -14349,29 +14105,11 @@ const AdminDebtScreen = ({
                                   })}
                               </tbody>
                               <tfoot className="bg-slate-50 border-t-2 border-slate-200 text-slate-800 font-mono text-xs">
-                                <tr>
-                                  <td colSpan={6} className="p-3 pl-4 text-right font-black uppercase text-[10px] text-purple-700">
-                                    Subtotal Talangan Pokok (≥ Rp 2 Juta):
-                                  </td>
-                                  <td className="p-3 text-right font-black text-purple-700">
-                                    {formatCurrencyIDR(contactDetailSummary.majorDebtAmount)}
-                                  </td>
-                                  <td></td>
-                                </tr>
-                                <tr>
-                                  <td colSpan={6} className="p-3 pl-4 text-right font-black uppercase text-[10px] text-amber-700">
-                                    Subtotal Rekam Belanja Operasional (&lt; Rp 2 Juta):
-                                  </td>
-                                  <td className="p-3 text-right font-black text-amber-800">
-                                    {formatCurrencyIDR(contactDetailSummary.minorReimburseAmount)}
-                                  </td>
-                                  <td></td>
-                                </tr>
-                                <tr className="bg-slate-100/80 font-black">
-                                  <td colSpan={6} className="p-3.5 pl-4 text-right uppercase text-[11px] text-slate-900 tracking-wider">
+                                <tr className="bg-slate-100/90 font-black">
+                                  <td colSpan={5} className="p-3.5 pl-4 text-right uppercase text-[11px] text-slate-900 tracking-wider">
                                     Total Seluruh Catatan Dana Pribadi Terpakai PT:
                                   </td>
-                                  <td className="p-3.5 text-right text-sm text-slate-900">
+                                  <td className="p-3.5 text-right text-sm text-slate-900 font-mono">
                                     {formatCurrencyIDR(contactDetailSummary.totalAmount)}
                                   </td>
                                   <td></td>
@@ -14826,14 +14564,10 @@ const AdminDebtScreen = ({
                               </tr>
                               <tr className="bg-emerald-50/80 border-t border-emerald-200/80 text-emerald-900">
                                 <td colSpan={5} className="p-3.5 pl-4 text-right uppercase tracking-wider font-sans text-xs font-black">
-                                  Total Seluruh Dana Masuk Pembayaran dari PT (Hutang + Reimburse):
+                                  Total Seluruh Pembayaran Hutang Sah dari PT:
                                 </td>
                                 <td colSpan={3} className="p-3.5 pr-4 text-right text-emerald-800 text-sm font-black">
-                                  {formatCurrencyIDR(
-                                    contactDetailSummary.totalPtPaidHutang > 0
-                                      ? contactDetailSummary.totalPtPaidHutang
-                                      : contactDetailSummary.totalPaid
-                                  )}
+                                  {formatCurrencyIDR(contactDetailSummary.totalPaid)}
                                 </td>
                               </tr>
                             </tfoot>
@@ -18034,12 +17768,11 @@ const AdminFinanceScreen = ({
 
               const matchedDebt = effectiveDebtRecords.find((d) => {
                 if (d.type !== "HUTANG" || d.status === "PAID") return false;
-                const cName = normalizeContactName(d.contactName || "").toLowerCase();
                 const dCust = (d.customId || "").toLowerCase();
                 const dId = (d.id || "").toLowerCase();
-                if (cName && cName.length > 2 && (rekP.includes(cName) || cName.includes(rekP))) return true;
-                if (refH && (refH.includes(cName) || refH.includes(dCust) || refH.includes(dId))) return true;
-                if (isHutangCategory && cName && cName.length > 2 && desc.includes(cName)) return true;
+                const fLinked = (formData.linkedDebtId || "").toLowerCase();
+                if (refH && (refH === dCust || refH === dId)) return true;
+                if (fLinked && (fLinked === dCust || fLinked === dId)) return true;
                 return false;
               });
 
@@ -20625,7 +20358,7 @@ const AdminFinanceScreen = ({
                   <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
                     Sisa Kas di PT Bank
                   </p>
-                  <p className="text-xs font-black text-emerald-400 leading-none">
+                  <p className={`text-xs font-black leading-none ${bankBalance < 0 ? "text-rose-400 font-bold" : "text-emerald-400"}`}>
                     {formatCurrency(bankBalance)}
                   </p>
                 </div>
@@ -24378,6 +24111,8 @@ const AdminFinanceScreen = ({
                               newFlow = "OUT_PERSONAL_SPEND";
                             } else if (val === "REKENING PRIBADI") {
                               newFlow = "OUT_BANK_DIRECT";
+                            } else if (val === "REKENING PT") {
+                              newFlow = "OUT_BANK_DIRECT";
                             }
                             setEditFormData({
                               ...editFormData,
@@ -24387,9 +24122,9 @@ const AdminFinanceScreen = ({
                           }}
                           className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer"
                         >
-                          <option value="REKENING PT">REKENING PT</option>
-                          <option value="REKENING PRIBADI">REKENING PRIBADI (Dana Pribadi → Tambah Hutang PT)</option>
-                          <option value="DANA PATTYCASH">DANA PATTYCASH / KASBON (Potong Saldo Kasbon/Pattycash)</option>
+                          <option value="REKENING PT">REKENING PT (Transfer Bank Langsung ke Supplier)</option>
+                          <option value="DANA PATTYCASH">DANA PATTYCASH / KASBON (Potong Saldo Kas Kecil PIC - Bukan Hutang)</option>
+                          <option value="REKENING PRIBADI">REKENING PRIBADI (Uang Pribadi Karyawan/PIC → Tambah Hutang PT)</option>
                         </select>
                       </div>
 
@@ -25062,7 +24797,9 @@ const AdminFinanceScreen = ({
                     {/* Specific conditional fields: OUT_PERSONAL_TRANSFER & OUT_PERSONAL_SPEND */}
                     {(editFormData.flowType === "OUT_PERSONAL_TRANSFER" ||
                       editFormData.flowType === "OUT_PERSONAL_SPEND" ||
-                      editFormData.flowType === "PERSONAL_TALANGAN_REIMBURSE") && (
+                      editFormData.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+                      editFormData.sumberDana === "DANA PATTYCASH" ||
+                      (editFormData.sumberDana || "").toUpperCase().includes("PATTY")) && (
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-8 bg-purple-50/20 p-6 md:p-10 rounded-[36px] border border-purple-100/40">
                         <div className="space-y-3">
                           <label className="text-xs md:text-sm font-black text-purple-700 uppercase tracking-widest ml-1">
@@ -25112,7 +24849,10 @@ const AdminFinanceScreen = ({
                         </div>
 
                         {/* ID Ref Bank for Breakdown linking */}
-                        {(editFormData.flowType === "OUT_PERSONAL_SPEND" || editFormData.flowType === "PERSONAL_TALANGAN_REIMBURSE") && (
+                        {(editFormData.flowType === "OUT_PERSONAL_SPEND" ||
+                          editFormData.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+                          editFormData.sumberDana === "DANA PATTYCASH" ||
+                          (editFormData.sumberDana || "").toUpperCase().includes("PATTY")) && (
                           <div className="space-y-4 p-6 bg-purple-50/20 rounded-3xl border border-purple-100/50">
                             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                               <label className="text-xs md:text-sm font-black text-purple-700 uppercase tracking-widest ml-1">
@@ -34616,7 +34356,12 @@ export default function App() {
             const fromDb = (data || []).find((item) => (item.customId || item.id || "").trim().toUpperCase() === key);
             const fromLocal = localDebtMap.get(key);
             const source = fromDb || fromLocal;
-            deduped.push((source ? { ...seed, ...(fromLocal || {}), ...(fromDb || {}) } : seed) as DebtRecord);
+            const baseRecord = (source ? { ...seed, ...(fromLocal || {}), ...(fromDb || {}) } : seed) as DebtRecord;
+            if (baseRecord.type === "HUTANG") {
+              // Sesuai aturan tegas user: Data hutang & pembayaran awal mentok di 1 Juli 2026
+              baseRecord.payments = (baseRecord.payments || []).filter((p) => !p.date || p.date <= "2026-07-01");
+            }
+            deduped.push(baseRecord);
           }
         });
 
