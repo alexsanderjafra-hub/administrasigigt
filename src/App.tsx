@@ -15375,52 +15375,90 @@ const generateNewCustomId = (
   return `${prefix}-${dateFormatted}-${nextNumStr}`;
 };
 
-const parseBankAllocations = (refIdBankStr: string, totalAmount: number): Array<{ bankId: string; amount: number }> => {
+export const parseBankAllocations = (refIdBankStr: string, totalAmount: number): Array<{ bankId: string; amount: number }> => {
   if (!refIdBankStr) return [];
   const ref = refIdBankStr.trim();
+  if (ref === "" || ref === "-") return [];
   
   if (ref.startsWith("{")) {
     try {
       const alloc = JSON.parse(ref);
-      return Object.entries(alloc).map(([bankId, amt]) => ({
-        bankId,
-        amount: Number(amt) || 0
-      }));
+      return Object.entries(alloc).map(([bankId, amt]) => {
+        const cleanMatch = bankId.match(/BNK-\d{6}-\d{3}/i);
+        return {
+          bankId: cleanMatch ? cleanMatch[0].toUpperCase() : bankId.trim(),
+          amount: Number(amt) || 0
+        };
+      });
     } catch (e) {}
   }
   
-  if (ref.includes(":") || ref.includes("|")) {
-    const parts = ref.split("|");
-    const results: Array<{ bankId: string; amount: number }> = [];
-    for (const part of parts) {
-      const [bankId, amtStr] = part.split(":");
-      if (bankId) {
-        results.push({
-          bankId: bankId.trim(),
-          amount: Number(amtStr) || 0
-        });
-      }
+  // Split by "+" or "|" (handles "BNK-1 (Rp 10.000) + BNK-2 (Rp 20.000)" or "BNK-1:10000|BNK-2:20000")
+  const rawParts = ref.includes("+") ? ref.split("+") : ref.includes("|") ? ref.split("|") : [ref];
+  const results: Array<{ bankId: string; amount: number }> = [];
+
+  for (const part of rawParts) {
+    const trimmed = part.trim();
+    if (!trimmed || trimmed === "-") continue;
+
+    // Format: bankId:amount (e.g. BNK-100726-001:12000)
+    if (trimmed.includes(":") && !trimmed.includes("Rp")) {
+      const [bId, amtStr] = trimmed.split(":");
+      const bMatch = bId.match(/BNK-\d{6}-\d{3}/i) || [bId.trim()];
+      results.push({
+        bankId: bMatch[0].toUpperCase(),
+        amount: Number(amtStr) || 0
+      });
+      continue;
     }
-    return results;
+
+    // Format: bankId (Rp 12.000) or bankId (Rp12000)
+    const rpMatch = trimmed.match(/(BNK-\d{6}-\d{3}|[A-Za-z0-9_-]+).*?\(Rp\s*([0-9.,]+)\)/i);
+    if (rpMatch) {
+      const bIdMatch = rpMatch[1].match(/BNK-\d{6}-\d{3}/i) || [rpMatch[1].trim()];
+      const numStr = rpMatch[2].replace(/\./g, "").replace(/,/g, ".");
+      results.push({
+        bankId: bIdMatch[0].toUpperCase(),
+        amount: Number(numStr) || 0
+      });
+      continue;
+    }
+
+    // Format: comma separated IDs (e.g. BNK-1, BNK-2)
+    if (trimmed.includes(",")) {
+      const ids = trimmed.split(",").map((x) => x.trim()).filter(Boolean);
+      const div = totalAmount / (ids.length || 1);
+      ids.forEach((id) => {
+        const m = id.match(/BNK-\d{6}-\d{3}/i) || [id];
+        results.push({ bankId: m[0].toUpperCase(), amount: div });
+      });
+      continue;
+    }
+
+    // Plain ID (e.g. "BNK-100726-001") or ID with descriptive text
+    const bnkMatch = trimmed.match(/BNK-\d{6}-\d{3}/i);
+    const cleanId = bnkMatch ? bnkMatch[0].toUpperCase() : trimmed;
+    results.push({
+      bankId: cleanId,
+      amount: rawParts.length > 1 ? totalAmount / rawParts.length : totalAmount
+    });
   }
 
-  if (ref.includes(",")) {
-    const ids = ref.split(",").map((x) => x.trim()).filter(Boolean);
-    const divided = totalAmount / (ids.length || 1);
-    return ids.map((id) => ({
-      bankId: id,
-      amount: divided
-    }));
-  }
-
-  return [{ bankId: ref, amount: totalAmount }];
+  return results.filter((a) => a.bankId && a.bankId !== "-");
 };
 
-const serializeAllocations = (allocations: Array<{ bankId: string; amount: number }>) => {
+export const serializeAllocations = (allocations: Array<{ bankId: string; amount: number }>) => {
   const valid = allocations.filter((a) => a.bankId && a.amount > 0);
   if (valid.length === 0) return "";
-  if (valid.length === 1) return valid[0].bankId; // backward-compatible single string
-  return valid.map((a) => `${a.bankId}:${a.amount}`).join("|");
+  const cleanAllocations = valid.map((a) => {
+    const m = a.bankId.match(/BNK-\d{6}-\d{3}/i);
+    return {
+      bankId: m ? m[0].toUpperCase() : a.bankId.trim().toUpperCase(),
+      amount: a.amount
+    };
+  });
+  if (cleanAllocations.length === 1) return cleanAllocations[0].bankId; // clean single ID e.g. "BNK-100726-001"
+  return cleanAllocations.map((a) => `${a.bankId}:${a.amount}`).join("|");
 };
 
 const formatRefIdBankDisplay = (refIdBankStr: string, totalAmount: number): string => {
@@ -16302,58 +16340,6 @@ const AdminFinanceScreen = ({
     return false;
   }, [isPersonalFundRecord, isPattyCashCategory]);
 
-  const getBankRemainingBalance = useCallback((bankRec: FinancialRecord, isEdit: boolean) => {
-    const spentOnThis = financialRecords
-      .filter((r) => {
-        if (isEdit && editingTransaction && r.id === editingTransaction.id) {
-          return false;
-        }
-        return r.flowType === "OUT_PERSONAL_SPEND";
-      })
-      .reduce((sum, r) => {
-        const allocs = parseBankAllocations(r.refIdBank || "", r.amount);
-        const match = allocs.find((a) => a.bankId === bankRec.customId);
-        return sum + (match ? match.amount : 0);
-      }, 0);
-    return Math.max(0, bankRec.amount - spentOnThis);
-  }, [financialRecords, editingTransaction]);
-
-  const handleAutoPecah = useCallback((allocs: Array<{ bankId: string; amount: number }>, totalAmountStr: string, isEdit: boolean) => {
-    const totalToAllocate = Number(totalAmountStr || 0);
-    if (totalToAllocate <= 0) return;
-
-    let remainingToAllocate = totalToAllocate;
-    const updated = allocs.map((alloc) => {
-      if (!alloc.bankId) {
-        return { ...alloc, amount: 0 };
-      }
-      const bankRec = financialRecords.find((r) => (r.customId || r.id) === alloc.bankId);
-      if (!bankRec) {
-        return { ...alloc, amount: 0 };
-      }
-
-      const availableBalance = getBankRemainingBalance(bankRec, isEdit);
-      const allocatedAmount = Math.max(0, Math.min(availableBalance, remainingToAllocate));
-      remainingToAllocate -= allocatedAmount;
-
-      return { ...alloc, amount: allocatedAmount };
-    });
-
-    if (remainingToAllocate > 0 && updated.length > 0) {
-      updated[updated.length - 1].amount += remainingToAllocate;
-    }
-
-    if (isEdit) {
-      setEditBankAllocations(updated);
-      const str = serializeAllocations(updated);
-      setEditFormData((prev) => ({ ...prev, refIdBank: str }));
-    } else {
-      setBankAllocations(updated);
-      const str = serializeAllocations(updated);
-      setFormData((prev) => ({ ...prev, refIdBank: str }));
-    }
-  }, [financialRecords, getBankRemainingBalance]);
-
   const handleAutoAllocHutang = useCallback(
     (
       allocs: Array<{ debtId: string; amount: number; customId?: string; title?: string; contactName?: string }>,
@@ -16571,9 +16557,26 @@ const AdminFinanceScreen = ({
     financialRecords.forEach((record) => {
       if (isUsingJuneBaseline && record.date.startsWith("2026-06")) return;
       if (record.type !== "OUT") return;
-      if (record.flowType === "OUT_PERSONAL_SPEND" || record.customId?.startsWith("PRS-") || record.sumberDana !== "REKENING PT") return; // Filter out personal spending or PRS records so only Bank PT top-ups are counted!
+      if (record.flowType === "OUT_PERSONAL_SPEND" || record.customId?.startsWith("PRS-")) return;
 
-      const isTalanganType = isPattyCashCategory(record.category);
+      const sDana = (record.sumberDana || "").toUpperCase();
+      if (sDana.includes("PRIBADI") || sDana.includes("NON-PT")) return;
+
+      const isTalanganType =
+        isPattyCashCategory(record.category) ||
+        record.flowType === "OUT_PERSONAL_TRANSFER" ||
+        isCustodyTransfer(record) ||
+        (Boolean(record.customId?.startsWith("BNK-")) &&
+          Boolean(record.personalHolder || record.rekPenerima) &&
+          (
+            (record.description || "").toUpperCase().includes("PATTY") ||
+            (record.description || "").toUpperCase().includes("PETTY") ||
+            (record.description || "").toUpperCase().includes("KAS KECIL") ||
+            (record.description || "").toUpperCase().includes("DANA AWAL") ||
+            (record.description || "").toUpperCase().includes("TOP UP") ||
+            (record.description || "").toUpperCase().includes("KASBON")
+          )
+        );
 
       if (isTalanganType) {
         const rawHolder = record.rekPenerima || record.personalHolder || "Faisal Mustopa (Admin)";
@@ -16588,11 +16591,16 @@ const AdminFinanceScreen = ({
         }
 
         // Total spending from this specific bank topup
+        const rCustom = (record.customId || record.id || "").trim().toUpperCase();
+        const rId = (record.id || "").trim().toUpperCase();
         const linkedSpent = financialRecords
-          .filter((sp) => (isUsingJuneBaseline ? !sp.date.startsWith("2026-06") : true) && sp.flowType === "OUT_PERSONAL_SPEND")
+          .filter((sp) => (isUsingJuneBaseline ? !sp.date.startsWith("2026-06") : true) && sp.type === "OUT" && sp.id !== record.id && sp.customId !== record.customId && Boolean(sp.refIdBank && sp.refIdBank.trim() !== "" && sp.refIdBank !== "-"))
           .reduce((sum, sp) => {
             const allocations = parseBankAllocations(sp.refIdBank || "", sp.amount);
-            const matching = allocations.find((alloc) => alloc.bankId === record.customId);
+            const matching = allocations.find((alloc) => {
+              const aId = (alloc.bankId || "").trim().toUpperCase();
+              return aId === rCustom || aId === rId || (aId.length >= 6 && rCustom.includes(aId));
+            });
             return sum + (matching ? matching.amount : 0);
           }, 0);
 
@@ -16610,7 +16618,7 @@ const AdminFinanceScreen = ({
     });
 
     return list;
-  }, [financialRecords, isPattyCashCategory, isUsingJuneBaseline]);
+  }, [financialRecords, isPattyCashCategory, isCustodyTransfer, isUsingJuneBaseline]);
 
   // Clean, sanitized Dana Talangan & Patty Cash summary for Jidan, Faisal, and Yasin grouped from the detailed list
   const talanganSummary = useMemo(() => {
@@ -16631,6 +16639,176 @@ const AdminFinanceScreen = ({
 
     return Object.values(holders);
   }, [detailedTalanganList]);
+
+  // Authoritative, consolidated list of all available Patty Cash / Kasbon top-ups for selection in forms
+  const availablePattyCashTopups = useMemo(() => {
+    const items: Array<{
+      id: string;
+      customId: string;
+      holder: string;
+      description: string;
+      initialAmount: number;
+      spentAmount: number;
+      balance: number;
+    }> = detailedTalanganList.map((t) => ({
+      id: t.id,
+      customId: t.customId,
+      holder: t.holder,
+      description: t.description,
+      initialAmount: t.initialAmount,
+      spentAmount: t.spentAmount,
+      balance: t.balance,
+    }));
+
+    const seen = new Set(items.map((i) => (i.customId || i.id).toUpperCase()));
+    financialRecords.forEach((r) => {
+      if (r.type !== "OUT") return;
+      if (!isCustodyTransfer(r)) return;
+      const cid = (r.customId || r.id || "").toUpperCase();
+      if (cid && !seen.has(cid)) {
+        seen.add(cid);
+        const rCustom = (r.customId || r.id || "").trim().toUpperCase();
+        const rId = (r.id || "").trim().toUpperCase();
+        const linkedSpent = financialRecords
+          .filter((sp) => sp.type === "OUT" && sp.id !== r.id && sp.customId !== r.customId && Boolean(sp.refIdBank && sp.refIdBank.trim() !== "" && sp.refIdBank !== "-"))
+          .reduce((sum, sp) => {
+            const allocations = parseBankAllocations(sp.refIdBank || "", sp.amount);
+            const matching = allocations.find((alloc) => {
+              const aId = (alloc.bankId || "").trim().toUpperCase();
+              return aId === rCustom || aId === rId || (aId.length >= 6 && rCustom.includes(aId));
+            });
+            return sum + (matching ? matching.amount : 0);
+          }, 0);
+
+        items.push({
+          id: r.id,
+          customId: r.customId || r.id,
+          holder: r.rekPenerima || r.personalHolder || "PIC",
+          description: r.description || "Transfer Kasbon / Petty Cash",
+          initialAmount: r.amount,
+          spentAmount: linkedSpent,
+          balance: Math.max(0, r.amount - linkedSpent),
+        });
+      }
+    });
+
+    return items;
+  }, [detailedTalanganList, financialRecords, isCustodyTransfer]);
+
+  // Dynamic remaining balance calculator that precisely accounts for other transactions, prior allocations, and form edits
+  const getBankRemainingBalance = useCallback(
+    (
+      bankRec: { id?: string; customId?: string; amount?: number; initialAmount?: number; balance?: number },
+      isEdit: boolean,
+      currentAllocations?: Array<{ bankId: string; amount: number }>,
+      currentAllocIndex?: number
+    ) => {
+      const targetId = (bankRec.customId || bankRec.id || "").trim().toUpperCase();
+      const rawId = (bankRec.id || "").trim().toUpperCase();
+
+      // 1. Look up full topup record from detailedTalanganList or availablePattyCashTopups
+      const talanganItem = detailedTalanganList.find((t) => {
+        const tC = (t.customId || "").trim().toUpperCase();
+        const tI = (t.id || "").trim().toUpperCase();
+        return tC === targetId || tI === targetId || (rawId && (tC === rawId || tI === rawId));
+      }) || availablePattyCashTopups.find((t) => {
+        const tC = (t.customId || "").trim().toUpperCase();
+        const tI = (t.id || "").trim().toUpperCase();
+        return tC === targetId || tI === targetId || (rawId && (tC === rawId || tI === rawId));
+      });
+
+      const initialAmt = Number(
+        bankRec.amount ?? (bankRec as any).initialAmount ?? talanganItem?.initialAmount ?? 0
+      );
+
+      let baseSpent = 0;
+      let totalPool = initialAmt;
+
+      if (talanganItem && talanganItem.initialAmount > 0) {
+        baseSpent = talanganItem.spentAmount;
+        totalPool = talanganItem.initialAmount;
+      } else {
+        baseSpent = financialRecords
+          .filter((r) => {
+            if (r.type !== "OUT") return false;
+            if (r.id === bankRec.id || (bankRec.customId && r.customId === bankRec.customId)) return false;
+            return Boolean(r.refIdBank && r.refIdBank.trim() !== "" && r.refIdBank !== "-");
+          })
+          .reduce((sum, r) => {
+            const allocs = parseBankAllocations(r.refIdBank || "", r.amount);
+            const match = allocs.find((a) => {
+              const aId = (a.bankId || "").trim().toUpperCase();
+              return aId === targetId || aId === rawId || (aId.length >= 6 && targetId.includes(aId));
+            });
+            return sum + (match ? match.amount : 0);
+          }, 0);
+      }
+
+      // If editing a transaction that already contributed to this bankRec in the database,
+      // un-deduct its prior allocation from baseSpent so we don't double count it with currentAllocations in the form
+      if (isEdit && editingTransaction && editingTransaction.refIdBank) {
+        const prevAllocs = parseBankAllocations(editingTransaction.refIdBank, editingTransaction.amount);
+        const prevMatch = prevAllocs.find((a) => {
+          const aId = (a.bankId || "").trim().toUpperCase();
+          return aId === targetId || aId === rawId || (aId.length >= 6 && targetId.includes(aId));
+        });
+        if (prevMatch) {
+          baseSpent = Math.max(0, baseSpent - prevMatch.amount);
+        }
+      }
+
+      let remaining = Math.max(0, totalPool - baseSpent);
+
+      // Deduct allocations in other rows of active form:
+      if (currentAllocations && currentAllocations.length > 0) {
+        const allocatedInForm = currentAllocations
+          .filter((a, i) => (currentAllocIndex !== undefined ? i !== currentAllocIndex : true))
+          .filter((a) => {
+            const aId = (a.bankId || "").trim().toUpperCase();
+            return aId === targetId || aId === rawId || (aId.length >= 6 && targetId.includes(aId));
+          })
+          .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+        remaining = Math.max(0, remaining - allocatedInForm);
+      }
+
+      return remaining;
+    },
+    [detailedTalanganList, availablePattyCashTopups, financialRecords, editingTransaction]
+  );
+
+  const handleAutoPecah = useCallback(
+    (allocs: Array<{ bankId: string; amount: number }>, totalAmountStr: string, isEdit: boolean) => {
+      const totalToAllocate = Number(totalAmountStr || 0);
+      if (totalToAllocate <= 0) return;
+
+      let remainingToAllocate = totalToAllocate;
+      const updated = allocs.map((alloc, i) => {
+        if (!alloc.bankId) {
+          return { ...alloc, amount: 0 };
+        }
+        const availableBalance = getBankRemainingBalance({ customId: alloc.bankId }, isEdit, allocs, i);
+        const allocatedAmount = Math.max(0, Math.min(availableBalance, remainingToAllocate));
+        remainingToAllocate -= allocatedAmount;
+
+        return { ...alloc, amount: allocatedAmount };
+      });
+
+      if (remainingToAllocate > 0 && updated.length > 0) {
+        updated[updated.length - 1].amount += remainingToAllocate;
+      }
+
+      if (isEdit) {
+        setEditBankAllocations(updated);
+        const str = serializeAllocations(updated);
+        setEditFormData((prev) => ({ ...prev, refIdBank: str }));
+      } else {
+        setBankAllocations(updated);
+        const str = serializeAllocations(updated);
+        setFormData((prev) => ({ ...prev, refIdBank: str }));
+      }
+    },
+    [getBankRemainingBalance]
+  );
 
   // Helper to count expenses for a given Patty Cash top-up item
   const getPattyCashExpenseCount = useCallback(
@@ -18029,29 +18207,38 @@ const AdminFinanceScreen = ({
       }
     }
 
-    const isPattyCashSource = editFormData.flowType === "OUT_PERSONAL_SPEND" || (editFormData.sumberDana || "").toUpperCase().includes("PATTY") || editFormData.sumberDana === "DANA PATTYCASH";
-    if (isPattyCashSource && editFormData.type === "OUT") {
-      updatedRecord.flowType = "OUT_PERSONAL_SPEND";
-      updatedRecord.sumberDana = "DANA PATTYCASH";
-      if (!updatedRecord.personalHolder) {
-        updatedRecord.personalHolder = editFormData.personalHolder || editFormData.rekPenerima || "Faisal Mustopa (Admin)";
+    const validEditBankAllocs = editBankAllocations.filter((a) => a.bankId && a.amount > 0);
+    if (validEditBankAllocs.length > 0) {
+      updatedRecord.refIdBank = serializeAllocations(validEditBankAllocs);
+      if (editFormData.type === "OUT") {
+        updatedRecord.flowType = "OUT_PERSONAL_SPEND";
+        updatedRecord.sumberDana = "DANA PATTYCASH";
+        if (!updatedRecord.personalHolder) {
+          updatedRecord.personalHolder = editFormData.personalHolder || editFormData.rekPenerima || "Faisal Mustopa (Admin)";
+        }
       }
+    } else {
+      const isPattyCashSource = editFormData.flowType === "OUT_PERSONAL_SPEND" || (editFormData.sumberDana || "").toUpperCase().includes("PATTY") || editFormData.sumberDana === "DANA PATTYCASH";
+      if (isPattyCashSource && editFormData.type === "OUT") {
+        updatedRecord.flowType = "OUT_PERSONAL_SPEND";
+        updatedRecord.sumberDana = "DANA PATTYCASH";
+        if (!updatedRecord.personalHolder) {
+          updatedRecord.personalHolder = editFormData.personalHolder || editFormData.rekPenerima || "Faisal Mustopa (Admin)";
+        }
 
-      const validEditBankAllocs = editBankAllocations.filter((a) => a.bankId && a.amount > 0);
-      if (validEditBankAllocs.length > 0) {
-        updatedRecord.refIdBank = validEditBankAllocs.map((a) => `${a.bankId} (Rp ${a.amount.toLocaleString("id-ID")})`).join(" + ");
-      } else if (!updatedRecord.refIdBank) {
-        const normHolder = (updatedRecord.personalHolder || "").toLowerCase();
-        const targetTopup = detailedTalanganList.find((t) => {
-          const tHolder = t.holder.toLowerCase();
-          const matches = (normHolder.includes("jidan") && tHolder.includes("jidan")) ||
-                          (normHolder.includes("yasin") && tHolder.includes("yasin")) ||
-                          (!normHolder.includes("jidan") && !normHolder.includes("yasin") && tHolder.includes("faisal"));
-          return matches && t.balance > 0;
-        }) || detailedTalanganList.find((t) => t.balance > 0);
+        if (!updatedRecord.refIdBank) {
+          const normHolder = (updatedRecord.personalHolder || "").toLowerCase();
+          const targetTopup = detailedTalanganList.find((t) => {
+            const tHolder = t.holder.toLowerCase();
+            const matches = (normHolder.includes("jidan") && tHolder.includes("jidan")) ||
+                            (normHolder.includes("yasin") && tHolder.includes("yasin")) ||
+                            (!normHolder.includes("jidan") && !normHolder.includes("yasin") && tHolder.includes("faisal"));
+            return matches && t.balance > 0;
+          }) || detailedTalanganList.find((t) => t.balance > 0);
 
-        if (targetTopup && targetTopup.customId) {
-          updatedRecord.refIdBank = targetTopup.customId;
+          if (targetTopup && targetTopup.customId) {
+            updatedRecord.refIdBank = targetTopup.customId;
+          }
         }
       }
     }
@@ -18060,7 +18247,7 @@ const AdminFinanceScreen = ({
       await dbService.updateDocument("financialRecords", editingTransaction.id, updatedRecord);
       setFinancialRecords((prev) =>
         prev.map((r) =>
-          r.id === editingTransaction.id
+          r.id === editingTransaction.id || (Boolean(editingTransaction.customId) && r.customId === editingTransaction.customId)
             ? ({ ...r, ...updatedRecord } as FinancialRecord)
             : r
         )
@@ -23484,67 +23671,105 @@ const AdminFinanceScreen = ({
                           <div className="space-y-3">
                             {bankAllocations.map((alloc, idx) => {
                               return (
-                                <div key={idx} className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-                                  {/* Select Bank ID */}
-                                  <div className="w-full sm:flex-1">
-                                    <select
-                                      value={alloc.bankId}
-                                      onChange={(e) => {
-                                        const updated = [...bankAllocations];
-                                        updated[idx].bankId = e.target.value;
-                                        setBankAllocations(updated);
-                                        const str = serializeAllocations(updated);
-                                        setFormData((prev) => ({ ...prev, refIdBank: str }));
-                                      }}
-                                      className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-xs md:text-sm font-mono font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer text-slate-700"
-                                    >
-                                      <option value="">-- Pilih ID Unik Transfer Bank PT --</option>
-                                      {financialRecords
-                                        .filter((r) => isCustodyTransfer(r))
-                                        .map((r) => {
-                                          const left = getBankRemainingBalance(r, false);
-                                          const holderName = r.rekPenerima || r.personalHolder || "PIC";
-                                          return (
-                                            <option key={r.id} value={r.customId || r.id}>
-                                              {r.customId || "KSP"} - {holderName} ({r.description.length > 30 ? r.description.slice(0, 30) + "..." : r.description}) [Sisa: Rp {left.toLocaleString("id-ID")}]
-                                            </option>
-                                          );
-                                        })}
-                                    </select>
-                                  </div>
+                                <div key={idx} className="space-y-2 p-3 bg-white/70 rounded-2xl border border-amber-100/70 shadow-2xs">
+                                  <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                                    {/* Select Bank ID */}
+                                    <div className="w-full sm:flex-1">
+                                      <select
+                                        value={alloc.bankId}
+                                        onChange={(e) => {
+                                          const selectedBankId = e.target.value;
+                                          const updated = [...bankAllocations];
+                                          updated[idx].bankId = selectedBankId;
 
-                                  {/* Amount */}
-                                  <div className="w-full sm:w-52 flex items-center gap-3">
-                                    <input
-                                      type="number"
-                                      value={alloc.amount || ""}
-                                      onChange={(e) => {
-                                        const updated = [...bankAllocations];
-                                        updated[idx].amount = Number(e.target.value) || 0;
-                                        setBankAllocations(updated);
-                                        const str = serializeAllocations(updated);
-                                        setFormData((prev) => ({ ...prev, refIdBank: str }));
-                                      }}
-                                      className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
-                                      placeholder="Nominal..."
-                                    />
-                                    
-                                    {/* Trash button */}
-                                    {bankAllocations.length > 1 && (
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const updated = bankAllocations.filter((_, i) => i !== idx);
+                                          // Auto-assign remaining transaction amount if not set or zero
+                                          if (selectedBankId && (!updated[idx].amount || updated[idx].amount <= 0)) {
+                                            const totalToAllocate = Number(formData.amount || 0);
+                                            const allocatedInOtherRows = updated
+                                              .filter((_, i) => i !== idx)
+                                              .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+                                            const needed = Math.max(0, totalToAllocate - allocatedInOtherRows);
+                                            updated[idx].amount = needed;
+                                          }
+
                                           setBankAllocations(updated);
                                           const str = serializeAllocations(updated);
                                           setFormData((prev) => ({ ...prev, refIdBank: str }));
                                         }}
-                                        className="p-4 bg-red-50 text-red-500 hover:bg-red-100 rounded-2xl transition-all cursor-pointer text-base"
+                                        className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-xs md:text-sm font-mono font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer text-slate-700"
                                       >
-                                        🗑️
-                                      </button>
-                                    )}
+                                        <option value="">-- Pilih ID Unik Transfer Bank PT --</option>
+                                        {availablePattyCashTopups.map((r) => {
+                                          const available = getBankRemainingBalance(r, false, bankAllocations, idx);
+                                          const targetCid = (r.customId || r.id || "").trim().toUpperCase();
+                                          const targetId = (r.id || "").trim().toUpperCase();
+                                          const currentAllocId = (alloc.bankId || "").trim().toUpperCase();
+                                          const isSelected = Boolean(currentAllocId) && (currentAllocId === targetCid || currentAllocId === targetId);
+                                          const allocAmt = Number(alloc.amount) || 0;
+                                          const left = isSelected ? Math.max(0, available - allocAmt) : available;
+                                          return (
+                                            <option key={r.id} value={r.customId || r.id}>
+                                              {r.customId || "KSP"} - {r.holder} ({r.description.length > 28 ? r.description.slice(0, 28) + "..." : r.description}) [Sisa: Rp {left.toLocaleString("id-ID")}]
+                                            </option>
+                                          );
+                                        })}
+                                      </select>
+                                    </div>
+
+                                    {/* Amount */}
+                                    <div className="w-full sm:w-52 flex items-center gap-3">
+                                      <input
+                                        type="number"
+                                        value={alloc.amount || ""}
+                                        onChange={(e) => {
+                                          const updated = [...bankAllocations];
+                                          updated[idx].amount = Number(e.target.value) || 0;
+                                          setBankAllocations(updated);
+                                          const str = serializeAllocations(updated);
+                                          setFormData((prev) => ({ ...prev, refIdBank: str }));
+                                        }}
+                                        className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
+                                        placeholder="Nominal..."
+                                      />
+                                      
+                                      {/* Trash button */}
+                                      {bankAllocations.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updated = bankAllocations.filter((_, i) => i !== idx);
+                                            setBankAllocations(updated);
+                                            const str = serializeAllocations(updated);
+                                            setFormData((prev) => ({ ...prev, refIdBank: str }));
+                                          }}
+                                          className="p-4 bg-red-50 text-red-500 hover:bg-red-100 rounded-2xl transition-all cursor-pointer text-base"
+                                        >
+                                          🗑️
+                                        </button>
+                                      )}
+                                    </div>
                                   </div>
+
+                                  {alloc.bankId && (() => {
+                                    const available = getBankRemainingBalance({ customId: alloc.bankId }, false, bankAllocations, idx);
+                                    const allocatedAmt = Number(alloc.amount) || 0;
+                                    const sisaAfter = available - allocatedAmt;
+                                    return (
+                                      <div className="flex items-center justify-between flex-wrap gap-2 text-[11px] font-bold px-3.5 py-2 bg-amber-50/80 rounded-xl border border-amber-200/90 shadow-2xs">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-amber-800 font-mono font-black">{alloc.bankId}</span>
+                                          <span className="text-slate-300">•</span>
+                                          <span className="text-slate-600">Saldo Awal / Tersedia: <strong className="font-mono text-slate-800">Rp {available.toLocaleString("id-ID")}</strong></span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-amber-900 font-extrabold">Sisa Saldo Setelah Terpotong:</span>
+                                          <span className={`font-mono font-black text-xs px-2 py-0.5 rounded-lg ${sisaAfter < 0 ? "bg-rose-100 text-rose-700 font-bold" : sisaAfter === 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                                            Rp {Math.max(0, sisaAfter).toLocaleString("id-ID")}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
                                 </div>
                               );
                             })}
@@ -24842,66 +25067,105 @@ const AdminFinanceScreen = ({
                             <div className="space-y-3">
                               {editBankAllocations.map((alloc, idx) => {
                                 return (
-                                  <div key={idx} className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-                                    {/* Select Bank ID */}
-                                    <div className="w-full sm:flex-1">
-                                      <select
-                                        value={alloc.bankId}
-                                        onChange={(e) => {
-                                          const updated = [...editBankAllocations];
-                                          updated[idx].bankId = e.target.value;
-                                          setEditBankAllocations(updated);
-                                          const str = serializeAllocations(updated);
-                                          setEditFormData((prev) => ({ ...prev, refIdBank: str }));
-                                        }}
-                                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-mono font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer text-slate-700"
-                                      >
-                                        <option value="">-- Hubungkan ID Bank (BNK-) --</option>
-                                        {financialRecords
-                                          .filter((r) => isCustodyTransfer(r))
-                                          .map((bankRec) => {
-                                            const left = getBankRemainingBalance(bankRec, true);
-                                            return (
-                                              <option key={bankRec.id} value={bankRec.customId}>
-                                                {bankRec.customId} - {bankRec.personalHolder} ({bankRec.description.length > 30 ? bankRec.description.slice(0, 30) + "..." : bankRec.description}) [Sisa: Rp {left.toLocaleString("id-ID")}]
-                                              </option>
-                                            );
-                                          })}
-                                      </select>
-                                    </div>
+                                  <div key={idx} className="space-y-2 p-3 bg-white/70 rounded-2xl border border-purple-100/70 shadow-2xs">
+                                    <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                                      {/* Select Bank ID */}
+                                      <div className="w-full sm:flex-1">
+                                        <select
+                                          value={alloc.bankId}
+                                          onChange={(e) => {
+                                            const selectedBankId = e.target.value;
+                                            const updated = [...editBankAllocations];
+                                            updated[idx].bankId = selectedBankId;
 
-                                    {/* Amount */}
-                                    <div className="w-full sm:w-48 flex items-center gap-3">
-                                      <input
-                                        type="number"
-                                        value={alloc.amount || ""}
-                                        onChange={(e) => {
-                                          const updated = [...editBankAllocations];
-                                          updated[idx].amount = Number(e.target.value) || 0;
-                                          setEditBankAllocations(updated);
-                                          const str = serializeAllocations(updated);
-                                          setEditFormData((prev) => ({ ...prev, refIdBank: str }));
-                                        }}
-                                        className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
-                                        placeholder="Nominal..."
-                                      />
-                                      
-                                      {/* Trash button */}
-                                      {editBankAllocations.length > 1 && (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            const updated = editBankAllocations.filter((_, i) => i !== idx);
+                                            // Auto-assign remaining transaction amount if not set or zero
+                                            if (selectedBankId && (!updated[idx].amount || updated[idx].amount <= 0)) {
+                                              const totalToAllocate = Number(editFormData.amount || 0);
+                                              const allocatedInOtherRows = updated
+                                                .filter((_, i) => i !== idx)
+                                                .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+                                              const needed = Math.max(0, totalToAllocate - allocatedInOtherRows);
+                                              updated[idx].amount = needed;
+                                            }
+
                                             setEditBankAllocations(updated);
                                             const str = serializeAllocations(updated);
                                             setEditFormData((prev) => ({ ...prev, refIdBank: str }));
                                           }}
-                                          className="p-3 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition-all cursor-pointer text-lg"
+                                          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-mono font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer text-slate-700"
                                         >
-                                          🗑️
-                                        </button>
-                                      )}
+                                          <option value="">-- Hubungkan ID Bank (BNK-) --</option>
+                                          {availablePattyCashTopups.map((bankRec) => {
+                                            const available = getBankRemainingBalance(bankRec, true, editBankAllocations, idx);
+                                            const targetCid = (bankRec.customId || bankRec.id || "").trim().toUpperCase();
+                                            const targetId = (bankRec.id || "").trim().toUpperCase();
+                                            const currentAllocId = (alloc.bankId || "").trim().toUpperCase();
+                                            const isSelected = Boolean(currentAllocId) && (currentAllocId === targetCid || currentAllocId === targetId);
+                                            const allocAmt = Number(alloc.amount) || 0;
+                                            const left = isSelected ? Math.max(0, available - allocAmt) : available;
+                                            return (
+                                              <option key={bankRec.id} value={bankRec.customId || bankRec.id}>
+                                                {bankRec.customId || bankRec.id} - {bankRec.holder} ({bankRec.description.length > 28 ? bankRec.description.slice(0, 28) + "..." : bankRec.description}) [Sisa: Rp {left.toLocaleString("id-ID")}]
+                                              </option>
+                                            );
+                                          })}
+                                        </select>
+                                      </div>
+
+                                      {/* Amount */}
+                                      <div className="w-full sm:w-48 flex items-center gap-3">
+                                        <input
+                                          type="number"
+                                          value={alloc.amount || ""}
+                                          onChange={(e) => {
+                                            const updated = [...editBankAllocations];
+                                            updated[idx].amount = Number(e.target.value) || 0;
+                                            setEditBankAllocations(updated);
+                                            const str = serializeAllocations(updated);
+                                            setEditFormData((prev) => ({ ...prev, refIdBank: str }));
+                                          }}
+                                          className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
+                                          placeholder="Nominal..."
+                                        />
+                                        
+                                        {/* Trash button */}
+                                        {editBankAllocations.length > 1 && (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const updated = editBankAllocations.filter((_, i) => i !== idx);
+                                              setEditBankAllocations(updated);
+                                              const str = serializeAllocations(updated);
+                                              setEditFormData((prev) => ({ ...prev, refIdBank: str }));
+                                            }}
+                                            className="p-3 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition-all cursor-pointer text-lg"
+                                          >
+                                            🗑️
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
+
+                                    {alloc.bankId && (() => {
+                                      const available = getBankRemainingBalance({ customId: alloc.bankId }, true, editBankAllocations, idx);
+                                      const allocatedAmt = Number(alloc.amount) || 0;
+                                      const sisaAfter = available - allocatedAmt;
+                                      return (
+                                        <div className="flex items-center justify-between flex-wrap gap-2 text-[11px] font-bold px-3.5 py-2 bg-purple-50/80 rounded-xl border border-purple-200/90 shadow-2xs">
+                                          <div className="flex items-center gap-2">
+                                            <span className="text-purple-700 font-mono font-black">{alloc.bankId}</span>
+                                            <span className="text-slate-300">•</span>
+                                            <span className="text-slate-600">Saldo Awal / Tersedia: <strong className="font-mono text-slate-800">Rp {available.toLocaleString("id-ID")}</strong></span>
+                                          </div>
+                                          <div className="flex items-center gap-1.5">
+                                            <span className="text-purple-900 font-extrabold">Sisa Saldo Setelah Dipotong:</span>
+                                            <span className={`font-mono font-black text-xs px-2 py-0.5 rounded-lg ${sisaAfter < 0 ? "bg-rose-100 text-rose-700 font-bold" : sisaAfter === 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                                              Rp {Math.max(0, sisaAfter).toLocaleString("id-ID")}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
                                   </div>
                                 );
                               })}
@@ -34209,25 +34473,39 @@ export default function App() {
         const seen = new Set<string>();
         const deduped: FinancialRecord[] = [];
 
+        // Check persistent local backup cache for any edits made by user
+        const localPersistent = autoBackupService.getPersistentData();
+        const localFinMap = new Map<string, any>();
+        if (localPersistent && Array.isArray(localPersistent.financialRecords)) {
+          localPersistent.financialRecords.forEach((item) => {
+            const k = (item.customId || item.id || "").trim().toUpperCase();
+            if (k) localFinMap.set(k, item);
+          });
+        }
+
         // 1. Data keuangan resmi sampai akhir September 2026 (580 transaksi orisinal)
         (seedFinancialRecords || []).forEach((seed) => {
           const key = (seed.customId || seed.id || "").trim().toUpperCase();
           if (key && !seen.has(key)) {
             seen.add(key);
             const fromDb = (data || []).find((item) => (item.customId || item.id || "").trim().toUpperCase() === key);
-            const enriched: FinancialRecord = fromDb ? {
+            const fromLocal = localFinMap.get(key);
+            const source = fromDb || fromLocal;
+            const enriched: FinancialRecord = source ? {
               ...seed,
-              ...fromDb,
-              description: seed.description || fromDb.description || "",
-              referenceId: seed.referenceId || fromDb.referenceId || seed.projectId || fromDb.projectId || "",
-              projectId: seed.projectId || seed.referenceId || fromDb.projectId || fromDb.referenceId || "",
-              category: seed.category || fromDb.category || "OPERASIONAL",
-              sumberDana: seed.sumberDana || fromDb.sumberDana || "REKENING PT",
-              paymentMethod: seed.paymentMethod || fromDb.paymentMethod || "TRANSFER",
-              personalHolder: seed.personalHolder || fromDb.personalHolder || "",
-              penerimaKasbon: seed.penerimaKasbon || fromDb.penerimaKasbon || "",
-              refIdBank: seed.refIdBank || fromDb.refIdBank || "",
-              refHutang: seed.refHutang || fromDb.refHutang || "",
+              ...(fromLocal || {}),
+              ...(fromDb || {}),
+              description: fromDb?.description ?? fromLocal?.description ?? seed.description ?? "",
+              referenceId: fromDb?.referenceId ?? fromLocal?.referenceId ?? seed.referenceId ?? fromDb?.projectId ?? fromLocal?.projectId ?? seed.projectId ?? "",
+              projectId: fromDb?.projectId ?? fromLocal?.projectId ?? seed.projectId ?? fromDb?.referenceId ?? fromLocal?.referenceId ?? seed.referenceId ?? "",
+              category: fromDb?.category ?? fromLocal?.category ?? seed.category ?? "OPERASIONAL",
+              sumberDana: fromDb?.sumberDana ?? fromLocal?.sumberDana ?? seed.sumberDana ?? "REKENING PT",
+              paymentMethod: fromDb?.paymentMethod ?? fromLocal?.paymentMethod ?? seed.paymentMethod ?? "TRANSFER",
+              personalHolder: fromDb?.personalHolder ?? fromLocal?.personalHolder ?? seed.personalHolder ?? "",
+              penerimaKasbon: fromDb?.penerimaKasbon ?? fromLocal?.penerimaKasbon ?? seed.penerimaKasbon ?? "",
+              refIdBank: fromDb?.refIdBank !== undefined ? fromDb.refIdBank : (fromLocal?.refIdBank !== undefined ? fromLocal.refIdBank : (seed.refIdBank || "")),
+              refHutang: fromDb?.refHutang !== undefined ? fromDb.refHutang : (fromLocal?.refHutang !== undefined ? fromLocal.refHutang : (seed.refHutang || "")),
+              flowType: fromDb?.flowType ?? fromLocal?.flowType ?? seed.flowType,
             } as FinancialRecord : (seed as FinancialRecord);
             deduped.push(enriched);
           }
@@ -34255,13 +34533,25 @@ export default function App() {
         const seen = new Set<string>();
         const deduped: DebtRecord[] = [];
 
+        // Check persistent local backup cache for debt records
+        const localPersistent = autoBackupService.getPersistentData();
+        const localDebtMap = new Map<string, any>();
+        if (localPersistent && Array.isArray(localPersistent.debtRecords)) {
+          localPersistent.debtRecords.forEach((item) => {
+            const k = (item.customId || item.id || "").trim().toUpperCase();
+            if (k) localDebtMap.set(k, item);
+          });
+        }
+
         // 1. Data resmi hutang dan piutang akhir Juli dari berkas ZIP (24 catatan)
         (seedDebtRecords || []).forEach((seed) => {
           const key = (seed.customId || seed.id || "").trim().toUpperCase();
           if (key && !seen.has(key)) {
             seen.add(key);
             const fromDb = (data || []).find((item) => (item.customId || item.id || "").trim().toUpperCase() === key);
-            deduped.push((fromDb ? { ...seed, ...fromDb } : seed) as DebtRecord);
+            const fromLocal = localDebtMap.get(key);
+            const source = fromDb || fromLocal;
+            deduped.push((source ? { ...seed, ...(fromLocal || {}), ...(fromDb || {}) } : seed) as DebtRecord);
           }
         });
 
@@ -34765,6 +35055,18 @@ export default function App() {
       })
     );
   }, [currentUser, isFinanceLoaded, projects]);
+
+  // Automated Instant Backup upon ANY input or edit in financial records, debt records, or projects
+  useEffect(() => {
+    if (isFinanceLoaded && (financialRecords.length > 0 || debtRecords.length > 0)) {
+      autoBackupService.saveInstantDataSnapshot(
+        financialRecords,
+        debtRecords,
+        projects,
+        "Auto-backup otomatis (Aktivitas input/edit data)"
+      );
+    }
+  }, [isFinanceLoaded, financialRecords, debtRecords, projects]);
 
   // Automated Daily Backup: securely snapshots financialRecords, debtRecords, and projects once per day
   useEffect(() => {

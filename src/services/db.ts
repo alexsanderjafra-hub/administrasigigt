@@ -227,10 +227,10 @@ export const dbService = {
     try {
       const sanitized = sanitizeFirestoreData(data) || {};
       const docRef = doc(db, collectionPath, docId);
-      await updateDoc(docRef, {
+      await setDoc(docRef, {
         ...sanitized,
         updatedAt: Timestamp.now()
-      });
+      }, { merge: true });
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `${collectionPath}/${docId}`);
     }

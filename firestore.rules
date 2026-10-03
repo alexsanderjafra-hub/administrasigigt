@@ -258,5 +258,9 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
+
+    match /systemBackups/{id} {
+      allow read, write: if isSignedIn();
+    }
   }
 }
