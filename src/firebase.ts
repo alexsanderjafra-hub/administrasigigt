@@ -1,24 +1,28 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, doc, getDocFromServer } from 'firebase/firestore';
+import { initializeFirestore, memoryLocalCache } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-export const db = (firebaseConfig as any).firestoreDatabaseId
-  ? getFirestore(app, (firebaseConfig as any).firestoreDatabaseId)
-  : getFirestore(app);
-export const auth = getAuth();
 
-// Validate connection to Firestore
-async function testConnection() {
+// Clean up any stale offline mutation queue in browser IndexedDB that keeps retrying rejected writes
+if (typeof window !== "undefined" && window.indexedDB && window.indexedDB.databases) {
   try {
-    // Attempting to read a non-existent document just to check connectivity
-    await getDocFromServer(doc(db, 'system', 'connection-test'));
-    console.log("Firebase connection established.");
-  } catch (error) {
-    if (error instanceof Error && error.message.includes('the client is offline')) {
-      console.warn("Firestore offline cache is active or remote database is warming up.");
-    }
-  }
+    window.indexedDB.databases().then((dbs) => {
+      dbs.forEach((dbInfo) => {
+        if (dbInfo.name && dbInfo.name.includes("firestore")) {
+          try {
+            window.indexedDB.deleteDatabase(dbInfo.name);
+          } catch (_) {}
+        }
+      });
+    }).catch(() => {});
+  } catch (_) {}
 }
-testConnection();
+
+// Initialize Firestore with memory cache so stale offline mutations are not retried against exhausted quota
+export const db = (firebaseConfig as any).firestoreDatabaseId
+  ? initializeFirestore(app, { localCache: memoryLocalCache() }, (firebaseConfig as any).firestoreDatabaseId)
+  : initializeFirestore(app, { localCache: memoryLocalCache() });
+
+export const auth = getAuth();

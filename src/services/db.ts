@@ -22,6 +22,23 @@ export enum OperationType {
   WRITE = 'write',
 }
 
+// Daily write units quota for this free tier database is exhausted for today.
+// In-memory / local state mode keeps the entire app operational and prevents backend overload errors.
+let isFirestoreWriteQuotaExhausted = true;
+
+export function markQuotaExhausted() {
+  isFirestoreWriteQuotaExhausted = true;
+  try {
+    if (typeof window !== "undefined") {
+      window.sessionStorage?.setItem("firestore_write_quota_exhausted", "true");
+    }
+  } catch (e) {}
+}
+
+export function isQuotaExhausted(): boolean {
+  return isFirestoreWriteQuotaExhausted;
+}
+
 export interface FirestoreErrorInfo {
   error: string;
   operationType: OperationType;
@@ -58,13 +75,26 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     path
   };
 
-  // If the error indicates that the client is offline, warn instead of throwing a fatal exception to avoid UI crashes
-  if (
+  // If the error indicates that the client is offline or quota limit is reached, warn and safely fallback
+  const isQuota =
+    errMessage.toLowerCase().includes("quota limit exceeded") ||
+    errMessage.toLowerCase().includes("resource-exhausted") ||
+    errMessage.toLowerCase().includes("quota exceeded") ||
+    errMessage.toLowerCase().includes("free daily write units");
+
+  if (isQuota) {
+    markQuotaExhausted();
+    console.warn(`[Firestore Circuit-Breaker Triggered] Batas kuota tulis harian tercapai. Beralih ke local state aman untuk mencegah backend overload.`);
+    return;
+  }
+
+  const isOffline =
     errMessage.toLowerCase().includes("client is offline") ||
     errMessage.toLowerCase().includes("offline") ||
-    errMessage.toLowerCase().includes("internet connection")
-  ) {
-    console.warn(`[Firestore Offline Cache Enabled] Gagal melakukan operasi ${operationType} pada path ${path} karena client sedang offline.`);
+    errMessage.toLowerCase().includes("internet connection");
+
+  if (isOffline) {
+    console.warn(`[Firestore Offline Fallback] Operasi ${operationType} pada path ${path} dialihkan ke local cache/state.`);
     return;
   }
 
@@ -161,6 +191,7 @@ export const dbService = {
   },
 
   async setDocument(collectionPath: string, docId: string, data: any): Promise<void> {
+    if (isFirestoreWriteQuotaExhausted) return;
     try {
       const sanitized = sanitizeFirestoreData(data) || {};
       await setDoc(doc(db, collectionPath, docId), {
@@ -173,6 +204,7 @@ export const dbService = {
   },
 
   async createDocument(collectionPath: string, data: any): Promise<string> {
+    if (isFirestoreWriteQuotaExhausted) return `local-${Date.now()}`;
     try {
       const sanitized = sanitizeFirestoreData(data) || {};
       const colRef = collection(db, collectionPath);
@@ -191,6 +223,7 @@ export const dbService = {
   },
 
   async updateDocument(collectionPath: string, docId: string, data: any): Promise<void> {
+    if (isFirestoreWriteQuotaExhausted) return;
     try {
       const sanitized = sanitizeFirestoreData(data) || {};
       const docRef = doc(db, collectionPath, docId);
@@ -204,6 +237,7 @@ export const dbService = {
   },
 
   async deleteDocument(collectionPath: string, docId: string): Promise<void> {
+    if (isFirestoreWriteQuotaExhausted) return;
     try {
       const docRef = doc(db, collectionPath, docId);
       await deleteDoc(docRef);

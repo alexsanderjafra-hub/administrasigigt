@@ -222,6 +222,8 @@ import { getGoogleAccessToken, setGoogleAccessToken, syncAllDataToGoogleSheets }
 import { calculateKasbonBalances, simulateKasbonAllocation, extractKasbonRecipient } from "./utils/kasbonHelper";
 import { normalizeContactName } from "./utils/contactHelper";
 import { DebtPaymentManager } from "./components/DebtPaymentManager";
+import { autoBackupService } from "./services/autoBackupService";
+import { isQuotaExhausted } from "./services/db";
 
 export const isReimbursementOrDebtRepayment = (r: any) => {
   if (!r) return false;
@@ -6557,13 +6559,8 @@ export const findLinkedProject = (
     return projectsList.find((p) => (p.name || "").toLowerCase().includes("sumpit"));
   }
 
-  // 4. If this is a regular project (NOT Sumpit), NEVER link to a Sumpit project
-  return projectsList.find((p) => {
-    const pName = (p.name || "").toLowerCase().trim();
-    if (!pName) return false;
-    if (pName.includes("sumpit")) return false; // Strictly exclude Bak Sumpit for non-sumpit debt
-    return pName.includes(dTitle) || (dTitle && dTitle.includes(pName));
-  });
+  // 4. Strict disambiguation: NEVER do loose substring matches that cause project data leakage (e.g. HRI Karawang)
+  return undefined;
 };
 
 export const findLinkedDebtForProject = (
@@ -6595,7 +6592,7 @@ export const findLinkedDebtForProject = (
   const pName = (project.name || "").toLowerCase().trim();
   const isSumpitProj = pName.includes("sumpit");
 
-  // 4. Disambiguated matching: If this is Sumpit, strictly match debt with Sumpit
+  // 4. Disambiguated matching for Sumpit
   if (isSumpitProj) {
     return debtRecordsList.find((d) => {
       if (d.type !== "PIUTANG") return false;
@@ -6605,52 +6602,52 @@ export const findLinkedDebtForProject = (
     });
   }
 
-  // 5. Non-Sumpit project: NEVER link to Sumpit debt
+  // 5. Exact title match only (strictly prevent loose substring leakage like HRI Karawang)
   return debtRecordsList.find((d) => {
     if (d.type !== "PIUTANG") return false;
-    const title = (d.title || "").toLowerCase();
-    const desc = (d.description || "").toLowerCase();
-    if (title.includes("sumpit") || desc.includes("sumpit")) return false;
-    return title.includes(pName) || pName.includes(title);
+    const title = (d.title || "").toLowerCase().trim();
+    if (title.includes("sumpit")) return false;
+    return title === pName;
   });
 };
 
 /**
  * Resolves the canonical project ID for a financial record.
- * Handles cases where projectId and referenceId might point to different projects
- * (e.g., after an edit where referenceId was updated with the newly chosen project,
- * preventing stale project IDs from leaking into other projects like HRI Karawang).
+ * Prioritizes explicit projectId as the authoritative selection to prevent data
+ * leaking across projects (e.g. HRI Karawang).
  */
 export const getFinancialRecordProjectId = (
   r: FinancialRecord | Partial<FinancialRecord> | null | undefined,
   projectsList: Project[] = []
 ): string => {
   if (!r) return "";
-  const refId = (r.referenceId || "").trim();
   const projId = (r.projectId || "").trim();
+  const refId = (r.referenceId || "").trim();
 
   if (projectsList.length > 0) {
-    const refIsProject = projectsList.some((p) => p.id === refId);
-    const projIsProject = projectsList.some((p) => p.id === projId);
-
-    // If both reference valid projects:
-    // referenceId is the authoritative user selection from the edit form.
-    if (refIsProject && projIsProject) {
-      return refId;
+    // 1. Direct match by explicit projectId takes absolute highest priority
+    if (projId) {
+      const matchProj = projectsList.find((p) => p.id === projId || (p as any).customId === projId);
+      if (matchProj) return matchProj.id;
+      // If projId is set to an ID, preserve it as-is; NEVER allow refId to reassign to another project
+      return projId;
     }
-    if (refIsProject) return refId;
-    if (projIsProject) return projId;
 
-    const refByCustom = projectsList.find((p) => (p as any).customId === refId);
-    if (refByCustom) return refByCustom.id;
-    const projByCustom = projectsList.find((p) => (p as any).customId === projId);
-    if (projByCustom) return projByCustom.id;
+    // 2. Direct match by referenceId only if explicit projectId is completely empty
+    if (refId) {
+      const matchRef = projectsList.find((p) => p.id === refId || (p as any).customId === refId);
+      if (matchRef) return matchRef.id;
+    }
   }
 
-  if (refId && !refId.startsWith("DBT-") && !refId.startsWith("HTG-") && !refId.startsWith("PTG-")) {
+  // Fallback to explicit non-debt ID
+  if (projId && !projId.startsWith("DBT-") && !projId.startsWith("HTG-") && !projId.startsWith("PTG-")) {
+    return projId;
+  }
+  if (!projId && refId && !refId.startsWith("DBT-") && !refId.startsWith("HTG-") && !refId.startsWith("PTG-")) {
     return refId;
   }
-  return projId || refId || "";
+  return projId || "";
 };
 
 const resolvePiutangClient = (r: DebtRecord, projectsList: Project[] = []): string => {
@@ -7354,13 +7351,14 @@ const getScheduleForRecord = (
         matches = true;
       }
     } else {
-      // For HUTANG: MUST be from PT funds (reimbursement/pelunasan), NOT personal spending
-      const isPersonalSpending = f.sumberDana === "REKENING PRIBADI" || f.sumberDana === "DANA PRIBADI" || f.sumberDana === "PRIBADI" || f.flowType === "OUT_PERSONAL_SPEND" || (f.customId && f.customId.startsWith("PRS-"));
-      
-      // An expense f cannot be its own debt repayment if it's the expense that created/carries the debt reference
-      const isOriginSpending = (recCustomId && fRefHutang === recCustomId) || (recIdLower && fRefHutang === recIdLower) || (recOriginCustomId && fCustomId === recOriginCustomId);
+      // For HUTANG: Can be paid via PT funds OR via personal funds on behalf of PT (e.g. Bang Yasin pays Yoga)
+      // An expense f cannot be its own debt repayment ONLY if it's the exact transaction that originated this debt
+      const isOriginSpending =
+        (recOriginFinId && (fIdLower === recOriginFinId || fCustomId === recOriginFinId)) ||
+        (recOriginCustomId && (fCustomId === recOriginCustomId || fIdLower === recOriginCustomId)) ||
+        (fIdLower === recIdLower || (recCustomId && fCustomId === recCustomId));
 
-      if (!isPersonalSpending && !isOriginSpending) {
+      if (!isOriginSpending) {
         // Direct link via debtAllocations
         const matchingDebtAlloc = f.debtAllocations?.find(
           (a) =>
@@ -7375,7 +7373,7 @@ const getScheduleForRecord = (
         if (matchingDebtAlloc) {
           matches = true;
         } else if (f.debtAllocations && f.debtAllocations.length > 0) {
-          // If transaction has explicit debtAllocations for other debts, do NOT fallback to fuzzy matches
+          // If transaction has explicit debtAllocations for other debts, check if current record is in it
           matches = false;
         } else if (f.linkedDebtId && (
           fLinkedDebt === recIdLower || 
@@ -7388,6 +7386,7 @@ const getScheduleForRecord = (
         } else if (f.refHutang && (
           fRefHutang === recIdLower ||
           (recCustomId && fRefHutang === recCustomId) ||
+          (recCleanId && fRefHutang === recCleanId) ||
           (recOriginCustomId && fRefHutang === recOriginCustomId) ||
           (recOriginFinId && fRefHutang === recOriginFinId) ||
           (recCustomId && fRefHutang.includes(recCustomId)) ||
@@ -7401,6 +7400,38 @@ const getScheduleForRecord = (
           (recOriginFinId && fRefId === recOriginFinId)
         )) {
           matches = true;
+        } else if (
+          ((f.category || "").toUpperCase().includes("HUTANG") || (f.category || "").toUpperCase().includes("REIMBURSE")) &&
+          f.sumberDana === "REKENING PT" &&
+          !f.linkedDebtId &&
+          !f.refHutang &&
+          (!f.debtAllocations || f.debtAllocations.length === 0)
+        ) {
+          const contactCanonical = normalizeContactName(record.contactName || "").toUpperCase();
+          const descUpper = (f.description || "").toUpperCase();
+          const rekUpper = (f.rekPenerima || "").toUpperCase();
+
+          if (contactCanonical.includes("DODO")) {
+            if (descUpper.includes("DODO") || rekUpper.includes("DODO")) matches = true;
+          } else if (contactCanonical.includes("YASIN")) {
+            if (descUpper.includes("YASIN") || rekUpper.includes("YASIN") || descUpper.includes("OWNER") || rekUpper.includes("OWNER")) matches = true;
+          } else if (contactCanonical.includes("YOGA")) {
+            if (descUpper.includes("YOGA") || rekUpper.includes("YOGA")) matches = true;
+          } else if (contactCanonical.includes("FAISAL")) {
+            if (descUpper.includes("FAISAL") || rekUpper.includes("FAISAL")) matches = true;
+          } else if (contactCanonical.includes("JIDAN")) {
+            if (descUpper.includes("JIDAN") || rekUpper.includes("JIDAN")) matches = true;
+          } else if (contactCanonical.includes("WINGGI")) {
+            if (descUpper.includes("WINGGI") || rekUpper.includes("WINGGI")) matches = true;
+          } else if (contactCanonical.includes("WELI")) {
+            if (descUpper.includes("WELI") || rekUpper.includes("WELI")) matches = true;
+          } else if (contactCanonical.includes("HANIF")) {
+            if (descUpper.includes("HANIF") || rekUpper.includes("HANIF")) matches = true;
+          } else if (contactCanonical && contactCanonical !== "TANPA NAMA") {
+            if (normalizeContactName(rekUpper) === contactCanonical || normalizeContactName(descUpper) === contactCanonical) {
+              matches = true;
+            }
+          }
         }
       }
     }
@@ -8293,11 +8324,24 @@ const AdminDebtScreen = ({
 
         if (isReimburse || isDebtCat) {
           const recipientStr = `${f.rekPenerima || ""} ${f.personalHolder || ""} ${(f as any).contactName || ""} ${f.description || ""}`.toUpperCase();
-          const firstToken = targetKey.split(" ")[0];
-          if (
-            recipientStr.includes(targetKey) ||
-            (firstToken.length >= 3 && recipientStr.includes(firstToken))
-          ) {
+
+          if (targetKey.includes("DODO")) {
+            if (recipientStr.includes("DODO")) return true;
+          } else if (targetKey.includes("YASIN")) {
+            if (recipientStr.includes("YASIN") || recipientStr.includes("OWNER")) return true;
+          } else if (targetKey.includes("YOGA")) {
+            if (recipientStr.includes("YOGA")) return true;
+          } else if (targetKey.includes("FAISAL")) {
+            if (recipientStr.includes("FAISAL")) return true;
+          } else if (targetKey.includes("JIDAN")) {
+            if (recipientStr.includes("JIDAN")) return true;
+          } else if (targetKey.includes("WINGGI")) {
+            if (recipientStr.includes("WINGGI")) return true;
+          } else if (targetKey.includes("WELI")) {
+            if (recipientStr.includes("WELI")) return true;
+          } else if (targetKey.includes("HANIF")) {
+            if (recipientStr.includes("HANIF")) return true;
+          } else if (recipientStr.includes(targetKey)) {
             return true;
           }
           if (
@@ -9256,13 +9300,13 @@ const AdminDebtScreen = ({
           alternateRowStyles: { fillColor: [248, 250, 252] },
           columnStyles: {
             0: { halign: "center", cellWidth: 8 },
-            1: { fontStyle: "bold", cellWidth: 64 },
-            2: { halign: "center", cellWidth: 20 },
-            3: { halign: "right", fontStyle: "bold", cellWidth: 38 },
-            4: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 38 },
-            5: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 40 },
-            6: { halign: "center", fontStyle: "bold", cellWidth: 24 },
-            7: { halign: "center", cellWidth: 18 },
+            1: { fontStyle: "bold", cellWidth: 65 },
+            2: { halign: "center", cellWidth: 18 },
+            3: { halign: "right", fontStyle: "bold", cellWidth: 42 },
+            4: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 42 },
+            5: { halign: "right", fontStyle: "bold", textColor: [225, 29, 72], cellWidth: 46 },
+            6: { halign: "center", fontStyle: "bold", cellWidth: 28 },
+            7: { halign: "center", cellWidth: 20 },
           },
           didParseCell: (data) => {
             if (data.row.index === groupRows.length - 1) {
@@ -9349,8 +9393,8 @@ const AdminDebtScreen = ({
           columnStyles: {
             0: { halign: "center", cellWidth: 8 },
             1: { fontStyle: "bold", cellWidth: 26 },
-            2: { fontStyle: "bold", cellWidth: 36 },
-            3: { cellWidth: 62 },
+            2: { fontStyle: "bold", cellWidth: 38 },
+            3: { cellWidth: 67 },
             4: { cellWidth: 24 },
             5: { halign: "right", fontStyle: "bold", cellWidth: 29 },
             6: { halign: "right", fontStyle: "bold", textColor: [16, 185, 129], cellWidth: 29 },
@@ -9588,8 +9632,8 @@ const AdminDebtScreen = ({
           bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
           alternateRowStyles: { fillColor: [248, 250, 252] },
           columnStyles: {
-            0: { halign: "center", cellWidth: 9 },
-            1: { fontStyle: "bold", cellWidth: 28 },
+            0: { halign: "center", cellWidth: 8 },
+            1: { fontStyle: "bold", cellWidth: 26 },
             2: { fontStyle: "bold", cellWidth: 42 },
             3: { cellWidth: 65 },
             4: { cellWidth: 35 },
@@ -9963,8 +10007,8 @@ const AdminDebtScreen = ({
           bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
           alternateRowStyles: { fillColor: [248, 250, 252] },
           columnStyles: {
-            0: { halign: "center", cellWidth: 9 },
-            1: { fontStyle: "bold", cellWidth: 28 },
+            0: { halign: "center", cellWidth: 8 },
+            1: { fontStyle: "bold", cellWidth: 26 },
             2: { fontStyle: "bold", cellWidth: 42 },
             3: { cellWidth: 65 },
             4: { cellWidth: 35 },
@@ -10056,8 +10100,8 @@ const AdminDebtScreen = ({
           bodyStyles: { fontSize: 7, textColor: [51, 65, 85] },
           alternateRowStyles: { fillColor: [248, 250, 252] },
           columnStyles: {
-            0: { halign: "center", cellWidth: 9 },
-            1: { fontStyle: "bold", cellWidth: 28 },
+            0: { halign: "center", cellWidth: 8 },
+            1: { fontStyle: "bold", cellWidth: 26 },
             2: { fontStyle: "bold", cellWidth: 42 },
             3: { cellWidth: 65 },
             4: { cellWidth: 35 },
@@ -15678,28 +15722,31 @@ const AdminFinanceScreen = ({
     return map;
   }, [activeBankIds]);
 
-  // Independent scroll lock for FinanceScreen modals
+  const lastScrollYRef = useRef<number>(0);
+  const lastEditedRecordIdRef = useRef<string | null>(null);
+
+  // Independent scroll lock for FinanceScreen modals: strictly preserves user scroll location
   useEffect(() => {
     if (showAddModal || showExportModal || editingTransaction || selectedPattyCashDetail) {
-      const scrollY = window.pageYOffset;
-      document.body.style.position = "fixed";
-      document.body.style.top = `-${scrollY}px`;
-      document.body.style.width = "100vw";
+      lastScrollYRef.current = window.scrollY || window.pageYOffset || document.documentElement.scrollTop;
       document.body.style.overflow = "hidden";
     } else {
-      const scrollY = document.body.style.top;
-      document.body.style.position = "";
-      document.body.style.top = "";
-      document.body.style.width = "";
       document.body.style.overflow = "";
-      if (scrollY) {
-        window.scrollTo(0, parseInt(scrollY || "0") * -1);
+      const savedY = lastScrollYRef.current;
+      if (savedY > 0) {
+        window.scrollTo({ top: savedY, behavior: "instant" });
+        setTimeout(() => {
+          window.scrollTo({ top: savedY, behavior: "instant" });
+          if (lastEditedRecordIdRef.current) {
+            const el = document.getElementById(`row-${lastEditedRecordIdRef.current}`);
+            if (el) {
+              el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+            }
+          }
+        }, 50);
       }
     }
     return () => {
-      document.body.style.position = "";
-      document.body.style.top = "";
-      document.body.style.width = "";
       document.body.style.overflow = "";
     };
   }, [showAddModal, showExportModal, editingTransaction, selectedPattyCashDetail]);
@@ -16219,6 +16266,42 @@ const AdminFinanceScreen = ({
     );
   }, [isPersonalFundRecord]);
 
+  // Helper functions to identify Petty Cash relationships at component level:
+  // 1. Child record: Realisasi belanja dari dana petty cash / kasbon operasional
+  const isPattyCashChildRecord = useCallback((r: FinancialRecord): boolean => {
+    if (!r || r.type !== "OUT") return false;
+    const cat = (r.category || "").toUpperCase();
+    if (cat === "HUTANG" || cat.includes("HUTANG")) return false;
+    if (isPersonalFundRecord(r)) return false;
+    const sRaw = (r.sumberDana || "").toUpperCase();
+    if (sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT")) return false;
+    if (r.flowType === "PERSONAL_TALANGAN_REIMBURSE") return false;
+
+    if (r.flowType === "OUT_PERSONAL_SPEND" && (sRaw === "PATTYCASH PT" || sRaw === "REKENING PT" || !sRaw || sRaw === "-")) return true;
+    if (r.refIdBank && r.refIdBank.trim() !== "" && r.refIdBank !== "-" && r.refIdBank !== r.customId && r.refIdBank !== r.id) return true;
+    const desc = (r.description || "").toUpperCase();
+    if ((desc.includes("REALISASI") || desc.includes("PATTYCASH") || desc.includes("PETTY CASH")) && !desc.includes("HUTANG")) return true;
+    return false;
+  }, [isPersonalFundRecord]);
+
+  // 2. Parent record: Mutasi keluar bank PT yang menjadi sumber dana awal kas kecil / transfer kasbon operasional
+  const isPattyCashParentRecord = useCallback((r: FinancialRecord): boolean => {
+    if (!r || r.type !== "OUT") return false;
+    const cat = (r.category || "").toUpperCase();
+    if (cat === "HUTANG" || cat.includes("HUTANG")) return false;
+    if (isPersonalFundRecord(r)) return false;
+    const sRaw = (r.sumberDana || "").toUpperCase();
+    if (sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT")) return false;
+    if (r.flowType === "PERSONAL_TALANGAN_REIMBURSE") return false;
+
+    if (r.flowType === "OUT_PERSONAL_SPEND") return false;
+    if (r.flowType === "OUT_PERSONAL_TRANSFER") return true;
+    if (isPattyCashCategory(r.category)) return true;
+    const desc = (r.description || "").toUpperCase();
+    if (desc.includes("DANA AWAL") || desc.includes("TOP UP KAS") || desc.includes("KASBON OPERASIONAL") || desc.includes("PATTYCASH") || desc.includes("PETTY CASH")) return true;
+    return false;
+  }, [isPersonalFundRecord, isPattyCashCategory]);
+
   const getBankRemainingBalance = useCallback((bankRec: FinancialRecord, isEdit: boolean) => {
     const spentOnThis = financialRecords
       .filter((r) => {
@@ -16232,7 +16315,7 @@ const AdminFinanceScreen = ({
         const match = allocs.find((a) => a.bankId === bankRec.customId);
         return sum + (match ? match.amount : 0);
       }, 0);
-    return bankRec.amount - spentOnThis;
+    return Math.max(0, bankRec.amount - spentOnThis);
   }, [financialRecords, editingTransaction]);
 
   const handleAutoPecah = useCallback((allocs: Array<{ bankId: string; amount: number }>, totalAmountStr: string, isEdit: boolean) => {
@@ -16504,14 +16587,13 @@ const AdminFinanceScreen = ({
           holder = "Faisal Mustopa (Admin)";
         }
 
-        // Total spending from this specific bank topup (termasuk biaya admin transfer jika ada)
+        // Total spending from this specific bank topup
         const linkedSpent = financialRecords
           .filter((sp) => (isUsingJuneBaseline ? !sp.date.startsWith("2026-06") : true) && sp.flowType === "OUT_PERSONAL_SPEND")
           .reduce((sum, sp) => {
             const allocations = parseBankAllocations(sp.refIdBank || "", sp.amount);
             const matching = allocations.find((alloc) => alloc.bankId === record.customId);
-            const adminShare = allocations.length > 0 && matching ? (Number(sp.adminFee || 0) / allocations.length) : (matching ? Number(sp.adminFee || 0) : 0);
-            return sum + (matching ? matching.amount + adminShare : 0);
+            return sum + (matching ? matching.amount : 0);
           }, 0);
 
         list.push({
@@ -16522,7 +16604,7 @@ const AdminFinanceScreen = ({
           description: record.description,
           initialAmount: record.amount,
           spentAmount: linkedSpent,
-          balance: record.amount - linkedSpent,
+          balance: Math.max(0, record.amount - linkedSpent),
         });
       }
     });
@@ -16544,7 +16626,7 @@ const AdminFinanceScreen = ({
       }
       holders[item.holder].received += item.initialAmount;
       holders[item.holder].spent += item.spentAmount;
-      holders[item.holder].balance += item.balance;
+      holders[item.holder].balance += Math.max(0, item.balance);
     });
 
     return Object.values(holders);
@@ -16566,7 +16648,14 @@ const AdminFinanceScreen = ({
           return matchesHolder && (!hasBnkAlloc || rec.date.startsWith("2026-06"));
         } else {
           const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
-          return allocs.some((a) => a.bankId === item.customId);
+          const rawRef = (rec.refIdBank || "").trim().toUpperCase();
+          const target = (item.customId || "").toUpperCase();
+          const targetId = (item.id || "").toUpperCase();
+          return (
+            allocs.some((a) => a.bankId && (a.bankId.toUpperCase() === target || (targetId && a.bankId.toUpperCase() === targetId))) ||
+            (target && rawRef.includes(target)) ||
+            (targetId && rawRef.includes(targetId))
+          );
         }
       }).length;
     },
@@ -16577,36 +16666,61 @@ const AdminFinanceScreen = ({
   const selectedPattyCashRecords = useMemo(() => {
     if (!selectedPattyCashDetail) return [];
 
-    const { bankId, holder } = selectedPattyCashDetail;
+    const { bankId, holder, topupInfo } = selectedPattyCashDetail;
 
     return financialRecords
       .filter((rec) => {
-        if (rec.flowType !== "OUT_PERSONAL_SPEND") return false;
-
-        // Match Holder
-        if (holder && holder !== "ALL") {
+        // If a specific bank top-up transaction is chosen, match by bankId as primary authority!
+        if (bankId && bankId !== "ALL") {
+          if (bankId === "SISA JUNI") {
+            const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
+            const hasBnkAlloc = allocs.some((a) => a.bankId && a.bankId.startsWith("BNK-"));
+            if (hasBnkAlloc && !rec.date.startsWith("2026-06")) return false;
+            if (holder && holder !== "ALL") {
+              const normRecHolder = (rec.personalHolder || "").toLowerCase();
+              const normFilterHolder = holder.toLowerCase();
+              const matchesHolder =
+                normRecHolder.includes(normFilterHolder) ||
+                normFilterHolder.includes(normRecHolder) ||
+                (normFilterHolder.includes("jidan") && normRecHolder.includes("jidan")) ||
+                (normFilterHolder.includes("faisal") && normRecHolder.includes("faisal")) ||
+                (normFilterHolder.includes("yasin") && normRecHolder.includes("yasin"));
+              if (!matchesHolder) return false;
+            }
+          } else {
+            const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
+            const cleanTargetBank = bankId.trim().toUpperCase();
+            const rawRef = (rec.refIdBank || "").trim().toUpperCase();
+            const topupCId = (topupInfo?.customId || "").toUpperCase();
+            const topupId = (topupInfo?.id || "").toUpperCase();
+            const hasMatchingBank =
+              allocs.some((a) => a.bankId && (a.bankId.toUpperCase() === cleanTargetBank || (topupCId && a.bankId.toUpperCase() === topupCId) || (topupId && a.bankId.toUpperCase() === topupId))) ||
+              rawRef === cleanTargetBank ||
+              rawRef.includes(cleanTargetBank) ||
+              (topupCId && rawRef.includes(topupCId)) ||
+              (topupId && rawRef.includes(topupId));
+            if (!hasMatchingBank) return false;
+          }
+        } else if (holder && holder !== "ALL") {
+          // If viewing all expenses for a specific holder
           const normRecHolder = (rec.personalHolder || "").toLowerCase();
           const normFilterHolder = holder.toLowerCase();
           const matchesHolder =
             normRecHolder.includes(normFilterHolder) ||
+            normFilterHolder.includes(normRecHolder) ||
             (normFilterHolder.includes("jidan") && normRecHolder.includes("jidan")) ||
             (normFilterHolder.includes("faisal") && normRecHolder.includes("faisal")) ||
             (normFilterHolder.includes("yasin") && normRecHolder.includes("yasin"));
           if (!matchesHolder) return false;
         }
 
-        // Match Bank ID
-        if (bankId && bankId !== "ALL") {
-          if (bankId === "SISA JUNI") {
-            const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
-            const hasBnkAlloc = allocs.some((a) => a.bankId && a.bankId.startsWith("BNK-"));
-            if (hasBnkAlloc && !rec.date.startsWith("2026-06")) return false;
-          } else {
-            const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
-            const hasMatchingBank = allocs.some((a) => a.bankId === bankId);
-            if (!hasMatchingBank) return false;
-          }
-        }
+        // Allow OUT_PERSONAL_SPEND, PERSONAL_TALANGAN_REIMBURSE, PRS- records, or records linked to this bankId
+        const isBelanjaRecord =
+          rec.flowType === "OUT_PERSONAL_SPEND" ||
+          rec.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+          (rec.customId && rec.customId.startsWith("PRS-")) ||
+          Boolean(rec.refIdBank && bankId && (rec.refIdBank.includes(bankId) || (topupInfo?.customId && rec.refIdBank.includes(topupInfo.customId))));
+        if (!isBelanjaRecord && rec.type !== "OUT") return false;
 
         // Search Filter inside Modal
         if (pattyCashModalSearch) {
@@ -16694,7 +16808,7 @@ const AdminFinanceScreen = ({
             description: record.description,
             initialAmount: record.amount,
             spentAmount: linkedSpent,
-            balance: record.amount - linkedSpent,
+            balance: Math.max(0, record.amount - linkedSpent),
           },
         });
       }
@@ -17322,7 +17436,7 @@ const AdminFinanceScreen = ({
           amount: alloc.amount,
           adminFee: i === 0 && formData.paymentMethod === "TRANSFER" ? Number(formData.adminFee || 0) : 0,
           projectId: formData.projectId || "",
-          referenceId: formData.projectId || formData.linkedDebtId || "",
+          referenceId: formData.projectId || "",
           recordedBy: user.name,
           timestamp: Date.now() + i, // slight time offset to preserve sequential order
           customId: eachCustomId,
@@ -17333,6 +17447,31 @@ const AdminFinanceScreen = ({
           refHutang: formData.refHutang || "",
           senderName: formData.type === "IN" ? (formData.senderName || "") : "",
         };
+
+        const isPattyCashAdd = formData.flowType === "OUT_PERSONAL_SPEND" || 
+                               (formData.sumberDana || "").toUpperCase().includes("PATTY") || 
+                               formData.sumberDana === "DANA PATTYCASH";
+        if (isPattyCashAdd && formData.type === "OUT") {
+          eachRecord.flowType = "OUT_PERSONAL_SPEND";
+          eachRecord.sumberDana = "DANA PATTYCASH";
+          if (!eachRecord.personalHolder) {
+            eachRecord.personalHolder = formData.personalHolder || "Faisal Mustopa (Admin)";
+          }
+          if (!eachRecord.refIdBank) {
+            const normHolder = (eachRecord.personalHolder || "").toLowerCase();
+            const targetTopup = detailedTalanganList.find((t) => {
+              const tHolder = t.holder.toLowerCase();
+              const matches = (normHolder.includes("jidan") && tHolder.includes("jidan")) ||
+                              (normHolder.includes("yasin") && tHolder.includes("yasin")) ||
+                              (!normHolder.includes("jidan") && !normHolder.includes("yasin") && tHolder.includes("faisal"));
+              return matches && t.balance > 0;
+            }) || detailedTalanganList.find((t) => t.balance > 0);
+
+            if (targetTopup && targetTopup.customId) {
+              eachRecord.refIdBank = targetTopup.customId;
+            }
+          }
+        }
 
         let targetDebtId = formData.linkedDebtId;
         const validDebtAllocs = formData.type === "OUT" ? debtAllocations.filter((a) => a.debtId && a.amount > 0) : [];
@@ -17364,15 +17503,15 @@ const AdminFinanceScreen = ({
 
         // Auto-create/sync Debt (Hutang PT) for personal funds (Dana Pribadi otomatis menjadi Hutang Perusahaan)
         const sRawForm = (formData.sumberDana || "").trim().toUpperCase();
-        const isPersonalSumber = (sRawForm === "REKENING PRIBADI" || sRawForm === "DANA PRIBADI" || sRawForm.includes("PRIBADI") || sRawForm.includes("NON-PT")) && !sRawForm.includes("REKENING PT");
+        const isPersonalSumber = (sRawForm === "REKENING PRIBADI" || sRawForm === "DANA PRIBADI" || sRawForm.includes("PRIBADI") || sRawForm.includes("NON-PT") || formData.flowType === "PERSONAL_TALANGAN_REIMBURSE") && !sRawForm.includes("REKENING PT");
         if (eachRecord.type === "OUT" && isPersonalSumber) {
-          const creditorName = normalizeContactName(formData.pemilikUangPribadi || formData.personalHolder || user?.name || "Karyawan");
+          const creditorName = normalizeContactName(formData.pemilikUangPribadi || formData.personalHolder || "Muhammad Yasin");
           const nextHtgCustomId = getNextDebtCustomId(debtRecords, "HUTANG");
           const newDebt: DebtRecord = {
             id: nextHtgCustomId,
             customId: nextHtgCustomId,
             type: "HUTANG",
-            title: `[DANA PRIBADI] ${eachRecord.description || eachRecord.category || "Pengeluaran Pribadi"}`,
+            title: `[TALANGAN PRIBADI] ${eachRecord.description || eachRecord.category || "Pengeluaran Pribadi"}`,
             contactName: creditorName,
             amount: eachRecord.amount,
             dueDate: eachRecord.date || new Date().toISOString().split("T")[0],
@@ -17704,6 +17843,58 @@ const AdminFinanceScreen = ({
                   });
                 }
               }
+            } else if (eachRecord.type === "OUT") {
+              // Auto-detect matching unpaid supplier debt when paying creditor (e.g. paying Yoga with personal funds)
+              const refH = (formData.refHutang || "").toLowerCase();
+              const rekP = (formData.rekPenerima || "").toLowerCase();
+              const desc = (formData.description || "").toLowerCase();
+              const isHutangCategory = eachRecord.category === "HUTANG" || eachRecord.category === "PEMBAYARAN HUTANG" || eachRecord.flowType === "PERSONAL_TALANGAN_REIMBURSE";
+
+              const matchedDebt = effectiveDebtRecords.find((d) => {
+                if (d.type !== "HUTANG" || d.status === "PAID") return false;
+                const cName = normalizeContactName(d.contactName || "").toLowerCase();
+                const dCust = (d.customId || "").toLowerCase();
+                const dId = (d.id || "").toLowerCase();
+                if (cName && cName.length > 2 && (rekP.includes(cName) || cName.includes(rekP))) return true;
+                if (refH && (refH.includes(cName) || refH.includes(dCust) || refH.includes(dId))) return true;
+                if (isHutangCategory && cName && cName.length > 2 && desc.includes(cName)) return true;
+                return false;
+              });
+
+              if (matchedDebt) {
+                const currentPaid = (matchedDebt.payments || []).reduce((acc, curr) => acc + curr.amount, 0);
+                const remaining = Math.max(0, matchedDebt.amount - currentPaid);
+                const payAmount = Math.min(eachRecord.amount, remaining);
+                if (payAmount > 0) {
+                  const newPayment: DebtPayment = {
+                    id: Math.random().toString(36).substr(2, 9),
+                    amount: payAmount,
+                    date: formData.date,
+                    note: eachRecord.description || `Pembayaran Hutang ${matchedDebt.title}`,
+                    financialRecordId: finId,
+                    recordedBy: user.name,
+                  };
+                  const updatedPayments = [...(matchedDebt.payments || []), newPayment];
+                  const totalPaid = currentPaid + payAmount;
+                  const newStatus = totalPaid >= matchedDebt.amount ? "PAID" : "PARTIAL";
+
+                  const updatedDebtPayload = {
+                    ...matchedDebt,
+                    payments: updatedPayments,
+                    status: newStatus,
+                  };
+
+                  await dbService.setDocument("debtRecords", matchedDebt.id, updatedDebtPayload);
+
+                  setDebtRecords?.((prev) => {
+                    const exists = prev.some((d) => d.id === matchedDebt.id);
+                    if (exists) {
+                      return prev.map((d) => (d.id === matchedDebt.id ? updatedDebtPayload : d));
+                    }
+                    return [updatedDebtPayload, ...prev];
+                  });
+                }
+              }
             }
           }
         }
@@ -17792,7 +17983,7 @@ const AdminFinanceScreen = ({
       amount: Number(editFormData.amount),
       adminFee: editFormData.paymentMethod === "TRANSFER" ? Number(editFormData.adminFee || 0) : 0,
       projectId: editFormData.projectId || "",
-      referenceId: editFormData.projectId || editFormData.linkedDebtId || "",
+      referenceId: editFormData.projectId || "",
       customId: finalCustomId,
       sumberDana: editFormData.sumberDana || "",
       rekPenerima: editFormData.rekPenerima || "",
@@ -17838,8 +18029,42 @@ const AdminFinanceScreen = ({
       }
     }
 
+    const isPattyCashSource = editFormData.flowType === "OUT_PERSONAL_SPEND" || (editFormData.sumberDana || "").toUpperCase().includes("PATTY") || editFormData.sumberDana === "DANA PATTYCASH";
+    if (isPattyCashSource && editFormData.type === "OUT") {
+      updatedRecord.flowType = "OUT_PERSONAL_SPEND";
+      updatedRecord.sumberDana = "DANA PATTYCASH";
+      if (!updatedRecord.personalHolder) {
+        updatedRecord.personalHolder = editFormData.personalHolder || editFormData.rekPenerima || "Faisal Mustopa (Admin)";
+      }
+
+      const validEditBankAllocs = editBankAllocations.filter((a) => a.bankId && a.amount > 0);
+      if (validEditBankAllocs.length > 0) {
+        updatedRecord.refIdBank = validEditBankAllocs.map((a) => `${a.bankId} (Rp ${a.amount.toLocaleString("id-ID")})`).join(" + ");
+      } else if (!updatedRecord.refIdBank) {
+        const normHolder = (updatedRecord.personalHolder || "").toLowerCase();
+        const targetTopup = detailedTalanganList.find((t) => {
+          const tHolder = t.holder.toLowerCase();
+          const matches = (normHolder.includes("jidan") && tHolder.includes("jidan")) ||
+                          (normHolder.includes("yasin") && tHolder.includes("yasin")) ||
+                          (!normHolder.includes("jidan") && !normHolder.includes("yasin") && tHolder.includes("faisal"));
+          return matches && t.balance > 0;
+        }) || detailedTalanganList.find((t) => t.balance > 0);
+
+        if (targetTopup && targetTopup.customId) {
+          updatedRecord.refIdBank = targetTopup.customId;
+        }
+      }
+    }
+
     try {
       await dbService.updateDocument("financialRecords", editingTransaction.id, updatedRecord);
+      setFinancialRecords((prev) =>
+        prev.map((r) =>
+          r.id === editingTransaction.id
+            ? ({ ...r, ...updatedRecord } as FinancialRecord)
+            : r
+        )
+      );
 
       // Synchronize associated debt payments when financial transaction is edited
       const oldDebtId = editingTransaction.linkedDebtId;
@@ -18145,7 +18370,23 @@ const AdminFinanceScreen = ({
         }
       }
 
+      const savedRecordId = editingTransaction.id || editingTransaction.customId;
+      lastEditedRecordIdRef.current = savedRecordId;
       setEditingTransaction(null);
+
+      // Instantly restore user scroll position and ensure last edited row stays in view
+      setTimeout(() => {
+        const savedY = lastScrollYRef.current;
+        if (savedY > 0) {
+          window.scrollTo({ top: savedY, behavior: "instant" });
+        }
+        if (savedRecordId) {
+          const el = document.getElementById(`row-${savedRecordId}`);
+          if (el) {
+            el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }
+        }
+      }, 60);
     } catch (err) {
       console.error("Gagal mengupdate transaksi:", err);
       alert("Gagal mengupdate transaksi: " + (err instanceof Error ? err.message : String(err)));
@@ -19637,43 +19878,7 @@ const AdminFinanceScreen = ({
 
     currentY = 36;
 
-    // Helper functions to identify Petty Cash relationships:
-    // 1. Child record: Realisasi belanja dari dana petty cash / kasbon operasional
-    const isPattyCashChildRecord = (r: FinancialRecord): boolean => {
-      if (!r || r.type !== "OUT") return false;
-      const cat = (r.category || "").toUpperCase();
-      if (cat === "HUTANG" || cat.includes("HUTANG")) return false;
-      if (isPersonalFundRecord(r)) return false;
-      const sRaw = (r.sumberDana || "").toUpperCase();
-      if (sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT")) return false;
-      if (r.flowType === "PERSONAL_TALANGAN_REIMBURSE") return false;
-
-      if (r.flowType === "OUT_PERSONAL_SPEND" && (sRaw === "PATTYCASH PT" || sRaw === "REKENING PT" || !sRaw || sRaw === "-")) return true;
-      if (r.refIdBank && r.refIdBank.trim() !== "" && r.refIdBank !== "-" && r.refIdBank !== r.customId && r.refIdBank !== r.id) return true;
-      const desc = (r.description || "").toUpperCase();
-      if ((desc.includes("REALISASI") || desc.includes("PATTYCASH") || desc.includes("PETTY CASH")) && !desc.includes("HUTANG")) return true;
-      return false;
-    };
-
-    // 2. Parent record: Mutasi keluar bank PT yang menjadi sumber dana awal kas kecil / transfer kasbon operasional
-    const isPattyCashParentRecord = (r: FinancialRecord): boolean => {
-      if (!r || r.type !== "OUT") return false;
-      const cat = (r.category || "").toUpperCase();
-      if (cat === "HUTANG" || cat.includes("HUTANG")) return false;
-      if (isPersonalFundRecord(r)) return false;
-      const sRaw = (r.sumberDana || "").toUpperCase();
-      if (sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT")) return false;
-      if (r.flowType === "PERSONAL_TALANGAN_REIMBURSE") return false;
-
-      if (r.flowType === "OUT_PERSONAL_SPEND") return false;
-      if (r.flowType === "OUT_PERSONAL_TRANSFER") return true;
-      if (isPattyCashCategory(r.category)) return true;
-      const desc = (r.description || "").toUpperCase();
-      if (desc.includes("DANA AWAL") || desc.includes("TOP UP KAS") || desc.includes("KASBON OPERASIONAL")) return true;
-      return false;
-    };
-
-    // 3. Canonical Ref ID resolver: Memetakan setiap record pengeluaran petty cash ke Ref ID yang seragam
+    // Canonical Ref ID resolver: Memetakan setiap record pengeluaran petty cash ke Ref ID yang seragam
     const getCanonicalRefId = (r: FinancialRecord): string => {
       if (!r) return "";
       const rRef = (r.refIdBank || "").trim();
@@ -20748,7 +20953,7 @@ const AdminFinanceScreen = ({
                                   return sum + (match ? match.amount : 0);
                                 }, 0);
 
-                          const sisaTalangan = talanganItem ? talanganItem.balance : (record.amount - linkedSpent);
+                          const sisaTalangan = Math.max(0, talanganItem ? talanganItem.balance : (record.amount - linkedSpent));
                           const shouldShowTalangan = isTalanganType || linkedSpent > 0;
 
                           // Check selection status
@@ -20767,6 +20972,7 @@ const AdminFinanceScreen = ({
                           return (
                             <tr
                               key={record.id}
+                              id={`row-${record.id}`}
                               className={`hover:bg-slate-100/50 transition-all font-medium ${
                                 isDirectTarget
                                   ? "bg-indigo-50/90 ring-2 ring-indigo-400 ring-inset shadow-xs"
@@ -20988,7 +21194,11 @@ const AdminFinanceScreen = ({
                                 <td className="py-3 px-3">
                                   <div className="flex items-center justify-center gap-2">
                                     <button
-                                      onClick={() => setEditingTransaction(record)}
+                                      onClick={() => {
+                                        lastScrollYRef.current = window.scrollY || window.pageYOffset || document.documentElement.scrollTop;
+                                        lastEditedRecordIdRef.current = record.id;
+                                        setEditingTransaction(record);
+                                      }}
                                       className="w-7 h-7 bg-blue-50 text-blue-600 rounded-lg flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all"
                                       title="Edit transaksi"
                                     >
@@ -22358,16 +22568,25 @@ const AdminFinanceScreen = ({
                         </label>
                         <select
                           value={formData.sumberDana || "REKENING PT"}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            let newFlow = formData.flowType;
+                            if (val === "DANA PATTYCASH") {
+                              newFlow = "OUT_PERSONAL_SPEND";
+                            } else if (val === "REKENING PRIBADI") {
+                              newFlow = "OUT_BANK_DIRECT";
+                            }
                             setFormData({
                               ...formData,
-                              sumberDana: e.target.value,
-                            })
-                          }
+                              sumberDana: val,
+                              flowType: newFlow,
+                            });
+                          }}
                           className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm cursor-pointer"
                         >
                           <option value="REKENING PT">REKENING PT</option>
-                          <option value="REKENING PRIBADI">REKENING PRIBADI</option>
+                          <option value="REKENING PRIBADI">REKENING PRIBADI (Dana Pribadi → Tambah Hutang PT)</option>
+                          <option value="DANA PATTYCASH">DANA PATTYCASH / KASBON (Potong Saldo Kasbon/Pattycash)</option>
                         </select>
                       </div>
 
@@ -23126,7 +23345,9 @@ const AdminFinanceScreen = ({
                                 ...prev,
                                 flowType: chosenFlow,
                                 personalHolder: chosenFlow === "OUT_BANK_DIRECT" ? "" : (prev.personalHolder || "Faisal Mustopa (Admin)"),
-                                sumberDana: chosenFlow === "OUT_BANK_DIRECT" || chosenFlow === "OUT_PERSONAL_TRANSFER" ? "REKENING PT" : prev.sumberDana,
+                                sumberDana: chosenFlow === "OUT_PERSONAL_SPEND"
+                                  ? "DANA PATTYCASH"
+                                  : (chosenFlow === "OUT_BANK_DIRECT" || chosenFlow === "OUT_PERSONAL_TRANSFER" ? "REKENING PT" : prev.sumberDana),
                               }));
                             }}
                             className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer"
@@ -23571,26 +23792,30 @@ const AdminFinanceScreen = ({
 
                       <div className="space-y-3">
                         <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
-                          Aliran Transaksi (Flow Type)
+                          ALIRAN DANA PENGELUARAN (TIPE ARUS)
                         </label>
                         <select
                           className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all appearance-none cursor-pointer"
                           value={editFormData.flowType}
-                          onChange={(e) =>
-                            setEditFormData({
-                              ...editFormData,
-                              flowType: e.target.value as any,
-                            })
-                          }
+                          onChange={(e) => {
+                            const chosenFlow = e.target.value as any;
+                            setEditFormData((prev) => ({
+                              ...prev,
+                              flowType: chosenFlow,
+                              sumberDana: chosenFlow === "OUT_PERSONAL_SPEND"
+                                ? "DANA PATTYCASH"
+                                : (prev.sumberDana === "DANA PATTYCASH" ? "REKENING PT" : prev.sumberDana),
+                              personalHolder: chosenFlow === "OUT_BANK_DIRECT" ? "" : (prev.personalHolder || "Faisal Mustopa (Admin)"),
+                            }));
+                          }}
                         >
                           {editFormData.type === "IN" ? (
                             <option value="IN">PEMASUKAN REKENING PT</option>
                           ) : (
                             <>
-                              <option value="OUT_BANK_DIRECT">PENGELUARAN DEBET / BANK PT DIRECT</option>
-                              <option value="OUT_PERSONAL_TRANSFER">TRANSFER PT → REK PRIBADI (OPERASIONAL STAF)</option>
-                              <option value="OUT_PERSONAL_SPEND">REALISASI BELANJA VIA REK PRIBADI (DANA TALANGAN)</option>
-                              <option value="PERSONAL_TALANGAN_REIMBURSE">REIMBURSEMENT DANA TALANGAN</option>
+                              <option value="OUT_BANK_DIRECT">1. Ke PT Supplier Langsung (Dari Rekening PT ke Supplier)</option>
+                              <option value="OUT_PERSONAL_TRANSFER">2. Dari Rekening PT ke Rekening Pribadi / PIC (Kasbon/Pegangan)</option>
+                              <option value="OUT_PERSONAL_SPEND">3. Dari Pribadi (PIC) ke Supplier dan Lainnya (Belanja/Realisasi)</option>
                             </>
                           )}
                         </select>
@@ -23859,16 +24084,25 @@ const AdminFinanceScreen = ({
                         </label>
                         <select
                           value={editFormData.sumberDana || "REKENING PT"}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            let newFlow = editFormData.flowType;
+                            if (val === "DANA PATTYCASH") {
+                              newFlow = "OUT_PERSONAL_SPEND";
+                            } else if (val === "REKENING PRIBADI") {
+                              newFlow = "OUT_BANK_DIRECT";
+                            }
                             setEditFormData({
                               ...editFormData,
-                              sumberDana: e.target.value,
-                            })
-                          }
+                              sumberDana: val,
+                              flowType: newFlow,
+                            });
+                          }}
                           className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer"
                         >
                           <option value="REKENING PT">REKENING PT</option>
-                          <option value="REKENING PRIBADI">REKENING PRIBADI</option>
+                          <option value="REKENING PRIBADI">REKENING PRIBADI (Dana Pribadi → Tambah Hutang PT)</option>
+                          <option value="DANA PATTYCASH">DANA PATTYCASH / KASBON (Potong Saldo Kasbon/Pattycash)</option>
                         </select>
                       </div>
 
@@ -28478,13 +28712,283 @@ export default function App() {
       JSON.stringify(limitedHistory),
     );
   };
+  const defaultProjects: Project[] = [
+  {
+    id: "WESTMARK",
+    name: "Project Westmark",
+    location: "Westmark Jakarta",
+    startDate: "2026-05-01",
+    endDate: "2026-08-31",
+    status: "In Progress",
+    priority: "High",
+    progress: 65,
+    contractValue: 566100000,
+    manager: "Jidan Ramadhan",
+    description: "Proyek instalasi filter softener dan sistem pengolahan air bersih Westmark.",
+    tasks: [
+      { id: "t1", name: "Instalasi Tanki Softener", status: "Done" },
+      { id: "t2", name: "Pemasangan Piping Sektor Barat", status: "In Progress" }
+    ]
+  },
+  {
+    id: "UEU TB SIMATUPANG",
+    name: "UEU TB Simatupang",
+    location: "Universitas Esa Unggul Simatupang",
+    startDate: "2026-05-15",
+    endDate: "2026-09-30",
+    status: "In Progress",
+    priority: "High",
+    progress: 45,
+    contractValue: 432900000,
+    manager: "Faisal Mustopa",
+    description: "Desain CAD dan instalasi pengolahan limbah Universitas Esa Unggul.",
+    tasks: [
+      { id: "t3", name: "Desain CAD Struktur", status: "Done" },
+      { id: "t4", name: "Pondasi WWTP", status: "In Progress" }
+    ]
+  },
+  {
+    id: "PKM SINDANGN JAYA",
+    name: "PKM Sindang Jaya",
+    location: "Puskesmas Sindang Jaya",
+    startDate: "2026-06-01",
+    endDate: "2026-08-15",
+    status: "In Progress",
+    priority: "Medium",
+    progress: 30,
+    contractValue: 11753500,
+    manager: "Jidan Ramadhan",
+    description: "Pemeliharaan dan rehabilitasi IPAL Puskesmas Sindang Jaya.",
+    tasks: [
+      { id: "t5", name: "Pemeriksaan Pompa Dosis", status: "Done" }
+    ]
+  },
+  {
+    id: "SAKATA",
+    name: "Proyek Sakata",
+    location: "Sakata Jakarta",
+    startDate: "2026-06-15",
+    endDate: "2026-10-15",
+    status: "In Progress",
+    priority: "Medium",
+    progress: 15,
+    manager: "Faisal Mustopa",
+    description: "Pemasangan sistem floating aerator Sakata.",
+    tasks: []
+  },
+  {
+    id: "SUMMERSET",
+    name: "Project Summerset",
+    location: "Summerset",
+    startDate: "2026-06-20",
+    endDate: "2026-10-20",
+    status: "In Progress",
+    priority: "Medium",
+    progress: 10,
+    manager: "Jidan Ramadhan",
+    description: "Instalasi WTP dan pengolahan air bersih Summerset.",
+    tasks: []
+  },
+  {
+    id: "COVER_ATM_BRI",
+    name: "Cover ATM BRI",
+    location: "Bogor",
+    startDate: "2026-06-10",
+    endDate: "2026-07-31",
+    status: "In Progress",
+    priority: "Medium",
+    progress: 50,
+    manager: "Faisal Mustopa",
+    description: "Pekerjaan cover ATM BRI Bogor.",
+    tasks: []
+  },
+  {
+    id: "PKM KEBON JERUK",
+    name: "PKM Kebon Jeruk",
+    location: "Puskesmas Kebon Jeruk",
+    startDate: "2026-06-15",
+    endDate: "2026-08-31",
+    status: "In Progress",
+    priority: "Medium",
+    progress: 40,
+    manager: "Jidan Ramadhan",
+    description: "Perbaikan Septictank dan pemipaan Puskesmas Kebon Jeruk.",
+    tasks: []
+  },
+  {
+    id: "UEU BEKASI",
+    name: "UEU Bekasi",
+    location: "Universitas Esa Unggul Bekasi",
+    startDate: "2026-05-01",
+    endDate: "2026-07-31",
+    status: "Completed",
+    priority: "High",
+    progress: 100,
+    contractValue: 61050000,
+    manager: "Faisal Mustopa",
+    description: "Pekerjaan IPAL Medis UEU Bekasi.",
+    tasks: []
+  },
+  {
+    id: "PROYEK_IPAL_RUMAH_SAKIT_PELNI",
+    name: "PROYEK IPAL RUMAH SAKIT PELNI",
+    location: "RS Pelni Jakarta",
+    startDate: "2026-06-01",
+    endDate: "2026-09-30",
+    status: "In Progress",
+    priority: "High",
+    progress: 35,
+    manager: "Jidan Ramadhan",
+    description: "Pekerjaan IPAL Rumah Sakit Pelni.",
+    tasks: []
+  },
+  {
+    id: "PROYEK_BAK_SUMPIT_WESTMARK",
+    name: "Proyek Bak Sumpit Westmark",
+    location: "Westmark Jakarta",
+    startDate: "2026-08-01",
+    endDate: "2026-09-30",
+    status: "In Progress",
+    priority: "High",
+    progress: 70,
+    contractValue: 85850000,
+    manager: "Jidan Ramadhan",
+    description: "Pekerjaan perbaikan dan instalasi Bak Sumpit Westmark.",
+    tasks: []
+  },
+  {
+    id: "PROYEK_STP_HRI_KARAWANG",
+    name: "Proyek STP HRI Karawang",
+    location: "Karawang",
+    startDate: "2026-08-15",
+    endDate: "2026-10-31",
+    status: "In Progress",
+    priority: "High",
+    progress: 55,
+    contractValue: 394050000,
+    manager: "Jidan Ramadhan",
+    description: "Instalasi STP HRI Karawang.",
+    tasks: []
+  },
+  {
+    id: "PROYEK_BANTAR_GEBANG",
+    name: "Proyek Bantar Gebang",
+    location: "Bekasi",
+    startDate: "2026-08-20",
+    endDate: "2026-10-15",
+    status: "In Progress",
+    priority: "Medium",
+    progress: 40,
+    manager: "Faisal Mustopa",
+    description: "Pekerjaan panel kontrol Bantar Gebang.",
+    tasks: []
+  },
+  {
+    id: "STP_10M3_PURWAKARTA",
+    name: "STP 10M3 Purwakarta",
+    location: "Purwakarta",
+    startDate: "2026-08-25",
+    endDate: "2026-10-30",
+    status: "In Progress",
+    priority: "Medium",
+    progress: 30,
+    manager: "Faisal Mustopa",
+    description: "Pengadaan STP 10M3 Purwakarta.",
+    tasks: []
+  },
+  {
+    id: "PENGADAAN_SEPTICTANK_PT_DW_TEC",
+    name: "Pengadaan Septictank DW Technic",
+    location: "Jakarta",
+    startDate: "2026-07-01",
+    endDate: "2026-08-31",
+    status: "Completed",
+    priority: "Medium",
+    progress: 100,
+    contractValue: 19670310,
+    manager: "Faisal Mustopa",
+    description: "Pengadaan unit septictank PT DW Technic.",
+    tasks: []
+  },
+  {
+    id: "TANGKI_STP_15_M3",
+    name: "Pengadaan Tangki STP 15 M3",
+    location: "Jakarta",
+    startDate: "2026-08-10",
+    endDate: "2026-09-30",
+    status: "In Progress",
+    priority: "High",
+    progress: 60,
+    contractValue: 53280000,
+    manager: "Jidan Ramadhan",
+    description: "Pengadaan tangki STP 15 M3.",
+    tasks: []
+  },
+  {
+    id: "PROYE_IPAL_PUSKESMAS_MAUK",
+    name: "Proyek IPAL Puskesmas Mauk",
+    location: "Tangerang",
+    startDate: "2026-07-15",
+    endDate: "2026-09-15",
+    status: "Completed",
+    priority: "Medium",
+    progress: 100,
+    contractValue: 14389500,
+    manager: "Jidan Ramadhan",
+    description: "Pekerjaan IPAL Puskesmas Mauk.",
+    tasks: []
+  },
+  {
+    id: "PROYEK_STP_PT_CAKRAWALA_BUANA_",
+    name: "Proyek STP Gorontalo PT Cakrawala Buana",
+    location: "Gorontalo",
+    startDate: "2026-08-01",
+    endDate: "2026-10-31",
+    status: "In Progress",
+    priority: "Medium",
+    progress: 40,
+    contractValue: 118053000,
+    manager: "Faisal Mustopa",
+    description: "Proyek STP PT Cakrawala Buana Gorontalo.",
+    tasks: []
+  },
+  {
+    id: "PENGADAAN_PANEL_TANK_KAPASITAS",
+    name: "Pengadaan Panel Tank Hayati",
+    location: "Jakarta",
+    startDate: "2026-07-20",
+    endDate: "2026-08-31",
+    status: "Completed",
+    priority: "Medium",
+    progress: 100,
+    contractValue: 35000000,
+    manager: "Faisal Mustopa",
+    description: "Pengadaan Panel Tank Kapasitas Hayati.",
+    tasks: []
+  },
+  {
+    id: "PENGADAAN_TANGKI_STP_10_M3",
+    name: "Pengadaan Tangki STP 10 M3",
+    location: "Jakarta",
+    startDate: "2026-08-05",
+    endDate: "2026-09-15",
+    status: "Completed",
+    priority: "Medium",
+    progress: 100,
+    contractValue: 33300000,
+    manager: "Jidan Ramadhan",
+    description: "Pengadaan Tangki STP 10 M3.",
+    tasks: []
+  }
+];
+
   const [selectedReport, setSelectedReport] = useState<FieldReport | null>(
     null,
   );
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedStaff, setSelectedStaff] = useState<Employee | null>(null);
   const [reports, setReports] = useState<FieldReport[]>([]);
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[]>(defaultProjects);
   const [projectStatusFilter, setProjectStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [projectTypeFilter, setProjectTypeFilter] = useState<"ALL" | "PENGADAAN BARANG DAN JASA" | "PROJEK STP/IPAL">("ALL");
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -30512,6 +31016,20 @@ export default function App() {
       if (projectToManage?.id === projectId) {
         setProjectToManage(updatedProject);
       }
+
+      // Sync linked Piutang record amount & terms if exists
+      const targetDebt = debtRecords.find(d => 
+        (d.type === "PIUTANG" && d.projectId === projectId) ||
+        (d.type === "PIUTANG" && d.id === `PTG-PROJ-${projectId}`)
+      );
+      if (targetDebt) {
+        await dbService.updateDocument("debtRecords", targetDebt.id, {
+          amount: totalContract,
+          terms: updatedTerms
+        });
+        setDebtRecords(prev => prev.map(d => d.id === targetDebt.id ? { ...d, amount: totalContract, terms: updatedTerms } : d));
+      }
+
       setToastMessage("Nilai kontrak berhasil diperbarui");
       setShowToast(true);
     } catch (err) {
@@ -30562,6 +31080,20 @@ export default function App() {
       if (projectToManage?.id === projectId) {
         setProjectToManage(updatedProject);
       }
+
+      // Sync linked Piutang record amount & terms if exists
+      const targetDebt = debtRecords.find(d => 
+        (d.type === "PIUTANG" && d.projectId === projectId) ||
+        (d.type === "PIUTANG" && d.id === `PTG-PROJ-${projectId}`)
+      );
+      if (targetDebt) {
+        await dbService.updateDocument("debtRecords", targetDebt.id, {
+          amount: totalContract,
+          terms: updatedTerms
+        });
+        setDebtRecords(prev => prev.map(d => d.id === targetDebt.id ? { ...d, amount: totalContract, terms: updatedTerms } : d));
+      }
+
       setToastMessage(`Status PPN proyek berhasil diubah menjadi: ${hasPpn ? "AKTIF (11%)" : "NON-AKTIF (0%)"}`);
       setShowToast(true);
     } catch (err) {
@@ -33575,7 +34107,7 @@ export default function App() {
     const unsubscribeProjects = dbService.onCollectionSnapshot<Project>(
       "projects",
       (data) => {
-        setProjects(data);
+        setProjects(data && data.length > 0 ? data : defaultProjects);
       },
     );
 
@@ -33676,15 +34208,41 @@ export default function App() {
       (data) => {
         const seen = new Set<string>();
         const deduped: FinancialRecord[] = [];
+
+        // 1. Data keuangan resmi sampai akhir September 2026 (580 transaksi orisinal)
+        (seedFinancialRecords || []).forEach((seed) => {
+          const key = (seed.customId || seed.id || "").trim().toUpperCase();
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            const fromDb = (data || []).find((item) => (item.customId || item.id || "").trim().toUpperCase() === key);
+            const enriched: FinancialRecord = fromDb ? {
+              ...seed,
+              ...fromDb,
+              description: seed.description || fromDb.description || "",
+              referenceId: seed.referenceId || fromDb.referenceId || seed.projectId || fromDb.projectId || "",
+              projectId: seed.projectId || seed.referenceId || fromDb.projectId || fromDb.referenceId || "",
+              category: seed.category || fromDb.category || "OPERASIONAL",
+              sumberDana: seed.sumberDana || fromDb.sumberDana || "REKENING PT",
+              paymentMethod: seed.paymentMethod || fromDb.paymentMethod || "TRANSFER",
+              personalHolder: seed.personalHolder || fromDb.personalHolder || "",
+              penerimaKasbon: seed.penerimaKasbon || fromDb.penerimaKasbon || "",
+              refIdBank: seed.refIdBank || fromDb.refIdBank || "",
+              refHutang: seed.refHutang || fromDb.refHutang || "",
+            } as FinancialRecord : (seed as FinancialRecord);
+            deduped.push(enriched);
+          }
+        });
+
+        // 2. Data tambahan dari database (transaksi baru yang dibuat oleh user)
         (data || []).forEach((item) => {
+          if (item.customId && item.customId.startsWith("INC-060826-") && item.customId !== "INC-060826-001") return;
           const key = (item.customId || item.id || "").trim().toUpperCase();
           if (key && !seen.has(key)) {
             seen.add(key);
             deduped.push(item);
-          } else if (!key) {
-            deduped.push(item);
           }
         });
+
         setFinancialRecords(deduped);
         setIsFinanceLoaded(true);
       },
@@ -33696,15 +34254,28 @@ export default function App() {
       (data) => {
         const seen = new Set<string>();
         const deduped: DebtRecord[] = [];
+
+        // 1. Data resmi hutang dan piutang akhir Juli dari berkas ZIP (24 catatan)
+        (seedDebtRecords || []).forEach((seed) => {
+          const key = (seed.customId || seed.id || "").trim().toUpperCase();
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            const fromDb = (data || []).find((item) => (item.customId || item.id || "").trim().toUpperCase() === key);
+            deduped.push((fromDb ? { ...seed, ...fromDb } : seed) as DebtRecord);
+          }
+        });
+
+        // 2. Data tambahan dari database: hutang dana pribadi baru yang berasal dari transaksi keuangan (originFinancialRecordId)
         (data || []).forEach((item) => {
           const key = (item.customId || item.id || "").trim().toUpperCase();
           if (key && !seen.has(key)) {
-            seen.add(key);
-            deduped.push(item);
-          } else if (!key) {
-            deduped.push(item);
+            if (item.originFinancialRecordId || (item.type === "HUTANG" && item.title?.startsWith("[DANA PRIBADI]")) || (item.type === "HUTANG" && item.title?.startsWith("[TALANGAN PRIBADI]"))) {
+              seen.add(key);
+              deduped.push(item);
+            }
           }
         });
+
         setDebtRecords(deduped);
       },
       [orderBy("timestamp", "desc")],
@@ -33892,7 +34463,8 @@ export default function App() {
               ],
             },
           ];
-          defaultRoles.forEach((r) => dbService.createDocument("roles", r));
+          setRoles(defaultRoles as any);
+          return;
         }
         setRoles(data);
       },
@@ -33929,110 +34501,27 @@ export default function App() {
     };
   }, [currentUser]);
 
-  // Auto-seed PDF data (financial records and debt records) if any are missing
+  // Auto-seed PDF data (financial records and debt records) - handled in-memory to prevent quota exhaustion
   useEffect(() => {
-    if (currentUser && isFinanceLoaded && !hasAutoSeeded) {
-      const missingFinancials = seedFinancialRecords.filter(
-        (seed) => seed.customId && !financialRecords.some((r) => r.customId === seed.customId)
-      );
-      const missingDebts = seedDebtRecords.filter(
-        (seed) => seed.customId && !debtRecords.some((r) => r.customId === seed.customId)
-      );
-      const debtsToUpdate = seedDebtRecords.filter((seed) => {
-        if (!seed.customId) return false;
-        const existing = debtRecords.find((r) => r.customId === seed.customId || r.id === seed.customId);
-        if (!existing) return false;
-        const seedTotalPaid = (seed.payments || []).reduce((sum, p) => sum + (p.amount || 0), 0);
-        const existTotalPaid = (existing.payments || []).reduce((sum, p) => sum + (p.amount || 0), 0);
-        return seedTotalPaid !== existTotalPaid || seed.status !== existing.status || seed.amount !== existing.amount || (seed.contactName && seed.contactName !== existing.contactName);
-      });
-
-      if (missingFinancials.length > 0 || missingDebts.length > 0 || debtsToUpdate.length > 0) {
-        setHasAutoSeeded(true);
-        const autoSeedPDFData = async () => {
-          try {
-            console.log(`Auto-seeding / syncing PDF data: ${missingFinancials.length} financials, ${missingDebts.length} debts, ${debtsToUpdate.length} debt updates...`);
-            for (const item of missingFinancials) {
-              const id = item.customId || `INC_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-              await dbService.setDocument("financialRecords", id, {
-                id,
-                ...item,
-                recordedBy: currentUser?.name || "admin"
-              });
-            }
-            for (const item of missingDebts) {
-              const id = item.customId || `DEBT_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
-              await dbService.setDocument("debtRecords", id, {
-                id,
-                ...item,
-                recordedBy: currentUser?.name || "admin"
-              });
-            }
-            for (const item of debtsToUpdate) {
-              const id = item.customId || item.id;
-              await dbService.setDocument("debtRecords", id, {
-                ...item,
-                recordedBy: currentUser?.name || "admin"
-              });
-            }
-            if (debtsToUpdate.length > 0) {
-              setDebtRecords((prev) =>
-                prev.map((d) => {
-                  const matched = debtsToUpdate.find((s) => s.customId === d.customId || s.id === d.id);
-                  if (matched) {
-                    return {
-                      ...d,
-                      ...matched,
-                      contactName: matched.contactName || d.contactName,
-                      amount: matched.amount !== undefined ? matched.amount : d.amount,
-                      payments: matched.payments,
-                      status: matched.status,
-                    };
-                  }
-                  return d;
-                })
-              );
-            }
-            await logActivity(
-              "Auto Seed PDF Data",
-              "Sistem",
-              `Berhasil memperbarui ${missingFinancials.length} data keuangan dan ${missingDebts.length + debtsToUpdate.length} data hutang.`
-            );
-          } catch (err) {
-            console.error("Failed to auto-seed PDF data:", err);
-          }
-        };
-        autoSeedPDFData();
-      }
+    if (!hasAutoSeeded) {
+      setHasAutoSeeded(true);
     }
-  }, [currentUser, isFinanceLoaded, financialRecords, debtRecords, hasAutoSeeded]);
-
-  // Auto-correct specific bank reference ID for PRS-100726-001 in Firestore if mismatched
-  useEffect(() => {
-    if (currentUser && isFinanceLoaded && financialRecords.length > 0) {
-      const prsRecord = financialRecords.find((r) => r.customId === "PRS-100726-001");
-      if (prsRecord && prsRecord.refIdBank !== "BNK-080726-002") {
-        console.log("Auto-correcting PRS-100726-001 bank reference ID to BNK-080726-002 in Firestore...");
-        const docId = prsRecord.id || "PRS-100726-001";
-        dbService.updateDocument("financialRecords", docId, {
-          refIdBank: "BNK-080726-002"
-        }).then(() => {
-          console.log(`Successfully updated PRS-100726-001 (document ID: ${docId}) bankRef to BNK-080726-002`);
-        }).catch((err) => {
-          console.error(`Failed to auto-correct PRS-100726-001 (document ID: ${docId}):`, err);
-        });
-      }
-    }
-  }, [currentUser, isFinanceLoaded, financialRecords]);
+  }, [hasAutoSeeded]);
 
   // Kasbon is strictly managed inside the dedicated "Kasbon Pegawai" menu and excluded from Hutang/Piutang
   useEffect(() => {
     // No-op: Kasbon records are managed independently in AdminKasbonScreen
   }, []);
 
+  const hasRunAutoCleanDebtRef = useRef(false);
+  const hasRunAutoLinkProjectsRef = useRef(false);
+  const hasRunSanitizeSumpitRef = useRef(false);
+  const hasRunAutoHealRef = useRef(false);
+
   // Auto-clean mistakenly created debt record HTG-260814-001 (215.000 dining expense) and false payment on Muhammad Yasin's debt
   useEffect(() => {
-    if (currentUser && isFinanceLoaded && debtRecords.length > 0) {
+    if (currentUser && isFinanceLoaded && debtRecords.length > 0 && !hasRunAutoCleanDebtRef.current) {
+      hasRunAutoCleanDebtRef.current = true;
       // 1. Delete mistakenly created debt record HTG-260814-001 or any dining expense saved as debt
       const invalidDebts = debtRecords.filter((r) => {
         const rTitle = (r.title || "").toLowerCase();
@@ -34048,15 +34537,7 @@ export default function App() {
       });
 
       if (invalidDebts.length > 0) {
-        invalidDebts.forEach(async (inv) => {
-          console.log(`Auto-deleting erroneous debt record ${inv.id} [${inv.customId}]...`);
-          try {
-            await dbService.deleteDocument("debtRecords", inv.id);
-            setDebtRecords((prev) => prev.filter((d) => d.id !== inv.id));
-          } catch (e) {
-            console.error("Failed to delete invalid debt record:", e);
-          }
-        });
+        setDebtRecords((prev) => prev.filter((d) => !invalidDebts.some((inv) => inv.id === d.id)));
       }
 
       // 2. Clean false payment of 215.000 from Muhammad Yasin's debt (HTG-260813-001 or any debt record)
@@ -34074,38 +34555,27 @@ export default function App() {
       });
 
       if (debtsWithFalsePayment.length > 0) {
-        debtsWithFalsePayment.forEach(async (targetDebt) => {
-          const cleanedPayments = (targetDebt.payments || []).filter(
-            (p) =>
-              !(
-                p.amount === 215000 &&
-                ((p.note || "").toLowerCase().includes("makan") ||
-                  (p.note || "").toLowerCase().includes("minum") ||
-                  (p.note || "").toLowerCase().includes("jamu") ||
-                  (p.note || "").toLowerCase().includes("belanja") ||
-                  p.date === "2026-08-14" ||
-                  (targetDebt.customId || "").toUpperCase() === "HTG-260813-001")
-              )
-          );
-          const totalPaid = cleanedPayments.reduce((sum, p) => sum + p.amount, 0);
-          const newStatus = totalPaid >= targetDebt.amount ? "PAID" : totalPaid > 0 ? "PARTIAL" : "UNPAID";
-          console.log(`Auto-repairing debt ${targetDebt.id} [${targetDebt.customId}]: resetting false 215.000 payment...`);
-          try {
-            await dbService.updateDocument("debtRecords", targetDebt.id, {
-              payments: cleanedPayments,
-              status: newStatus,
-            });
-            setDebtRecords((prev) =>
-              prev.map((d) =>
-                d.id === targetDebt.id
-                  ? { ...d, payments: cleanedPayments, status: newStatus }
-                  : d
-              )
+        setDebtRecords((prev) =>
+          prev.map((d) => {
+            const isTarget = debtsWithFalsePayment.some((t) => t.id === d.id);
+            if (!isTarget) return d;
+            const cleanedPayments = (d.payments || []).filter(
+              (p) =>
+                !(
+                  p.amount === 215000 &&
+                  ((p.note || "").toLowerCase().includes("makan") ||
+                    (p.note || "").toLowerCase().includes("minum") ||
+                    (p.note || "").toLowerCase().includes("jamu") ||
+                    (p.note || "").toLowerCase().includes("belanja") ||
+                    p.date === "2026-08-14" ||
+                    (d.customId || "").toUpperCase() === "HTG-260813-001")
+                )
             );
-          } catch (e) {
-            console.error("Failed to repair debt payments:", e);
-          }
-        });
+            const totalPaid = cleanedPayments.reduce((sum, p) => sum + p.amount, 0);
+            const newStatus = totalPaid >= d.amount ? "PAID" : totalPaid > 0 ? "PARTIAL" : "UNPAID";
+            return { ...d, payments: cleanedPayments, status: newStatus };
+          })
+        );
       }
     }
   }, [currentUser, isFinanceLoaded, debtRecords]);
@@ -34113,7 +34583,7 @@ export default function App() {
   // Unlink any false debt link on 215.000 dining financial record
   useEffect(() => {
     if (currentUser && isFinanceLoaded && financialRecords.length > 0) {
-      const falseLinkedFin = financialRecords.filter(
+      const hasFalseLinked = financialRecords.some(
         (f) =>
           f.amount === 215000 &&
           (f.linkedDebtId || f.refHutang) &&
@@ -34122,29 +34592,27 @@ export default function App() {
             (f.description || "").toLowerCase().includes("jamu") ||
             (f.description || "").toLowerCase().includes("belanja"))
       );
-      if (falseLinkedFin.length > 0) {
-        falseLinkedFin.forEach(async (f) => {
-          try {
-            await dbService.updateDocument("financialRecords", f.id, {
-              linkedDebtId: "",
-              refHutang: "",
-            });
-            setFinancialRecords((prev) =>
-              prev.map((item) =>
-                item.id === f.id ? { ...item, linkedDebtId: "", refHutang: "" } : item
-              )
-            );
-          } catch (e) {
-            console.error("Failed to unhook false debt link on financial record:", e);
-          }
-        });
+      if (hasFalseLinked) {
+        setFinancialRecords((prev) =>
+          prev.map((item) =>
+            item.amount === 215000 &&
+            (item.linkedDebtId || item.refHutang) &&
+            ((item.description || "").toLowerCase().includes("makan") ||
+              (item.description || "").toLowerCase().includes("minum") ||
+              (item.description || "").toLowerCase().includes("jamu") ||
+              (item.description || "").toLowerCase().includes("belanja"))
+              ? { ...item, linkedDebtId: "", refHutang: "" }
+              : item
+          )
+        );
       }
     }
   }, [currentUser, isFinanceLoaded, financialRecords]);
 
-  // Auto-sync projects to debtRecords so every project automatically appears under Piutang in Menu Hutang Piutang
+  // Auto-sync projects to debtRecords in memory so every project automatically appears under Piutang in Menu Hutang Piutang
   useEffect(() => {
-    if (currentUser && isFinanceLoaded && projects.length > 0) {
+    if (currentUser && isFinanceLoaded && projects.length > 0 && !hasRunAutoLinkProjectsRef.current) {
+      hasRunAutoLinkProjectsRef.current = true;
       const unlinkedProjects = projects.filter((p) => {
         const pNameLower = (p.name || "").toLowerCase().trim();
         if (!pNameLower) return false;
@@ -34153,8 +34621,7 @@ export default function App() {
       });
 
       if (unlinkedProjects.length > 0) {
-        console.log(`Auto-linking ${unlinkedProjects.length} projects to Piutang debtRecords...`);
-        unlinkedProjects.forEach(async (p) => {
+        const newDebts: DebtRecord[] = unlinkedProjects.map((p) => {
           const isPpnEnabled = p.hasPpn !== false;
           const dpp = p.contractValue || 0;
           const totalWithPpn = isPpnEnabled ? Math.round(dpp * 1.11) : dpp;
@@ -34205,7 +34672,7 @@ export default function App() {
               }))
             : [];
 
-          const newDebt: DebtRecord = {
+          return {
             id: newDebtId,
             customId: customId,
             projectId: p.id,
@@ -34225,34 +34692,30 @@ export default function App() {
             terms: initialTerms,
             payments: [],
           };
-
-          try {
-            await dbService.setDocument("debtRecords", newDebtId, newDebt);
-            console.log(`Successfully auto-linked project ${p.name} [${newDebtId}] to debtRecords`);
-          } catch (err) {
-            console.error(`Failed to auto-link project ${p.name}:`, err);
-          }
         });
+
+        setDebtRecords((prev) => [...newDebts, ...prev]);
       }
     }
   }, [currentUser, isFinanceLoaded, projects, debtRecords]);
 
-  // Sanitization for Proyek Bak Sumpit: ensure it is strictly 50% DP and 50% Pelunasan, unhook any erroneous 3rd termin or wrong links
+  // Sanitization for Proyek Bak Sumpit: ensure it is strictly 50% DP and 50% Pelunasan in local state
   useEffect(() => {
-    if (!currentUser || !isFinanceLoaded) return;
+    if (!currentUser || !isFinanceLoaded || hasRunSanitizeSumpitRef.current) return;
+    hasRunSanitizeSumpitRef.current = true;
 
-    // 1. Sanitize projects with "sumpit"
-    projects.forEach(async (p) => {
-      const pNameLower = (p.name || "").toLowerCase();
-      if (pNameLower.includes("sumpit")) {
+    // 1. Sanitize projects with "sumpit" in memory
+    setProjects((prev) =>
+      prev.map((p) => {
+        if (!p.name?.toLowerCase().includes("sumpit")) return p;
         const terms = p.paymentTerms || [];
         const hasExtraTerms = terms.length > 2 || terms.some((t: any) => (t.name || "").toLowerCase().includes("termin 3") || (t.name || "").toLowerCase().includes("termin 4"));
-
-        if (hasExtraTerms) {
-          console.log(`Sanitizing Bak Sumpit project paymentTerms: resetting to strict 50% DP and 50% Pelunasan`);
-          const contractVal = p.contractValue || 0;
-          const half = Math.round(contractVal * 0.5);
-          const sanitizedTerms = [
+        if (!hasExtraTerms) return p;
+        const contractVal = p.contractValue || 0;
+        const half = Math.round(contractVal * 0.5);
+        return {
+          ...p,
+          paymentTerms: [
             {
               id: terms[0]?.id || `TRM-SUMPIT-1`,
               name: "Termin 1 (DP 50%)",
@@ -34277,107 +34740,38 @@ export default function App() {
               status: terms[1]?.status || "BELUM LUNAS",
               notes: "Pelunasan 50%"
             }
-          ];
+          ]
+        };
+      })
+    );
+  }, [currentUser, isFinanceLoaded]);
 
-          try {
-            await dbService.updateDocument("projects", p.id, { paymentTerms: sanitizedTerms });
-            setProjects(prev => prev.map(proj => proj.id === p.id ? { ...proj, paymentTerms: sanitizedTerms } : proj));
-          } catch (e) {
-            console.error("Failed to sanitize project payment terms:", e);
-          }
-        }
-      }
-    });
-
-    // 2. Sanitize debtRecords with "sumpit"
-    debtRecords.forEach(async (d) => {
-      const dTitleLower = (d.title || "").toLowerCase();
-      const dDescLower = (d.description || "").toLowerCase();
-      if (dTitleLower.includes("sumpit") || dDescLower.includes("sumpit")) {
-        const terms = d.terms || [];
-        const hasExtraTerms = terms.length > 2 || terms.some((t: any) => (t.name || "").toLowerCase().includes("termin 3") || (t.name || "").toLowerCase().includes("termin 4"));
-        const hasInvalidPayments = (d.payments || []).some((pm: any) => (pm.note || "").toLowerCase().includes("termin 3") || (pm.note || "").toLowerCase().includes("termin 4"));
-
-        if (hasExtraTerms || hasInvalidPayments) {
-          console.log(`Sanitizing Bak Sumpit debtRecord: resetting to strict 50% DP and 50% Pelunasan`);
-          const contractVal = d.amount || 0;
-          const half = Math.round(contractVal * 0.5);
-          const sanitizedTerms = [
-            {
-              name: "Termin 1 (DP 50%)",
-              description: "Down Payment 50%",
-              amount: half,
-              expectedAmount: half,
-              percentage: 50,
-              invoiceDate: terms[0]?.invoiceDate || "-",
-              dueDate: terms[0]?.dueDate || "-",
-              paymentDate: terms[0]?.paymentDate || "-",
-              status: terms[0]?.status || "BELUM BAYAR",
-              notes: "DP 50%"
-            },
-            {
-              name: "Termin 2 (Pelunasan 50%)",
-              description: "Pelunasan 50%",
-              amount: contractVal - half,
-              expectedAmount: contractVal - half,
-              percentage: 50,
-              invoiceDate: terms[1]?.invoiceDate || "-",
-              dueDate: terms[1]?.dueDate || "-",
-              paymentDate: terms[1]?.paymentDate || "-",
-              status: terms[1]?.status || "BELUM BAYAR",
-              notes: "Pelunasan 50%"
-            }
-          ];
-          const sanitizedPayments = (d.payments || []).filter((pm: any) => {
-            const nLower = (pm.note || "").toLowerCase();
-            return !nLower.includes("termin 3") && !nLower.includes("termin 4");
-          });
-
-          try {
-            await dbService.updateDocument("debtRecords", d.id, { 
-              terms: sanitizedTerms,
-              payments: sanitizedPayments
-            });
-            setDebtRecords(prev => prev.map(rec => rec.id === d.id ? { ...rec, terms: sanitizedTerms, payments: sanitizedPayments } : rec));
-          } catch (e) {
-            console.error("Failed to sanitize debtRecord:", e);
-          }
-        }
-      }
-    });
-  }, [currentUser, isFinanceLoaded, projects, debtRecords]);
-
-  // Auto-heal financial records project associations (e.g., BNK-040926-001 or any record where referenceId and projectId conflict)
+  // Auto-heal financial records project associations in memory
   useEffect(() => {
-    if (!currentUser || !isFinanceLoaded || financialRecords.length === 0 || projects.length === 0) return;
+    if (!currentUser || !isFinanceLoaded || financialRecords.length === 0 || projects.length === 0 || hasRunAutoHealRef.current) return;
+    hasRunAutoHealRef.current = true;
 
-    const misaligned = financialRecords.filter((r) => {
-      const refId = (r.referenceId || "").trim();
-      const projId = (r.projectId || "").trim();
-      if (!refId && !projId) return false;
-      const refIsProject = projects.some((p) => p.id === refId);
-      const projIsProject = projects.some((p) => p.id === projId);
-
-      return refIsProject && projIsProject && refId !== projId;
-    });
-
-    if (misaligned.length > 0) {
-      misaligned.forEach(async (rec) => {
+    setFinancialRecords((prev) =>
+      prev.map((rec) => {
         const canonicalProjId = getFinancialRecordProjectId(rec, projects);
         if (canonicalProjId && (rec.projectId !== canonicalProjId || rec.referenceId !== canonicalProjId)) {
-          try {
-            await dbService.updateDocument("financialRecords", rec.id, {
-              projectId: canonicalProjId,
-              referenceId: canonicalProjId,
-            });
-            console.log(`[Auto-heal] Synchronized project for ${rec.customId || rec.id} to ${canonicalProjId}`);
-          } catch (e) {
-            console.error("Auto-heal sync failed for record", rec.id, e);
-          }
+          return {
+            ...rec,
+            projectId: canonicalProjId,
+            referenceId: canonicalProjId,
+          };
         }
-      });
+        return rec;
+      })
+    );
+  }, [currentUser, isFinanceLoaded, projects]);
+
+  // Automated Daily Backup: securely snapshots financialRecords, debtRecords, and projects once per day
+  useEffect(() => {
+    if (isFinanceLoaded && financialRecords.length > 0 && debtRecords.length > 0) {
+      autoBackupService.performDailyBackup(financialRecords, debtRecords, projects);
     }
-  }, [currentUser, isFinanceLoaded, financialRecords, projects]);
+  }, [isFinanceLoaded, financialRecords, debtRecords, projects]);
 
   // Sync today's attendance status
   useEffect(() => {
@@ -36166,7 +36560,15 @@ export default function App() {
     );
 
     // Real-time financial calculations
-    const currentContractValue = projectToManage.contractValue || 0;
+    const isPpnActive = projectToManage.hasPpn !== false;
+    const baseContractValue = projectToManage.contractValue || 0; // DPP / Nilai Sebelum PPN (HPP)
+    const ppnAmount = isPpnActive ? Math.round(baseContractValue * 0.11) : 0;
+    const contractValueWithPpn = baseContractValue + ppnAmount;
+
+    // Nilai Kontrak untuk Rencana Budget & Keuangan:
+    // Jika PPN diceklis: nilai kontrak yang sudah dihitung PPN (contractValueWithPpn)
+    // Jika tidak diceklis: hanya nilai HPP saja (baseContractValue)
+    const currentContractValue = isPpnActive ? contractValueWithPpn : baseContractValue;
     const currentOperationalCost = projectToManage.operationalCost || 0;
     const supplierHutangCost = debtRecords
       .filter((r) => r.type === "HUTANG" && r.projectId === projectToManage.id)
@@ -36627,8 +37029,8 @@ export default function App() {
                             contractNo: e.target.value
                           });
                         }}
-                        disabled={currentUser?.role !== "admin"}
-                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none disabled:opacity-75"
+                        disabled={currentUser?.role !== "admin" && currentUser?.role !== "owner" && currentUser?.role !== "direktur"}
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none disabled:opacity-75 focus:ring-2 focus:ring-primary/20"
                         placeholder="Contoh: 001/SPK/2026"
                       />
                     </div>
@@ -36647,8 +37049,8 @@ export default function App() {
                             client: e.target.value
                           });
                         }}
-                        disabled={currentUser?.role !== "admin"}
-                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none disabled:opacity-75"
+                        disabled={currentUser?.role !== "admin" && currentUser?.role !== "owner" && currentUser?.role !== "direktur"}
+                        className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none disabled:opacity-75 focus:ring-2 focus:ring-primary/20"
                         placeholder="Contoh: PT. DW Technic"
                       />
                     </div>
@@ -36659,14 +37061,19 @@ export default function App() {
                     </label>
                     <input
                       type="number"
-                      defaultValue={projectToManage.contractValue || 0}
+                      value={projectToManage.contractValue === undefined || projectToManage.contractValue === null ? "" : projectToManage.contractValue}
+                      onChange={(e) => {
+                        const val = e.target.value === "" ? 0 : Number(e.target.value);
+                        setProjectToManage((prev) => (prev ? { ...prev, contractValue: val } : null));
+                      }}
                       onBlur={(e) => {
+                        const val = e.target.value === "" ? 0 : Number(e.target.value);
                         handleUpdateProjectContractInfo(projectToManage.id, {
-                          contractValue: Number(e.target.value)
+                          contractValue: val
                         });
                       }}
-                      disabled={currentUser?.role !== "admin"}
-                      className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-primary outline-none disabled:opacity-75"
+                      disabled={currentUser?.role !== "admin" && currentUser?.role !== "owner" && currentUser?.role !== "direktur"}
+                      className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-black text-primary outline-none disabled:opacity-75 focus:ring-2 focus:ring-primary/20"
                       placeholder="0"
                     />
                   </div>
@@ -38800,7 +39207,7 @@ export default function App() {
                     doc.setFont("helvetica", "normal");
                     doc.setFontSize(6.5);
                     doc.setTextColor(148, 163, 184);
-                    doc.text(projectToManage.hasPpn !== false ? "Termasuk PPN 11%" : "Non-PPN", 17, currentY + 18.5);
+                    doc.text(isPpnActive ? "Termasuk PPN 11%" : "Non-PPN (HPP Saja)", 17, currentY + 18.5);
 
                     // 2. Total Pemasukan
                     const c2X = 14 + cardW + cardGap;
@@ -38866,7 +39273,7 @@ export default function App() {
 
                     const budgetRows = [
                       [
-                        "Nilai Kontrak Proyek (SPK)",
+                        isPpnActive ? "Nilai Kontrak Proyek (Inc. PPN 11%)" : "Nilai Kontrak Proyek (HPP / Non-PPN)",
                         `Rp ${currentContractValue.toLocaleString("id-ID")}`,
                         `Rp ${actualIncome.toLocaleString("id-ID")}`,
                         `Rp ${Math.max(0, currentContractValue - actualIncome).toLocaleString("id-ID")}`,
@@ -39085,7 +39492,7 @@ export default function App() {
                     csvRows.push(`"Tanggal Cetak:","${new Date().toLocaleDateString("id-ID")}"`);
                     csvRows.push("");
                     csvRows.push(`"RINGKASAN EKSEKUTIF KEUANGAN"`);
-                    csvRows.push(`"Nilai Kontrak (SPK)","Rp ${currentContractValue.toLocaleString("id-ID")}"`);
+                    csvRows.push(`"Nilai Kontrak (SPK)","Rp ${currentContractValue.toLocaleString("id-ID")}${isPpnActive ? " (Inc. PPN 11%)" : " (HPP / Non-PPN)"}"`);
                     csvRows.push(`"Realisasi Pemasukan (IN)","Rp ${actualIncome.toLocaleString("id-ID")}"`);
                     csvRows.push(`"Realisasi Pengeluaran (OUT)","Rp ${actualExpense.toLocaleString("id-ID")}"`);
                     csvRows.push(`"Keuntungan Kas Berjalan (Net Margin)","Rp ${actualNetMargin.toLocaleString("id-ID")}"`);
@@ -39120,7 +39527,7 @@ export default function App() {
                 return (
                   <>
                     {/* Financial input editor */}
-                    {currentUser?.role === "admin" && (
+                    {(currentUser?.role === "admin" || currentUser?.role === "owner" || currentUser?.role === "direktur") && (
                       <div className="p-6 bg-slate-50 rounded-[32px] border border-slate-100 max-w-2xl space-y-4">
                         <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest pl-1">
                           Perbarui Nilai Kontrak & Anggaran Finansial
@@ -39128,18 +39535,29 @@ export default function App() {
                         <div className="grid grid-cols-2 gap-4">
                           <div className="space-y-1.5">
                             <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider block">
-                              Nilai Kontrak Project (Rupiah):
+                              Nilai Kontrak Project (HPP / Sebelum PPN):
                             </label>
                             <input
                               type="number"
                               placeholder="Contoh: 200000000"
-                              value={projectToManage.contractValue || ""}
-                              onChange={(e) => handleUpdateProjectContractValue(projectToManage.id, Number(e.target.value))}
-                              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-black outline-none"
+                              value={projectToManage.contractValue === undefined || projectToManage.contractValue === null ? "" : projectToManage.contractValue}
+                              onChange={(e) => {
+                                const val = e.target.value === "" ? 0 : Number(e.target.value);
+                                setProjectToManage((prev) => (prev ? { ...prev, contractValue: val } : null));
+                              }}
+                              onBlur={(e) => {
+                                const val = e.target.value === "" ? 0 : Number(e.target.value);
+                                handleUpdateProjectContractValue(projectToManage.id, val);
+                              }}
+                              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-primary/20"
                             />
-                            {projectToManage.hasPpn !== false && (
+                            {isPpnActive ? (
                               <p className="text-[10px] font-bold text-emerald-600 mt-1 pl-1 bg-emerald-50 py-1 px-2.5 rounded-lg border border-emerald-100">
-                                Setelah PPN (11%): Rp {(currentContractValue * 1.11).toLocaleString("id-ID")}
+                                Setelah PPN (11%): Rp {currentContractValue.toLocaleString("id-ID")} (Termasuk PPN)
+                              </p>
+                            ) : (
+                              <p className="text-[10px] font-bold text-slate-500 mt-1 pl-1 bg-slate-100 py-1 px-2.5 rounded-lg border border-slate-200">
+                                Non-PPN (HPP Saja): Rp {baseContractValue.toLocaleString("id-ID")}
                               </p>
                             )}
                           </div>
@@ -39150,9 +39568,16 @@ export default function App() {
                             <input
                               type="number"
                               placeholder="Contoh: 50000000"
-                              value={projectToManage.operationalCost || ""}
-                              onChange={(e) => handleUpdateProjectOperationalCost(projectToManage.id, Number(e.target.value))}
-                              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-black outline-none"
+                              value={projectToManage.operationalCost === undefined || projectToManage.operationalCost === null ? "" : projectToManage.operationalCost}
+                              onChange={(e) => {
+                                const val = e.target.value === "" ? 0 : Number(e.target.value);
+                                setProjectToManage((prev) => (prev ? { ...prev, operationalCost: val } : null));
+                              }}
+                              onBlur={(e) => {
+                                const val = e.target.value === "" ? 0 : Number(e.target.value);
+                                handleUpdateProjectOperationalCost(projectToManage.id, val);
+                              }}
+                              className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-black outline-none focus:ring-2 focus:ring-primary/20"
                             />
                           </div>
                         </div>
@@ -39220,11 +39645,27 @@ export default function App() {
                           
                           <div className="grid grid-cols-2 gap-4">
                             <div>
-                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">NILAI KONTRAK (SPK)</p>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">NILAI KONTRAK (SPK)</p>
+                                {isPpnActive ? (
+                                  <span className="text-[8px] font-black bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded uppercase">Inc. PPN 11%</span>
+                                ) : (
+                                  <span className="text-[8px] font-black bg-slate-200 text-slate-600 px-1.5 py-0.5 rounded uppercase">HPP / Non-PPN</span>
+                                )}
+                              </div>
                               <p className="text-base font-black text-slate-800 mt-1">Rp {currentContractValue.toLocaleString("id-ID")}</p>
+                              {isPpnActive ? (
+                                <p className="text-[10px] font-semibold text-slate-500 mt-0.5">
+                                  HPP: Rp {baseContractValue.toLocaleString("id-ID")} • PPN: Rp {ppnAmount.toLocaleString("id-ID")}
+                                </p>
+                              ) : (
+                                <p className="text-[10px] font-semibold text-slate-400 mt-0.5">
+                                  Sesuai HPP Dasar Proyek
+                                </p>
+                              )}
                             </div>
                             <div>
-                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">RAB OPERASIONAL</p>
+                              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none">RAB OPERASIONAL (HPP BIAYA)</p>
                               <p className="text-base font-black text-slate-800 mt-1">Rp {currentOperationalCost.toLocaleString("id-ID")}</p>
                             </div>
                           </div>
@@ -39302,7 +39743,7 @@ export default function App() {
                           Rp {projectedProfitRealTime.toLocaleString("id-ID")}
                         </p>
                         <p className="text-[9px] font-semibold text-indigo-500 uppercase">
-                          Nilai SPK - Realisasi Biaya Lapangan
+                          {isPpnActive ? "Nilai Kontrak (Inc. PPN) - Realisasi Biaya" : "Nilai HPP (Non-PPN) - Realisasi Biaya"}
                         </p>
                       </div>
                     </div>

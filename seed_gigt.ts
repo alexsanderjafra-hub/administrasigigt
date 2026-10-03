@@ -2589,9 +2589,10 @@ async function run() {
   await wipeAndSeed();
 }
 
-run().then(() => {
-  process.exit(0);
-}).catch((err) => {
-  console.error("Critical seeding failure:", err);
-  process.exit(1);
-});
+// Auto-run disabled to prevent accidental wipes
+// run().then(() => {
+//   process.exit(0);
+// }).catch((err) => {
+//   console.error("Critical seeding failure:", err);
+//   process.exit(1);
+// });
