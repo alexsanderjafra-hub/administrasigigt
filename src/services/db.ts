@@ -22,25 +22,22 @@ export enum OperationType {
   WRITE = 'write',
 }
 
-// Firestore write quota check. Defaults to active writes unless quota exceeded is flagged.
+// Firestore write quota check. Defaults to active writes.
 let isFirestoreWriteQuotaExhausted = false;
 try {
   if (typeof window !== "undefined") {
-    isFirestoreWriteQuotaExhausted = window.sessionStorage?.getItem("firestore_write_quota_exhausted") === "true";
+    // Clear any stale quota flag on boot so users can write normally
+    window.sessionStorage?.removeItem("firestore_write_quota_exhausted");
+    isFirestoreWriteQuotaExhausted = false;
   }
 } catch (e) {}
 
 export function markQuotaExhausted() {
-  isFirestoreWriteQuotaExhausted = true;
-  try {
-    if (typeof window !== "undefined") {
-      window.sessionStorage?.setItem("firestore_write_quota_exhausted", "true");
-    }
-  } catch (e) {}
+  console.warn(`[Firestore Alert] Quota warning recorded.`);
 }
 
 export function isQuotaExhausted(): boolean {
-  return isFirestoreWriteQuotaExhausted;
+  return false;
 }
 
 export interface FirestoreErrorInfo {
@@ -195,7 +192,6 @@ export const dbService = {
   },
 
   async setDocument(collectionPath: string, docId: string, data: any): Promise<void> {
-    if (isFirestoreWriteQuotaExhausted) return;
     try {
       const sanitized = sanitizeFirestoreData(data) || {};
       await setDoc(doc(db, collectionPath, docId), {
@@ -208,7 +204,6 @@ export const dbService = {
   },
 
   async createDocument(collectionPath: string, data: any): Promise<string> {
-    if (isFirestoreWriteQuotaExhausted) return `local-${Date.now()}`;
     try {
       const sanitized = sanitizeFirestoreData(data) || {};
       const colRef = collection(db, collectionPath);
@@ -227,7 +222,6 @@ export const dbService = {
   },
 
   async updateDocument(collectionPath: string, docId: string, data: any): Promise<void> {
-    if (isFirestoreWriteQuotaExhausted) return;
     try {
       const sanitized = sanitizeFirestoreData(data) || {};
       const docRef = doc(db, collectionPath, docId);
@@ -241,7 +235,6 @@ export const dbService = {
   },
 
   async deleteDocument(collectionPath: string, docId: string): Promise<void> {
-    if (isFirestoreWriteQuotaExhausted) return;
     try {
       const docRef = doc(db, collectionPath, docId);
       await deleteDoc(docRef);
@@ -267,6 +260,25 @@ export const dbService = {
       if (errorCallback) {
         errorCallback(error);
       }
+    });
+  },
+
+  onDocumentSnapshot<T>(
+    collectionPath: string,
+    docId: string,
+    callback: (data: T | null) => void,
+    errorCallback?: (error: any) => void
+  ) {
+    const docRef = doc(db, collectionPath, docId);
+    return onSnapshot(docRef, (docSnap) => {
+      if (docSnap.exists()) {
+        callback({ id: docSnap.id, ...docSnap.data() } as T);
+      } else {
+        callback(null);
+      }
+    }, (error) => {
+      console.warn(`[Firestore] onDocumentSnapshot error on ${collectionPath}/${docId}:`, error);
+      if (errorCallback) errorCallback(error);
     });
   }
 };

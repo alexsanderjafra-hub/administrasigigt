@@ -61,61 +61,64 @@ export const autoBackupService = {
       return;
     }
 
+    const now = Date.now();
+    const dateStr = new Date().toISOString();
+    const todayStr = dateStr.split("T")[0];
+
+    // Guard: Don't let an empty array overwrite existing populated cache
+    let finalProjects = Array.isArray(projects) ? projects : [];
+    let finalDebts = Array.isArray(debtRecords) ? debtRecords : [];
+    let finalFin = Array.isArray(financialRecords) ? financialRecords : [];
+
+    try {
+      const existing = autoBackupService.getPersistentData();
+      if (finalProjects.length === 0 && existing && Array.isArray(existing.projects) && existing.projects.length > 0) {
+        finalProjects = existing.projects;
+      }
+      if (finalDebts.length === 0 && existing && Array.isArray(existing.debtRecords) && existing.debtRecords.length > 0) {
+        finalDebts = existing.debtRecords;
+      }
+      if (finalFin.length === 0 && existing && Array.isArray(existing.financialRecords) && existing.financialRecords.length > 0) {
+        finalFin = existing.financialRecords;
+      }
+    } catch (_) {}
+
+    // 1. Primary Persistent Cache in LocalStorage - WRITE SYNCHRONOUSLY & INSTANTLY
+    try {
+      const payload: PersistentDataPayload = {
+        financialRecords: finalFin,
+        debtRecords: finalDebts,
+        projects: finalProjects,
+        updatedAt: dateStr,
+        timestamp: now,
+        version: 2,
+      };
+
+      localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(payload));
+
+      // Dedicated per-entity fallback storage
+      if (finalProjects.length > 0) localStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(finalProjects));
+      if (finalDebts.length > 0) localStorage.setItem(DEBTS_CACHE_KEY, JSON.stringify(finalDebts));
+      if (finalFin.length > 0) localStorage.setItem(FINANCE_CACHE_KEY, JSON.stringify(finalFin));
+    } catch (lsErr) {
+      console.warn("[AutoBackup] Synchronous localStorage save warning:", lsErr);
+    }
+
     if (saveTimeout) {
       clearTimeout(saveTimeout);
     }
 
+    // 2. Debounced background updates for Rolling History and Cloud Master Snapshot
     saveTimeout = setTimeout(async () => {
       try {
-        const now = Date.now();
-        const dateStr = new Date().toISOString();
-        const todayStr = dateStr.split("T")[0];
-
-        // Guard: Don't let an empty array overwrite existing populated cache
-        let finalProjects = Array.isArray(projects) ? projects : [];
-        let finalDebts = Array.isArray(debtRecords) ? debtRecords : [];
-        let finalFin = Array.isArray(financialRecords) ? financialRecords : [];
-
-        try {
-          const existing = autoBackupService.getPersistentData();
-          if (finalProjects.length === 0 && existing && Array.isArray(existing.projects) && existing.projects.length > 0) {
-            finalProjects = existing.projects;
-          }
-          if (finalDebts.length === 0 && existing && Array.isArray(existing.debtRecords) && existing.debtRecords.length > 0) {
-            finalDebts = existing.debtRecords;
-          }
-          if (finalFin.length === 0 && existing && Array.isArray(existing.financialRecords) && existing.financialRecords.length > 0) {
-            finalFin = existing.financialRecords;
-          }
-        } catch (_) {}
-
-        // 1. Primary Persistent Cache in LocalStorage
-        const payload: PersistentDataPayload = {
-          financialRecords: finalFin,
-          debtRecords: finalDebts,
-          projects: finalProjects,
-          updatedAt: dateStr,
-          timestamp: now,
-          version: 2,
-        };
-
-        localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(payload));
-
-        // Dedicated per-entity fallback storage
-        try {
-          if (finalProjects.length > 0) localStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(finalProjects));
-          if (finalDebts.length > 0) localStorage.setItem(DEBTS_CACHE_KEY, JSON.stringify(finalDebts));
-          if (finalFin.length > 0) localStorage.setItem(FINANCE_CACHE_KEY, JSON.stringify(finalFin));
-        } catch (_) {}
-
-        // 2. Rolling History of Snapshots in LocalStorage
+        // Rolling History of Snapshots in LocalStorage
         try {
           const rawHistory = localStorage.getItem(BACKUP_HISTORY_KEY);
           let history: SystemBackup[] = rawHistory ? JSON.parse(rawHistory) : [];
 
-          // Only add a new history item if at least 15 seconds have passed since the previous snapshot
+          // Only add a new history item if at least 10 seconds have passed since the previous snapshot
           const lastSnap = history[0];
-          if (!lastSnap || now - lastSnap.timestamp > 15000) {
+          if (!lastSnap || now - lastSnap.timestamp > 10000) {
             const newSnap: SystemBackup = {
               id: `snap_${now}`,
               date: todayStr,
@@ -141,7 +144,7 @@ export const autoBackupService = {
           console.warn("[AutoBackup] Gagal memperbarui riwayat backup:", histErr);
         }
 
-        // 3. Cloud Master Snapshot in Firestore (syncs data across AI Studio & Vercel)
+        // Cloud Master Snapshot in Firestore (syncs data across AI Studio & Vercel)
         try {
           await dbService.setDocument("systemBackups", "latest_synced_data", {
             updatedAt: dateStr,
@@ -158,7 +161,7 @@ export const autoBackupService = {
           console.warn("[AutoBackup] Cloud sync Firestore skipped, data tetap aman di LocalStorage:", cloudErr);
         }
       } catch (err) {
-        console.error("[AutoBackup] Error saving instant snapshot:", err);
+        console.error("[AutoBackup] Error saving instant snapshot background tasks:", err);
       }
     }, 400);
   },

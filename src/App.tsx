@@ -6768,19 +6768,23 @@ const getEffectiveDebtRecords = (
     }
 
     // Exclude Kasbon records from general Hutang/Piutang (Kasbon is strictly managed in dedicated Kasbon Pegawai menu)
-    if (
-      rTitle.includes("kasbon") ||
-      rDesc.includes("kasbon") ||
-      rCat.includes("kasbon") ||
-      rTitle.includes("fauzyawan") ||
-      (isInternalPersonnel(r.contactName) && !r.projectId && (rTitle.includes("pinjaman") || rDesc.includes("pinjaman")))
-    ) {
-      return false;
+    // EXCEPTION: Personal Fund debts (Dana Pribadi / Talangan Pribadi) created by user are legitimate Hutang PT to personnel!
+    const isPersonalFundDebt = Boolean((r as any).originFinancialRecordId) || rTitle.includes("dana pribadi") || rTitle.includes("talangan pribadi") || rTitle.includes("rekening pribadi");
+    if (!isPersonalFundDebt) {
+      if (
+        rTitle.includes("kasbon") ||
+        rDesc.includes("kasbon") ||
+        rCat.includes("kasbon") ||
+        rTitle.includes("fauzyawan") ||
+        (isInternalPersonnel(r.contactName) && !r.projectId && (rTitle.includes("pinjaman") || rDesc.includes("pinjaman")))
+      ) {
+        return false;
+      }
     }
 
     // Sesuai instruksi resmi: Data hutang awal maksimal mentok di 1 Juli 2026 (HTG-001 s/d HTG-010).
     // Transaksi/hutang setelah 1 Juli tidak dimasukkan default, biar user yang edit/tambah sendiri nanti saat berjalan.
-    if (r.type === "HUTANG" && !((r as any).originFinancialRecordId)) {
+    if (r.type === "HUTANG" && !((r as any).originFinancialRecordId) && !isPersonalFundDebt) {
       const customUpper = (r.customId || r.id || "").toUpperCase();
       if (customUpper.startsWith("HTG-")) {
         const numPart = parseInt(customUpper.replace("HTG-", ""), 10);
@@ -6864,11 +6868,14 @@ const getEffectiveDebtRecords = (
         return false;
       });
 
+      const rTitleUpper = (r.title || "").toUpperCase();
+      const isPersonalFund = Boolean((r as any).originFinancialRecordId) || rTitleUpper.includes("DANA PRIBADI") || rTitleUpper.includes("TALANGAN PRIBADI") || rTitleUpper.includes("REKENING PRIBADI");
+
       if (matchingFin) {
         const sRaw = (matchingFin.sumberDana || "").trim().toUpperCase();
-        const isPtSource = sRaw === "REKENING PT" || (sRaw.includes("PT") && !sRaw.includes("NON-PT") && !sRaw.includes("PRIBADI"));
-        const isPersonalSource = sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT");
-        if (isPtSource && !isPersonalSource) {
+        const isPersonalSource = sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT") || isPersonalFund;
+        const isPtSource = (sRaw === "REKENING PT" || (sRaw.includes("PT") && !sRaw.includes("NON-PT"))) && !isPersonalSource;
+        if (isPtSource) {
           return; // Strictly exclude: REKENING PT is NOT a debt!
         }
       }
@@ -6883,7 +6890,8 @@ const getEffectiveDebtRecords = (
           );
           if (foundFin) {
             const sRaw = (foundFin.sumberDana || "").trim().toUpperCase();
-            const isPtSource = sRaw === "REKENING PT" || (sRaw.includes("PT") && !sRaw.includes("NON-PT") && !sRaw.includes("PRIBADI"));
+            const isPersonalSource = sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT") || isPersonalFund;
+            const isPtSource = (sRaw === "REKENING PT" || (sRaw.includes("PT") && !sRaw.includes("NON-PT"))) && !isPersonalSource;
             if (isPtSource) {
               return; // Strictly exclude: REKENING PT is NOT a debt!
             }
@@ -17909,10 +17917,12 @@ const AdminFinanceScreen = ({
     const finalCustomId = editFormData.customId;
 
     const updatedRecord: Partial<FinancialRecord> = {
+      id: editingTransaction.id,
       date: editFormData.date,
       type: editFormData.type,
       flowType: editFormData.type === "IN" ? "IN" : editFormData.flowType,
-      personalHolder: editFormData.personalHolder || "",
+      personalHolder: editFormData.personalHolder || editFormData.pemilikUangPribadi || "",
+      pemilikUangPribadi: editFormData.pemilikUangPribadi || editFormData.personalHolder || "",
       amount: Number(editFormData.amount),
       adminFee: editFormData.paymentMethod === "TRANSFER" ? Number(editFormData.adminFee || 0) : 0,
       projectId: editFormData.projectId || "",
@@ -17999,7 +18009,18 @@ const AdminFinanceScreen = ({
     }
 
     try {
-      await dbService.updateDocument("financialRecords", editingTransaction.id, updatedRecord);
+      await dbService.setDocument("financialRecords", editingTransaction.id, {
+        ...editingTransaction,
+        ...updatedRecord,
+        id: editingTransaction.id,
+      });
+      if (editingTransaction.customId && editingTransaction.customId !== editingTransaction.id) {
+        await dbService.setDocument("financialRecords", editingTransaction.customId, {
+          ...editingTransaction,
+          ...updatedRecord,
+          id: editingTransaction.id,
+        }).catch(() => {});
+      }
       setFinancialRecords((prev) =>
         prev.map((r) =>
           r.id === editingTransaction.id || (Boolean(editingTransaction.customId) && r.customId === editingTransaction.customId)
@@ -18262,6 +18283,8 @@ const AdminFinanceScreen = ({
            ((d as any).originCustomId && (d as any).originCustomId === (editingTransaction.customId || originalCustomId)))
       );
 
+      let finalDebtList = [...debtRecords];
+
       if (updatedRecord.type === "OUT" && isPersonalSumberEdit) {
         const creditorName = normalizeContactName(editFormData.pemilikUangPribadi || editFormData.personalHolder || user?.name || "Karyawan");
         if (existingPersonalDebt) {
@@ -18272,10 +18295,17 @@ const AdminFinanceScreen = ({
             contactName: creditorName,
             dueDate: updatedRecord.date || existingPersonalDebt.dueDate,
             description: `Hutang perusahaan atas talangan dana pribadi ${creditorName} (Ref Transaksi: ${finalCustomId})`,
+            originFinancialRecordId: editingTransaction.id,
+            originCustomId: finalCustomId,
+            timestamp: existingPersonalDebt.timestamp || Date.now(),
           };
           await dbService.setDocument("debtRecords", existingPersonalDebt.id, updatedDebt);
+          if (existingPersonalDebt.customId) {
+            await dbService.setDocument("debtRecords", existingPersonalDebt.customId, updatedDebt).catch(() => {});
+          }
+          finalDebtList = finalDebtList.map((d) => (d.id === existingPersonalDebt.id ? updatedDebt : d));
           if (setDebtRecords) {
-            setDebtRecords((prev) => prev.map((d) => (d.id === existingPersonalDebt.id ? updatedDebt : d)));
+            setDebtRecords(finalDebtList);
           }
         } else {
           const deletedSet = getDeletedDebtOriginIds();
@@ -18299,18 +18329,36 @@ const AdminFinanceScreen = ({
               projectId: updatedRecord.referenceId || editFormData.projectId || "",
             };
             await dbService.setDocument("debtRecords", newDebt.id, newDebt);
+            finalDebtList = [newDebt, ...finalDebtList.filter((d) => d.id !== newDebt.id)];
             if (setDebtRecords) {
-              setDebtRecords((prev) => [newDebt, ...prev]);
+              setDebtRecords(finalDebtList);
             }
           }
         }
       } else if (existingPersonalDebt) {
         // Changed to REKENING PT: clean up personal debt
         await dbService.deleteDocument("debtRecords", existingPersonalDebt.id).catch(() => {});
+        if (existingPersonalDebt.customId) {
+          await dbService.deleteDocument("debtRecords", existingPersonalDebt.customId).catch(() => {});
+        }
+        finalDebtList = finalDebtList.filter((d) => d.id !== existingPersonalDebt.id);
         if (setDebtRecords) {
-          setDebtRecords((prev) => prev.filter((d) => d.id !== existingPersonalDebt.id));
+          setDebtRecords(finalDebtList);
         }
       }
+
+      // Synchronously and immediately save snapshot to local storage & backup history
+      const finalFinList = financialRecords.map((r) =>
+        r.id === editingTransaction.id || (Boolean(editingTransaction.customId) && r.customId === editingTransaction.customId)
+          ? ({ ...r, ...updatedRecord } as FinancialRecord)
+          : r
+      );
+      autoBackupService.saveInstantDataSnapshot(
+        finalFinList,
+        finalDebtList,
+        projects,
+        `Update Transaksi ${finalCustomId} (${updatedRecord.sumberDana || "Rekening Pribadi"})`
+      );
 
       const savedRecordId = editingTransaction.id || editingTransaction.customId;
       lastEditedRecordIdRef.current = savedRecordId;
@@ -34301,6 +34349,56 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !auth.currentUser) return;
 
+    // Real-time synchronization across devices (AI Studio & Vercel deployment)
+    const unsubscribeCloudMaster = dbService.onDocumentSnapshot<any>(
+      "systemBackups",
+      "latest_synced_data",
+      (cloudData) => {
+        if (!cloudData) return;
+        if (Array.isArray(cloudData.projects) && cloudData.projects.length > 0) {
+          setProjects((prev) => {
+            const pMap = new Map<string, Project>();
+            prev.forEach((p) => pMap.set(p.id, p));
+            cloudData.projects.forEach((cp: Project) => {
+              if (cp && cp.id) {
+                const ex = pMap.get(cp.id);
+                pMap.set(cp.id, ex ? { ...ex, ...cp } : cp);
+              }
+            });
+            return Array.from(pMap.values());
+          });
+        }
+        if (Array.isArray(cloudData.debtRecords) && cloudData.debtRecords.length > 0) {
+          setDebtRecords((prev) => {
+            const dMap = new Map<string, DebtRecord>();
+            prev.forEach((d) => dMap.set((d.customId || d.id || "").toUpperCase(), d));
+            cloudData.debtRecords.forEach((cd: DebtRecord) => {
+              const k = (cd.customId || cd.id || "").toUpperCase();
+              if (k) {
+                const ex = dMap.get(k);
+                dMap.set(k, ex ? { ...ex, ...cd } : cd);
+              }
+            });
+            return Array.from(dMap.values());
+          });
+        }
+        if (Array.isArray(cloudData.financialRecords) && cloudData.financialRecords.length > 0) {
+          setFinancialRecords((prev) => {
+            const fMap = new Map<string, FinancialRecord>();
+            prev.forEach((f) => fMap.set((f.customId || f.id || "").toUpperCase(), f));
+            cloudData.financialRecords.forEach((cf: FinancialRecord) => {
+              const k = (cf.customId || cf.id || "").toUpperCase();
+              if (k) {
+                const ex = fMap.get(k);
+                fMap.set(k, ex ? { ...ex, ...cf } : cf);
+              }
+            });
+            return Array.from(fMap.values());
+          });
+        }
+      }
+    );
+
     const unsubscribeReports = dbService.onCollectionSnapshot<FieldReport>(
       "reports",
       (data) => {
@@ -34480,9 +34578,12 @@ export default function App() {
               referenceId: fromDb?.referenceId ?? fromLocal?.referenceId ?? seed.referenceId ?? fromDb?.projectId ?? fromLocal?.projectId ?? seed.projectId ?? "",
               projectId: fromDb?.projectId ?? fromLocal?.projectId ?? seed.projectId ?? fromDb?.referenceId ?? fromLocal?.referenceId ?? seed.referenceId ?? "",
               category: fromDb?.category ?? fromLocal?.category ?? seed.category ?? "OPERASIONAL",
-              sumberDana: fromDb?.sumberDana ?? fromLocal?.sumberDana ?? seed.sumberDana ?? "REKENING PT",
+              sumberDana: (fromDb?.sumberDana === "REKENING PRIBADI" || fromLocal?.sumberDana === "REKENING PRIBADI")
+                ? "REKENING PRIBADI"
+                : (fromDb?.sumberDana ?? fromLocal?.sumberDana ?? seed.sumberDana ?? "REKENING PT"),
               paymentMethod: fromDb?.paymentMethod ?? fromLocal?.paymentMethod ?? seed.paymentMethod ?? "TRANSFER",
-              personalHolder: fromDb?.personalHolder ?? fromLocal?.personalHolder ?? seed.personalHolder ?? "",
+              personalHolder: fromDb?.personalHolder ?? fromLocal?.personalHolder ?? fromDb?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? seed.personalHolder ?? "",
+              pemilikUangPribadi: fromDb?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? fromDb?.personalHolder ?? fromLocal?.personalHolder ?? "",
               penerimaKasbon: fromDb?.penerimaKasbon ?? fromLocal?.penerimaKasbon ?? seed.penerimaKasbon ?? "",
               refIdBank: fromDb?.refIdBank !== undefined ? fromDb.refIdBank : (fromLocal?.refIdBank !== undefined ? fromLocal.refIdBank : (seed.refIdBank || "")),
               refHutang: fromDb?.refHutang !== undefined ? fromDb.refHutang : (fromLocal?.refHutang !== undefined ? fromLocal.refHutang : (seed.refHutang || "")),
@@ -34573,13 +34674,39 @@ export default function App() {
           }
         }
 
-        const combinedDebts = [...(data || []), ...allLocalDebts];
-        combinedDebts.forEach((item) => {
+        const localDebtMapByKey = new Map<string, DebtRecord>();
+        allLocalDebts.forEach((ld) => {
+          const k = (ld.customId || ld.id || "").trim().toUpperCase();
+          if (k) localDebtMapByKey.set(k, ld);
+        });
+
+        // 2. Data tambahan hutang/piutang baru dari database DAN local cache
+        (data || []).forEach((item) => {
           if (!item) return;
           const key = (item.customId || item.id || "").trim().toUpperCase();
           if (key && !seen.has(key)) {
             seen.add(key);
-            deduped.push(item);
+            const localMatch = localDebtMapByKey.get(key);
+            const mergedDebt: DebtRecord = localMatch ? {
+              ...item,
+              ...localMatch,
+              originFinancialRecordId: item.originFinancialRecordId || localMatch.originFinancialRecordId || (localMatch as any).originFinancialRecordId,
+              originCustomId: item.originCustomId || localMatch.originCustomId || (localMatch as any).originCustomId,
+              amount: (localMatch.amount && localMatch.amount > 0) ? localMatch.amount : item.amount,
+              contactName: localMatch.contactName || item.contactName,
+              title: localMatch.title || item.title,
+              description: localMatch.description || item.description,
+            } : item;
+            deduped.push(mergedDebt);
+          }
+        });
+
+        allLocalDebts.forEach((ld) => {
+          if (!ld) return;
+          const key = (ld.customId || ld.id || "").trim().toUpperCase();
+          if (key && !seen.has(key)) {
+            seen.add(key);
+            deduped.push(ld);
           }
         });
 
@@ -34778,6 +34905,7 @@ export default function App() {
     );
 
     return () => {
+      if (unsubscribeCloudMaster) unsubscribeCloudMaster();
       unsubscribeReports();
       unsubscribeDailyReports();
       unsubscribeProjects();
