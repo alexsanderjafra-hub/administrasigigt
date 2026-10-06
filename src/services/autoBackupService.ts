@@ -34,6 +34,9 @@ export interface PersistentDataPayload {
 
 const PERSISTENT_CACHE_KEY = "PT_DATA_PERSISTENT_CACHE";
 const BACKUP_HISTORY_KEY = "PT_DATA_BACKUP_HISTORY";
+const PROJECTS_CACHE_KEY = "PT_PROJECTS_CACHE";
+const DEBTS_CACHE_KEY = "PT_DEBTS_CACHE";
+const FINANCE_CACHE_KEY = "PT_FINANCE_CACHE";
 const LAST_DAILY_KEY = "last_auto_daily_backup_date";
 const MAX_HISTORY_ITEMS = 20;
 
@@ -52,7 +55,8 @@ export const autoBackupService = {
   ) => {
     if (
       (!financialRecords || financialRecords.length === 0) &&
-      (!debtRecords || debtRecords.length === 0)
+      (!debtRecords || debtRecords.length === 0) &&
+      (!projects || projects.length === 0)
     ) {
       return;
     }
@@ -67,17 +71,42 @@ export const autoBackupService = {
         const dateStr = new Date().toISOString();
         const todayStr = dateStr.split("T")[0];
 
+        // Guard: Don't let an empty array overwrite existing populated cache
+        let finalProjects = Array.isArray(projects) ? projects : [];
+        let finalDebts = Array.isArray(debtRecords) ? debtRecords : [];
+        let finalFin = Array.isArray(financialRecords) ? financialRecords : [];
+
+        try {
+          const existing = autoBackupService.getPersistentData();
+          if (finalProjects.length === 0 && existing && Array.isArray(existing.projects) && existing.projects.length > 0) {
+            finalProjects = existing.projects;
+          }
+          if (finalDebts.length === 0 && existing && Array.isArray(existing.debtRecords) && existing.debtRecords.length > 0) {
+            finalDebts = existing.debtRecords;
+          }
+          if (finalFin.length === 0 && existing && Array.isArray(existing.financialRecords) && existing.financialRecords.length > 0) {
+            finalFin = existing.financialRecords;
+          }
+        } catch (_) {}
+
         // 1. Primary Persistent Cache in LocalStorage
         const payload: PersistentDataPayload = {
-          financialRecords,
-          debtRecords,
-          projects: projects || [],
+          financialRecords: finalFin,
+          debtRecords: finalDebts,
+          projects: finalProjects,
           updatedAt: dateStr,
           timestamp: now,
           version: 2,
         };
 
         localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(payload));
+
+        // Dedicated per-entity fallback storage
+        try {
+          if (finalProjects.length > 0) localStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(finalProjects));
+          if (finalDebts.length > 0) localStorage.setItem(DEBTS_CACHE_KEY, JSON.stringify(finalDebts));
+          if (finalFin.length > 0) localStorage.setItem(FINANCE_CACHE_KEY, JSON.stringify(finalFin));
+        } catch (_) {}
 
         // 2. Rolling History of Snapshots in LocalStorage
         try {
@@ -92,13 +121,13 @@ export const autoBackupService = {
               date: todayStr,
               timestamp: now,
               trigger: triggerReason,
-              financialRecordsCount: financialRecords.length,
-              debtRecordsCount: debtRecords.length,
-              projectsCount: (projects || []).length,
+              financialRecordsCount: finalFin.length,
+              debtRecordsCount: finalDebts.length,
+              projectsCount: finalProjects.length,
               data: {
-                financialRecords,
-                debtRecords,
-                projects: projects || [],
+                financialRecords: finalFin,
+                debtRecords: finalDebts,
+                projects: finalProjects,
               },
             };
 
@@ -113,23 +142,20 @@ export const autoBackupService = {
         }
 
         // 3. Cloud Master Snapshot in Firestore (syncs data across AI Studio & Vercel)
-        // Wrapped in try/catch so it never fails even if Firestore free quota is exceeded
         try {
           await dbService.setDocument("systemBackups", "latest_synced_data", {
             updatedAt: dateStr,
             timestamp: now,
             trigger: triggerReason,
-            financialRecordsCount: financialRecords.length,
-            debtRecordsCount: debtRecords.length,
-            projectsCount: (projects || []).length,
-            financialRecords,
-            debtRecords,
-            projects: projects || [],
+            financialRecordsCount: finalFin.length,
+            debtRecordsCount: finalDebts.length,
+            projectsCount: finalProjects.length,
+            financialRecords: finalFin,
+            debtRecords: finalDebts,
+            projects: finalProjects,
           });
-          console.log(`[AutoBackup & CloudSync] Snapshot data tersimpan di LocalStorage & Firestore (${financialRecords.length} transaksi, ${debtRecords.length} hutang).`);
         } catch (cloudErr) {
-          // LocalStorage fallback already succeeded above
-          console.warn("[AutoBackup] Cloud sync Firestore skipped or quota reached, data tetap aman di LocalStorage:", cloudErr);
+          console.warn("[AutoBackup] Cloud sync Firestore skipped, data tetap aman di LocalStorage:", cloudErr);
         }
       } catch (err) {
         console.error("[AutoBackup] Error saving instant snapshot:", err);
@@ -176,22 +202,123 @@ export const autoBackupService = {
   },
 
   /**
-   * Get persistent data from local storage
+   * Get persistent data from local storage with automatic fallback to dedicated cache keys or history
    */
   getPersistentData: (): PersistentDataPayload | null => {
     try {
       const raw = localStorage.getItem(PERSISTENT_CACHE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (
-        parsed &&
-        (Array.isArray(parsed.financialRecords) || Array.isArray(parsed.debtRecords))
-      ) {
-        return parsed as PersistentDataPayload;
+      let parsed = raw ? JSON.parse(raw) : null;
+
+      // Fallback check to individual dedicated caches
+      let projFallback: any[] = [];
+      let debtFallback: any[] = [];
+      let finFallback: any[] = [];
+
+      try {
+        const rawProj = localStorage.getItem(PROJECTS_CACHE_KEY);
+        if (rawProj) projFallback = JSON.parse(rawProj) || [];
+      } catch (_) {}
+      try {
+        const rawDebt = localStorage.getItem(DEBTS_CACHE_KEY);
+        if (rawDebt) debtFallback = JSON.parse(rawDebt) || [];
+      } catch (_) {}
+      try {
+        const rawFin = localStorage.getItem(FINANCE_CACHE_KEY);
+        if (rawFin) finFallback = JSON.parse(rawFin) || [];
+      } catch (_) {}
+
+      // If persistent cache is empty or incomplete, try to merge from history
+      if (!parsed || (!parsed.projects?.length && !parsed.debtRecords?.length && !parsed.financialRecords?.length)) {
+        const history = autoBackupService.getAvailableBackups();
+        if (history.length > 0) {
+          const best = history[0];
+          if (best && best.data) {
+            parsed = {
+              financialRecords: best.data.financialRecords || [],
+              debtRecords: best.data.debtRecords || [],
+              projects: best.data.projects || [],
+              updatedAt: new Date(best.timestamp).toISOString(),
+              timestamp: best.timestamp,
+              version: 2,
+            };
+          }
+        }
       }
+
+      if (parsed) {
+        if ((!parsed.projects || parsed.projects.length === 0) && projFallback.length > 0) {
+          parsed.projects = projFallback;
+        }
+        if ((!parsed.debtRecords || parsed.debtRecords.length === 0) && debtFallback.length > 0) {
+          parsed.debtRecords = debtFallback;
+        }
+        if ((!parsed.financialRecords || parsed.financialRecords.length === 0) && finFallback.length > 0) {
+          parsed.financialRecords = finFallback;
+        }
+
+        if (
+          Array.isArray(parsed.financialRecords) ||
+          Array.isArray(parsed.debtRecords) ||
+          Array.isArray(parsed.projects)
+        ) {
+          return parsed as PersistentDataPayload;
+        }
+      }
+
+      // If parsed was still null but dedicated fallbacks exist
+      if (projFallback.length > 0 || debtFallback.length > 0 || finFallback.length > 0) {
+        return {
+          financialRecords: finFallback,
+          debtRecords: debtFallback,
+          projects: projFallback,
+          updatedAt: new Date().toISOString(),
+          timestamp: Date.now(),
+          version: 2,
+        };
+      }
+
       return null;
     } catch (e) {
       console.error("[AutoBackup] Error reading persistent data:", e);
+      return null;
+    }
+  },
+
+  /**
+   * Find the most complete backup snapshot available in history
+   */
+  recoverBestAvailableSnapshot: (): PersistentDataPayload | null => {
+    try {
+      const history = autoBackupService.getAvailableBackups();
+      if (!history || history.length === 0) {
+        return autoBackupService.getPersistentData();
+      }
+
+      // Find the backup with the maximum total data count or latest rich data
+      let best = history[0];
+      let maxScore = (best.financialRecordsCount || 0) + (best.debtRecordsCount || 0) + (best.projectsCount || 0);
+
+      for (const item of history) {
+        const score = (item.financialRecordsCount || 0) + (item.debtRecordsCount || 0) + (item.projectsCount || 0);
+        if (score > maxScore) {
+          maxScore = score;
+          best = item;
+        }
+      }
+
+      if (best && best.data) {
+        return {
+          financialRecords: best.data.financialRecords || [],
+          debtRecords: best.data.debtRecords || [],
+          projects: best.data.projects || [],
+          updatedAt: new Date(best.timestamp).toISOString(),
+          timestamp: best.timestamp,
+          version: 2,
+        };
+      }
+      return autoBackupService.getPersistentData();
+    } catch (e) {
+      console.warn("[AutoBackup] Error finding best available snapshot:", e);
       return null;
     }
   },
@@ -266,9 +393,42 @@ export const autoBackupService = {
         projects: projects || [],
       });
 
+      // Broadcast individual items directly to their respective Firestore collections
+      // so real-time onCollectionSnapshot listeners trigger across all instances immediately
+      const writeTasks: Promise<any>[] = [];
+
+      if (Array.isArray(projects)) {
+        for (const p of projects) {
+          if (p && p.id) {
+            writeTasks.push(dbService.setDocument("projects", p.id, p));
+          }
+        }
+      }
+
+      if (Array.isArray(debtRecords)) {
+        for (const d of debtRecords) {
+          const docId = d.id || d.customId;
+          if (docId) {
+            writeTasks.push(dbService.setDocument("debtRecords", docId, d));
+          }
+        }
+      }
+
+      if (Array.isArray(financialRecords)) {
+        // Broadcast financial records
+        for (const f of financialRecords) {
+          const docId = f.id || f.customId;
+          if (docId) {
+            writeTasks.push(dbService.setDocument("financialRecords", docId, f));
+          }
+        }
+      }
+
+      await Promise.allSettled(writeTasks);
+
       return {
         success: true,
-        message: `Berhasil menyinkronkan ${financialRecords.length} transaksi, ${debtRecords.length} catatan hutang, dan ${(projects || []).length} proyek ke cloud database (Vercel).`,
+        message: `Berhasil menyinkronkan ${financialRecords.length} transaksi, ${debtRecords.length} catatan hutang, dan ${(projects || []).length} proyek ke cloud database secara real-time.`,
       };
     } catch (err: any) {
       const msg = err?.message || String(err);

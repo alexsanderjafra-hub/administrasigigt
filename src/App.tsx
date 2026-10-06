@@ -32,6 +32,7 @@ import {
   Fingerprint,
   Layers,
   CloudOff,
+  Database,
   Wifi,
   WifiOff,
   RefreshCw,
@@ -222,6 +223,7 @@ import { getGoogleAccessToken, setGoogleAccessToken, syncAllDataToGoogleSheets }
 import { calculateKasbonBalances, simulateKasbonAllocation, extractKasbonRecipient } from "./utils/kasbonHelper";
 import { normalizeContactName } from "./utils/contactHelper";
 import { DebtPaymentManager } from "./components/DebtPaymentManager";
+import { SyncBackupModal } from "./components/SyncBackupModal";
 import { autoBackupService } from "./services/autoBackupService";
 import { isQuotaExhausted } from "./services/db";
 
@@ -8277,7 +8279,9 @@ const AdminDebtScreen = ({
       timestamp: Date.now(),
       payments: [],
     };
-    await dbService.createDocument("debtRecords", newRecord);
+    const docId = await dbService.createDocument("debtRecords", newRecord);
+    const createdDebt = { id: docId || customId || `debt-${Date.now()}`, ...newRecord } as DebtRecord;
+    setDebtRecords((prev) => [createdDebt, ...prev]);
     await logActivity(
       "DEBT",
       "CREATE",
@@ -8600,7 +8604,7 @@ const AdminDebtScreen = ({
         }
       : {};
 
-    await dbService.setDocument("debtRecords", currentRecord.id, {
+    const updatedMainDebt = {
       ...currentRecord,
       title: editForm.title,
       contactName: editForm.contactName,
@@ -8611,7 +8615,10 @@ const AdminDebtScreen = ({
       status: newStatus,
       type: editForm.type,
       ...customIdUpdate
-    });
+    };
+
+    await dbService.setDocument("debtRecords", currentRecord.id, updatedMainDebt);
+    setDebtRecords((prev) => prev.map((d) => d.id === currentRecord.id ? updatedMainDebt : d));
 
     await logActivity(
       "DEBT",
@@ -8703,10 +8710,13 @@ const AdminDebtScreen = ({
       updatePayload.terms = updatedTerms;
     }
 
-    await dbService.setDocument("debtRecords", currentRecord.id, {
+    const updatedRecordObj = {
       ...currentRecord,
       ...updatePayload,
-    });
+    };
+
+    await dbService.setDocument("debtRecords", currentRecord.id, updatedRecordObj);
+    setDebtRecords((prev) => prev.map((d) => d.id === currentRecord.id ? updatedRecordObj : d));
 
     if (selectedTerminRecord && selectedTerminRecord.id === currentRecord.id) {
       setSelectedTerminRecord({
@@ -8779,6 +8789,14 @@ const AdminDebtScreen = ({
       status: newStatus,
       terms: updatedTerms,
     });
+
+    setDebtRecords((prev) =>
+      prev.map((d) =>
+        d.id === currentRecord.id
+          ? { ...d, payments: updatedPayments, status: newStatus, terms: updatedTerms }
+          : d
+      )
+    );
 
     await logActivity(
       "DEBT",
@@ -29057,7 +29075,37 @@ export default function App() {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [selectedStaff, setSelectedStaff] = useState<Employee | null>(null);
   const [reports, setReports] = useState<FieldReport[]>([]);
-  const [projects, setProjects] = useState<Project[]>(defaultProjects);
+  const [projects, setProjects] = useState<Project[]>(() => {
+    try {
+      const cached = autoBackupService.getPersistentData();
+      if (cached && Array.isArray(cached.projects) && cached.projects.length > 0) {
+        const pMap = new Map<string, Project>();
+        defaultProjects.forEach((dp) => pMap.set(dp.id, dp));
+        cached.projects.forEach((cp: any) => {
+          if (cp && cp.id) {
+            const ex = pMap.get(cp.id);
+            pMap.set(cp.id, ex ? { ...ex, ...cp } : cp);
+          }
+        });
+        return Array.from(pMap.values());
+      }
+      const history = autoBackupService.getAvailableBackups();
+      for (const h of history) {
+        if (Array.isArray(h.data?.projects) && h.data.projects.length > 0) {
+          const pMap = new Map<string, Project>();
+          defaultProjects.forEach((dp) => pMap.set(dp.id, dp));
+          h.data.projects.forEach((cp: any) => {
+            if (cp && cp.id) {
+              const ex = pMap.get(cp.id);
+              pMap.set(cp.id, ex ? { ...ex, ...cp } : cp);
+            }
+          });
+          return Array.from(pMap.values());
+        }
+      }
+    } catch (_) {}
+    return defaultProjects;
+  });
   const [projectStatusFilter, setProjectStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [projectTypeFilter, setProjectTypeFilter] = useState<"ALL" | "PENGADAAN BARANG DAN JASA" | "PROJEK STP/IPAL">("ALL");
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -29067,6 +29115,7 @@ export default function App() {
   const [isPlacementModalOpen, setIsPlacementModalOpen] = useState(false);
   const [placementInputValue, setPlacementInputValue] = useState("");
   const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const [isSyncBackupModalOpen, setIsSyncBackupModalOpen] = useState(false);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [isSyncing, setIsSyncing] = useState(false);
   const [locationTag, setLocationTag] = useState<{
@@ -29106,12 +29155,38 @@ export default function App() {
 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
-  const [financialRecords, setFinancialRecords] = useState<FinancialRecord[]>(
-    [],
-  );
+  const [financialRecords, setFinancialRecords] = useState<FinancialRecord[]>(() => {
+    try {
+      const cached = autoBackupService.getPersistentData();
+      if (cached && Array.isArray(cached.financialRecords) && cached.financialRecords.length > 0) {
+        return cached.financialRecords;
+      }
+      const history = autoBackupService.getAvailableBackups();
+      for (const h of history) {
+        if (Array.isArray(h.data?.financialRecords) && h.data.financialRecords.length > 0) {
+          return h.data.financialRecords;
+        }
+      }
+    } catch (_) {}
+    return [];
+  });
   const [isFinanceLoaded, setIsFinanceLoaded] = useState(false);
   const [hasAutoSeeded, setHasAutoSeeded] = useState(false);
-  const [debtRecords, setDebtRecords] = useState<DebtRecord[]>([]);
+  const [debtRecords, setDebtRecords] = useState<DebtRecord[]>(() => {
+    try {
+      const cached = autoBackupService.getPersistentData();
+      if (cached && Array.isArray(cached.debtRecords) && cached.debtRecords.length > 0) {
+        return cached.debtRecords;
+      }
+      const history = autoBackupService.getAvailableBackups();
+      for (const h of history) {
+        if (Array.isArray(h.data?.debtRecords) && h.data.debtRecords.length > 0) {
+          return h.data.debtRecords;
+        }
+      }
+    } catch (_) {}
+    return [];
+  });
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -30537,6 +30612,32 @@ export default function App() {
 
     try {
       await dbService.setDocument("projects", id, newProject);
+      setProjects((prev) => [newProject, ...prev]);
+
+      if (contractValInput > 0) {
+        const isPpnEnabled = newProject.hasPpn !== false;
+        const totalWithPpn = isPpnEnabled ? Math.round(contractValInput * 1.11) : contractValInput;
+        const linkedDebtId = `PTG-PROJ-${id}`;
+        const linkedDebt: DebtRecord = {
+          id: linkedDebtId,
+          customId: `PTG-${id.slice(-6)}`,
+          projectId: id,
+          type: "PIUTANG",
+          title: newProject.name,
+          contactName: newProject.client || `Client ${newProject.name}`,
+          amount: totalWithPpn,
+          dueDate: newProject.endDate || new Date().toISOString().split("T")[0],
+          status: "UNPAID",
+          description: `Rekam Piutang & Nilai Kontrak Proyek ${newProject.name}`,
+          recordedBy: currentUser?.name || "Admin",
+          timestamp: Date.now(),
+          terms: [],
+          payments: [],
+        };
+        await dbService.setDocument("debtRecords", linkedDebtId, linkedDebt);
+        setDebtRecords((prev) => [linkedDebt, ...prev]);
+      }
+
       await logActivity(
         "PROJECT",
         "CREATE",
@@ -30720,6 +30821,7 @@ export default function App() {
 
     try {
       await dbService.setDocument("projects", projectId, newProject);
+      setProjects((prev) => [newProject, ...prev]);
       await dbService.updateDocument("quotations", q.id, { status: "Jadi Proyek" });
       await logActivity(
         "PROJECT",
@@ -30943,6 +31045,28 @@ export default function App() {
             prev.map((d) => (d.id === linkedDebt.id ? { ...d, ...debtPayload } : d))
           );
         }
+      } else if (contractData.contractValue !== undefined && contractData.contractValue > 0) {
+        const isPpn = p.hasPpn !== false;
+        const total = isPpn ? Math.round(contractData.contractValue * 1.11) : contractData.contractValue;
+        const newDebtId = `PTG-PROJ-${projectId}`;
+        const newDebt: DebtRecord = {
+          id: newDebtId,
+          customId: contractData.contractNo || `PTG-${projectId.slice(-6)}`,
+          projectId: projectId,
+          type: "PIUTANG",
+          title: p.name,
+          contactName: contractData.client || p.client || `Client ${p.name}`,
+          amount: total,
+          dueDate: contractData.endDate || p.endDate || new Date().toISOString().split("T")[0],
+          status: "UNPAID",
+          description: `Rekam Piutang & Nilai Kontrak Proyek ${p.name}`,
+          recordedBy: currentUser?.name || "Admin",
+          timestamp: Date.now(),
+          terms: [],
+          payments: [],
+        };
+        await dbService.setDocument("debtRecords", newDebtId, newDebt);
+        setDebtRecords((prev) => [newDebt, ...prev]);
       }
 
       setToastMessage("Informasi Kontrak & Proyek berhasil diperbarui");
@@ -31097,6 +31221,26 @@ export default function App() {
           terms: updatedTerms
         });
         setDebtRecords(prev => prev.map(d => d.id === targetDebt.id ? { ...d, amount: totalContract, terms: updatedTerms } : d));
+      } else if (totalContract > 0) {
+        const newDebtId = `PTG-PROJ-${projectId}`;
+        const newDebt: DebtRecord = {
+          id: newDebtId,
+          customId: `PTG-${projectId.slice(-6)}`,
+          projectId: projectId,
+          type: "PIUTANG",
+          title: p.name,
+          contactName: p.client || `Client ${p.name}`,
+          amount: totalContract,
+          dueDate: p.endDate || new Date().toISOString().split("T")[0],
+          status: "UNPAID",
+          description: `Rekam Piutang & Nilai Kontrak Proyek ${p.name}`,
+          recordedBy: currentUser?.name || "Admin",
+          timestamp: Date.now(),
+          terms: updatedTerms,
+          payments: [],
+        };
+        await dbService.setDocument("debtRecords", newDebtId, newDebt);
+        setDebtRecords((prev) => [newDebt, ...prev]);
       }
 
       setToastMessage("Nilai kontrak berhasil diperbarui");
@@ -34176,7 +34320,39 @@ export default function App() {
     const unsubscribeProjects = dbService.onCollectionSnapshot<Project>(
       "projects",
       (data) => {
-        setProjects(data && data.length > 0 ? data : defaultProjects);
+        // Retrieve persistent projects cache from localStorage & backup history
+        const localPersistent = autoBackupService.getPersistentData();
+        let localProjects: Project[] = Array.isArray(localPersistent?.projects) ? localPersistent.projects : [];
+        if (localProjects.length === 0) {
+          const backups = autoBackupService.getAvailableBackups();
+          for (const b of backups) {
+            if (Array.isArray(b.data?.projects) && b.data.projects.length > 0) {
+              localProjects = b.data.projects;
+              break;
+            }
+          }
+        }
+
+        const mergedMap = new Map<string, Project>();
+        // 1. Defaults as baseline
+        defaultProjects.forEach((dp) => mergedMap.set(dp.id, dp));
+        // 2. User local/backup projects (preserves user-edited contract values & newly added projects)
+        localProjects.forEach((lp) => {
+          if (lp && lp.id) {
+            const ex = mergedMap.get(lp.id);
+            mergedMap.set(lp.id, ex ? { ...ex, ...lp } : lp);
+          }
+        });
+        // 3. Firestore projects (if any)
+        (data || []).forEach((dp) => {
+          if (dp && dp.id) {
+            const ex = mergedMap.get(dp.id);
+            mergedMap.set(dp.id, ex ? { ...ex, ...dp } : dp);
+          }
+        });
+
+        const finalProjects = Array.from(mergedMap.values());
+        setProjects(finalProjects);
       },
     );
 
@@ -34316,8 +34492,23 @@ export default function App() {
           }
         });
 
-        // 2. Data tambahan dari database (transaksi baru yang dibuat oleh user)
-        (data || []).forEach((item) => {
+        // 2. Data tambahan dari database DAN local cache (transaksi baru yang dibuat oleh user)
+        let allLocalFin: any[] = [];
+        if (localPersistent && Array.isArray(localPersistent.financialRecords) && localPersistent.financialRecords.length > 0) {
+          allLocalFin = localPersistent.financialRecords;
+        } else {
+          const backups = autoBackupService.getAvailableBackups();
+          for (const b of backups) {
+            if (Array.isArray(b.data?.financialRecords) && b.data.financialRecords.length > 0) {
+              allLocalFin = b.data.financialRecords;
+              break;
+            }
+          }
+        }
+
+        const combinedFin = [...(data || []), ...allLocalFin];
+        combinedFin.forEach((item) => {
+          if (!item) return;
           if (item.customId && item.customId.startsWith("INC-060826-") && item.customId !== "INC-060826-001") return;
           const key = (item.customId || item.id || "").trim().toUpperCase();
           if (key && !seen.has(key)) {
@@ -34358,21 +34549,37 @@ export default function App() {
             const source = fromDb || fromLocal;
             const baseRecord = (source ? { ...seed, ...(fromLocal || {}), ...(fromDb || {}) } : seed) as DebtRecord;
             if (baseRecord.type === "HUTANG") {
-              // Sesuai aturan tegas user: Data hutang & pembayaran awal mentok di 1 Juli 2026
-              baseRecord.payments = (baseRecord.payments || []).filter((p) => !p.date || p.date <= "2026-07-01");
+              // Jika data belum pernah diedit user, data hutang & pembayaran awal mentok di 1 Juli 2026.
+              // Jika user sudah mengedit/menambahkan pembayaran di local atau db, pertahankan hasil editan user.
+              if (!fromLocal?.payments && !fromDb?.payments) {
+                baseRecord.payments = (baseRecord.payments || []).filter((p) => !p.date || p.date <= "2026-07-01");
+              }
             }
             deduped.push(baseRecord);
           }
         });
 
-        // 2. Data tambahan dari database: hutang dana pribadi baru yang berasal dari transaksi keuangan (originFinancialRecordId)
-        (data || []).forEach((item) => {
+        // 2. Data tambahan hutang/piutang baru dari database DAN local cache
+        let allLocalDebts: DebtRecord[] = [];
+        if (localPersistent && Array.isArray(localPersistent.debtRecords) && localPersistent.debtRecords.length > 0) {
+          allLocalDebts = localPersistent.debtRecords;
+        } else {
+          const backups = autoBackupService.getAvailableBackups();
+          for (const b of backups) {
+            if (Array.isArray(b.data?.debtRecords) && b.data.debtRecords.length > 0) {
+              allLocalDebts = b.data.debtRecords;
+              break;
+            }
+          }
+        }
+
+        const combinedDebts = [...(data || []), ...allLocalDebts];
+        combinedDebts.forEach((item) => {
+          if (!item) return;
           const key = (item.customId || item.id || "").trim().toUpperCase();
           if (key && !seen.has(key)) {
-            if (item.originFinancialRecordId || (item.type === "HUTANG" && item.title?.startsWith("[DANA PRIBADI]")) || (item.type === "HUTANG" && item.title?.startsWith("[TALANGAN PRIBADI]"))) {
-              seen.add(key);
-              deduped.push(item);
-            }
+            seen.add(key);
+            deduped.push(item);
           }
         });
 
@@ -40913,6 +41120,14 @@ export default function App() {
                     <span className="capitalize">{currentMonthName}</span>
                   </div>
                   <button
+                    onClick={() => setIsSyncBackupModalOpen(true)}
+                    className="bg-emerald-50 text-emerald-700 border border-emerald-200 px-4 py-2.5 rounded-2xl text-sm font-bold shadow-xs flex items-center gap-2 hover:bg-emerald-100 transition-all cursor-pointer"
+                    title="Pusat Sinkronisasi & Cadangan Otomatis"
+                  >
+                    <Database size={18} />
+                    <span>Sinkron & Cadangan</span>
+                  </button>
+                  <button
                     onClick={() => navigate("admin-profile")}
                     className="bg-white text-slate-900 border border-slate-200 px-6 py-2.5 rounded-2xl text-sm font-bold shadow-sm flex items-center gap-2 hover:bg-slate-50 transition-all"
                   >
@@ -41681,6 +41896,17 @@ export default function App() {
                                     "projects",
                                     p.id,
                                   );
+                                  setProjects((prev) => prev.filter((pr) => pr.id !== p.id));
+                                  const curPersistent = autoBackupService.getPersistentData();
+                                  if (curPersistent && curPersistent.projects) {
+                                    const updatedProjList = curPersistent.projects.filter((pr: any) => pr.id !== p.id);
+                                    autoBackupService.saveInstantDataSnapshot(
+                                      financialRecords,
+                                      debtRecords,
+                                      updatedProjList,
+                                      `Hapus projek ${p.name}`
+                                    );
+                                  }
                                   setToastMessage(
                                     `Projek "${p.name}" telah dihapus`,
                                   );
@@ -46957,6 +47183,17 @@ export default function App() {
                       </span>
                     )}
                   </button>
+                  {(currentUser?.role === "admin" ||
+                    currentUser?.role === "owner" ||
+                    currentUser?.role === "direktur") && (
+                    <button
+                      onClick={() => setIsSyncBackupModalOpen(true)}
+                      className="w-10 h-10 bg-slate-50 hover:bg-emerald-50 border border-slate-200 hover:border-emerald-200 rounded-xl flex items-center justify-center text-slate-500 hover:text-emerald-600 transition-all cursor-pointer active:scale-95 shadow-xs"
+                      title="Pusat Sinkronisasi & Riwayat Cadangan Otomatis"
+                    >
+                      <Database size={18} />
+                    </button>
+                  )}
                   <button
                     onClick={() => setIsLogoutModalOpen(true)}
                     className="w-10 h-10 bg-slate-50 hover:bg-rose-50 border border-slate-200 hover:border-rose-200 rounded-xl flex items-center justify-center text-slate-500 hover:text-rose-500 transition-all cursor-pointer active:scale-95 shadow-xs"
@@ -46969,6 +47206,68 @@ export default function App() {
             </header>
 
             <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8">
+              {/* Smart Backup Alert Banner if richer historical snapshot is detected */}
+              {(() => {
+                const backups = autoBackupService.getAvailableBackups();
+                const latestRicher = backups.find(
+                  (b) =>
+                    (b.projectsCount > (projects?.length || 0)) ||
+                    (b.debtRecordsCount > (debtRecords?.length || 0))
+                );
+                if (!latestRicher) return null;
+                return (
+                  <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
+                        <Database size={20} />
+                      </div>
+                      <div>
+                        <div className="font-bold text-slate-800 text-sm">
+                          Riwayat Cadangan Sesi Sebelumnya Ditemukan ({latestRicher.projectsCount} Proyek, {latestRicher.debtRecordsCount} Hutang Piutang)
+                        </div>
+                        <div className="text-xs text-slate-600">
+                          Tersimpan otomatis pada {new Date(latestRicher.timestamp).toLocaleDateString("id-ID")} {new Date(latestRicher.timestamp).toLocaleTimeString("id-ID")} • {latestRicher.trigger || "Aktivitas Input"}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => {
+                          if (latestRicher.data) {
+                            if (latestRicher.data.projects?.length) setProjects(latestRicher.data.projects);
+                            if (latestRicher.data.debtRecords?.length) setDebtRecords(latestRicher.data.debtRecords);
+                            if (latestRicher.data.financialRecords?.length) setFinancialRecords(latestRicher.data.financialRecords);
+                            autoBackupService.saveInstantDataSnapshot(
+                              latestRicher.data.financialRecords || financialRecords,
+                              latestRicher.data.debtRecords || debtRecords,
+                              latestRicher.data.projects || projects,
+                              "Pemulihan dari riwayat otomatis"
+                            );
+                            autoBackupService.forceSyncToCloud(
+                              latestRicher.data.financialRecords || financialRecords,
+                              latestRicher.data.debtRecords || debtRecords,
+                              latestRicher.data.projects || projects
+                            ).catch(() => {});
+                            setToastMessage("Data proyek, hutang piutang, dan keuangan berhasil dipulihkan & disinkronkan ke cloud!");
+                            setShowToast(true);
+                            setTimeout(() => setShowToast(false), 3000);
+                          }
+                        }}
+                        className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+                      >
+                        Pulihkan Data Kemarin
+                      </button>
+                      <button
+                        onClick={() => setIsSyncBackupModalOpen(true)}
+                        className="px-3 py-2 bg-white hover:bg-slate-50 border border-amber-200 text-slate-700 text-xs font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+                      >
+                        Buka Pusat Cadangan
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Admin Quick Metrics - Only for Admin/Owner/Direktur */}
               {(currentUser?.role === "admin" ||
                 currentUser?.role === "owner" ||
@@ -51811,6 +52110,40 @@ case "izin-cuti":
           } catch (err) {
             console.error("Failed to clear notifications:", err);
           }
+        }}
+      />
+
+      {/* Pusat Sinkronisasi & Backup Otomatis Modal */}
+      <SyncBackupModal
+        isOpen={isSyncBackupModalOpen}
+        onClose={() => setIsSyncBackupModalOpen(false)}
+        financialRecords={financialRecords}
+        debtRecords={debtRecords}
+        projects={projects}
+        onRestoreData={(restored) => {
+          if (restored.financialRecords && restored.financialRecords.length > 0) {
+            setFinancialRecords(restored.financialRecords);
+          }
+          if (restored.debtRecords && restored.debtRecords.length > 0) {
+            setDebtRecords(restored.debtRecords);
+          }
+          if (restored.projects && restored.projects.length > 0) {
+            setProjects(restored.projects);
+          }
+          autoBackupService.saveInstantDataSnapshot(
+            restored.financialRecords || financialRecords,
+            restored.debtRecords || debtRecords,
+            restored.projects || projects,
+            "Pemulihan manual dari snapshot cadangan"
+          );
+          autoBackupService.forceSyncToCloud(
+            restored.financialRecords || financialRecords,
+            restored.debtRecords || debtRecords,
+            restored.projects || projects
+          ).catch(() => {});
+          setToastMessage("Data proyek, hutang piutang, dan keuangan berhasil dipulihkan & disinkronkan ke cloud!");
+          setShowToast(true);
+          setTimeout(() => setShowToast(false), 3000);
         }}
       />
 

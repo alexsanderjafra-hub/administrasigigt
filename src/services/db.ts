@@ -22,9 +22,13 @@ export enum OperationType {
   WRITE = 'write',
 }
 
-// Daily write units quota for this free tier database is exhausted for today.
-// In-memory / local state mode keeps the entire app operational and prevents backend overload errors.
-let isFirestoreWriteQuotaExhausted = true;
+// Firestore write quota check. Defaults to active writes unless quota exceeded is flagged.
+let isFirestoreWriteQuotaExhausted = false;
+try {
+  if (typeof window !== "undefined") {
+    isFirestoreWriteQuotaExhausted = window.sessionStorage?.getItem("firestore_write_quota_exhausted") === "true";
+  }
+} catch (e) {}
 
 export function markQuotaExhausted() {
   isFirestoreWriteQuotaExhausted = true;

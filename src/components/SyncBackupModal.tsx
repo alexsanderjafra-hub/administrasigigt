@@ -40,6 +40,7 @@ export const SyncBackupModal: React.FC<SyncBackupModalProps> = ({
 }) => {
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isPulling, setIsPulling] = useState(false);
   const [backups, setBackups] = useState<SystemBackup[]>([]);
   const [selectedTab, setSelectedTab] = useState<"sync" | "history">("sync");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -52,6 +53,29 @@ export const SyncBackupModal: React.FC<SyncBackupModalProps> = ({
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const handlePullFromCloud = async () => {
+    setIsPulling(true);
+    setSyncStatus(null);
+    try {
+      const cloudSnap = await autoBackupService.fetchCloudLatestSnapshot();
+      if (!cloudSnap || (!cloudSnap.projects?.length && !cloudSnap.debtRecords?.length && !cloudSnap.financialRecords?.length)) {
+        setSyncStatus("Tidak ada data snapshot cadangan di cloud database.");
+        return;
+      }
+      onRestoreData({
+        financialRecords: (cloudSnap.financialRecords || []) as FinancialRecord[],
+        debtRecords: (cloudSnap.debtRecords || []) as DebtRecord[],
+        projects: (cloudSnap.projects || []) as Project[],
+      });
+      setSyncStatus(`Berhasil menarik data cloud: ${cloudSnap.financialRecords?.length || 0} transaksi, ${cloudSnap.debtRecords?.length || 0} catatan hutang, ${cloudSnap.projects?.length || 0} proyek.`);
+      setBackups(autoBackupService.getAvailableBackups());
+    } catch (e: any) {
+      setSyncStatus(`Gagal menarik data cloud: ${e?.message || e}`);
+    } finally {
+      setIsPulling(false);
+    }
+  };
 
   const handleForceSync = async () => {
     setIsSyncing(true);
@@ -248,24 +272,45 @@ export const SyncBackupModal: React.FC<SyncBackupModalProps> = ({
                   Aksi Sinkronisasi & Pemulihan
                 </h4>
 
-                {/* Force Cloud Sync */}
+                {/* Force Cloud Sync (Push) */}
                 <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <p className="font-black text-slate-900 text-xs flex items-center gap-1.5">
                       <Cloud size={14} className="text-indigo-600" />
-                      <span>Sinkronkan ke Cloud Database (Untuk Vercel)</span>
+                      <span>Kirim & Sinkronkan ke Cloud (Push ke Vercel/Website)</span>
                     </p>
                     <p className="text-slate-500 text-[11px] mt-0.5">
-                      Kirim seluruh data hasil editan saat ini ke cloud agar website di Vercel otomatis mendapatkan data yang sama persis.
+                      Kirim seluruh data lokal (proyek, hutang piutang, keuangan) ke database cloud Firestore agar website yang dideploy langsung ter-update secara real-time.
                     </p>
                   </div>
                   <button
                     onClick={handleForceSync}
-                    disabled={isSyncing}
+                    disabled={isSyncing || isPulling}
                     className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs rounded-xl shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50"
                   >
                     <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
-                    <span>{isSyncing ? "Menyinkronkan..." : "Sinkronkan Sekarang"}</span>
+                    <span>{isSyncing ? "Menyinkronkan..." : "Kirim ke Cloud"}</span>
+                  </button>
+                </div>
+
+                {/* Pull from Cloud */}
+                <div className="p-4 bg-blue-50/50 rounded-2xl border border-blue-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <p className="font-black text-slate-900 text-xs flex items-center gap-1.5">
+                      <RotateCcw size={14} className="text-blue-600" />
+                      <span>Tarik Data Terbaru dari Cloud (Pull dari Vercel/Website)</span>
+                    </p>
+                    <p className="text-slate-500 text-[11px] mt-0.5">
+                      Tarik data proyek, hutang piutang, dan transaksi yang diinput di website luar atau sesi lain ke tampilan saat ini.
+                    </p>
+                  </div>
+                  <button
+                    onClick={handlePullFromCloud}
+                    disabled={isSyncing || isPulling}
+                    className="px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-black text-xs rounded-xl shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 whitespace-nowrap disabled:opacity-50"
+                  >
+                    <RotateCcw size={14} className={isPulling ? "animate-spin" : ""} />
+                    <span>{isPulling ? "Menarik Data..." : "Tarik dari Cloud"}</span>
                   </button>
                 </div>
 
