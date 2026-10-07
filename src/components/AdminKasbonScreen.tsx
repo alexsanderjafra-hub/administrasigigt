@@ -404,8 +404,8 @@ export default function AdminKasbonScreen({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 text-xs">
-                  {selectedEmployeeData.borrowRecords.map((b) => (
-                    <tr key={b.id} className="hover:bg-slate-50/50">
+                  {selectedEmployeeData.borrowRecords.map((b, bIdx) => (
+                    <tr key={`${b.id || b.customId || 'kbn'}-${bIdx}`} className="hover:bg-slate-50/50">
                       <td className="p-3.5 font-mono font-bold text-indigo-700">
                         {b.customId}
                       </td>
@@ -482,8 +482,8 @@ export default function AdminKasbonScreen({
                       </td>
                     </tr>
                   ) : (
-                    selectedEmployeeData.repaymentRecords.map((r) => (
-                      <tr key={r.id} className="hover:bg-emerald-50/20">
+                    selectedEmployeeData.repaymentRecords.map((r, rIdx) => (
+                      <tr key={`${r.id || r.customId || 'rep'}-${rIdx}`} className="hover:bg-emerald-50/20">
                         <td className="p-3.5 font-mono font-bold text-slate-700">
                           {r.customId}
                         </td>
@@ -650,9 +650,9 @@ export default function AdminKasbonScreen({
                           </div>
 
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {emp.borrowRecords.map((b) => (
+                            {emp.borrowRecords.map((b, bIdx) => (
                               <div
-                                key={b.id}
+                                key={`${b.id || b.customId || 'card'}-${bIdx}`}
                                 className={`p-4 rounded-2xl border transition-all ${
                                   b.status === "PAID"
                                     ? "bg-emerald-50/40 border-emerald-200/70"
@@ -827,9 +827,9 @@ export default function AdminKasbonScreen({
                       </td>
                     </tr>
                   ) : (
-                    filteredBorrowItems.map((r) => {
+                    filteredBorrowItems.map((r, rIdx) => {
                       return (
-                        <tr key={r.id} className="hover:bg-slate-50/40 transition-colors">
+                        <tr key={`${r.id || r.customId || 'row'}-${rIdx}`} className="hover:bg-slate-50/40 transition-colors">
                           <td className="p-4 font-mono text-xs font-bold text-indigo-700">
                             {r.customId || "TRA-"}
                           </td>

@@ -22,22 +22,68 @@ export enum OperationType {
   WRITE = 'write',
 }
 
-// Firestore write quota check. Defaults to active writes.
-let isFirestoreWriteQuotaExhausted = false;
+// Firestore write quota check with persistent session & local storage circuit breaker.
+let isFirestoreWriteQuotaExhausted = true;
+let quotaExhaustedUntil = Date.now() + 12 * 60 * 60 * 1000;
+
 try {
   if (typeof window !== "undefined") {
-    // Clear any stale quota flag on boot so users can write normally
-    window.sessionStorage?.removeItem("firestore_write_quota_exhausted");
-    isFirestoreWriteQuotaExhausted = false;
+    const stored = window.localStorage?.getItem("firestore_write_quota_exhausted_until") ||
+      window.sessionStorage?.getItem("firestore_write_quota_exhausted_until");
+    if (stored) {
+      const until = Number(stored);
+      if (Date.now() < until) {
+        quotaExhaustedUntil = until;
+      }
+    } else {
+      // First boot on quota exceeded: record 12-hour circuit breaker
+      window.localStorage?.setItem("firestore_write_quota_exhausted_until", String(quotaExhaustedUntil));
+      window.sessionStorage?.setItem("firestore_write_quota_exhausted_until", String(quotaExhaustedUntil));
+    }
   }
 } catch (e) {}
 
-export function markQuotaExhausted() {
-  console.warn(`[Firestore Alert] Quota warning recorded.`);
+export function markQuotaExhausted(durationMs: number = 12 * 60 * 60 * 1000) {
+  isFirestoreWriteQuotaExhausted = true;
+  quotaExhaustedUntil = Date.now() + durationMs;
+  try {
+    if (typeof window !== "undefined") {
+      window.localStorage?.setItem("firestore_write_quota_exhausted_until", String(quotaExhaustedUntil));
+      window.sessionStorage?.setItem("firestore_write_quota_exhausted_until", String(quotaExhaustedUntil));
+    }
+  } catch (e) {}
+  console.warn(`[Firestore Circuit-Breaker Active] Batas kuota tulis Firestore tercapai. Circuit-breaker aktif selama ${Math.round(durationMs / 3600000)} jam; seluruh perubahan data tetap diproses dan tersimpan aman di LocalStorage.`);
 }
 
 export function isQuotaExhausted(): boolean {
+  if (isFirestoreWriteQuotaExhausted) {
+    if (quotaExhaustedUntil > 0 && Date.now() > quotaExhaustedUntil) {
+      isFirestoreWriteQuotaExhausted = false;
+      quotaExhaustedUntil = 0;
+      try {
+        window.localStorage?.removeItem("firestore_write_quota_exhausted_until");
+        window.sessionStorage?.removeItem("firestore_write_quota_exhausted_until");
+      } catch (e) {}
+      return false;
+    }
+    return true;
+  }
   return false;
+}
+
+// Global listener to immediately activate circuit breaker if Firebase logs or throws quota exhausted
+if (typeof window !== "undefined") {
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = String(event?.reason || "");
+    if (
+      reason.includes("resource-exhausted") ||
+      reason.includes("Quota limit exceeded") ||
+      reason.includes("quota metric 'Free daily write units")
+    ) {
+      markQuotaExhausted();
+      event.preventDefault();
+    }
+  });
 }
 
 export interface FirestoreErrorInfo {
@@ -81,7 +127,8 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
     errMessage.toLowerCase().includes("quota limit exceeded") ||
     errMessage.toLowerCase().includes("resource-exhausted") ||
     errMessage.toLowerCase().includes("quota exceeded") ||
-    errMessage.toLowerCase().includes("free daily write units");
+    errMessage.toLowerCase().includes("free daily write units") ||
+    errMessage.toLowerCase().includes("maximum backoff delay");
 
   if (isQuota) {
     markQuotaExhausted();
@@ -192,9 +239,17 @@ export const dbService = {
   },
 
   async setDocument(collectionPath: string, docId: string, data: any): Promise<void> {
+    if (isQuotaExhausted()) {
+      return;
+    }
     try {
+      const finalDocId = docId || data?.id || data?.customId;
+      if (!finalDocId) {
+        console.warn(`[dbService] setDocument missing docId on ${collectionPath}`);
+        return;
+      }
       const sanitized = sanitizeFirestoreData(data) || {};
-      await setDoc(doc(db, collectionPath, docId), {
+      await setDoc(doc(db, collectionPath, String(finalDocId)), {
         ...sanitized,
         updatedAt: Timestamp.now()
       }, { merge: true });
@@ -204,6 +259,10 @@ export const dbService = {
   },
 
   async createDocument(collectionPath: string, data: any): Promise<string> {
+    const fallbackId = data?.id || data?.customId || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    if (isQuotaExhausted()) {
+      return fallbackId;
+    }
     try {
       const sanitized = sanitizeFirestoreData(data) || {};
       const colRef = collection(db, collectionPath);
@@ -217,14 +276,19 @@ export const dbService = {
       return docRef.id;
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, collectionPath);
-      return '';
+      return fallbackId;
     }
   },
 
   async updateDocument(collectionPath: string, docId: string, data: any): Promise<void> {
+    if (isQuotaExhausted()) {
+      return;
+    }
     try {
+      const finalDocId = docId || data?.id || data?.customId;
+      if (!finalDocId) return;
       const sanitized = sanitizeFirestoreData(data) || {};
-      const docRef = doc(db, collectionPath, docId);
+      const docRef = doc(db, collectionPath, String(finalDocId));
       await setDoc(docRef, {
         ...sanitized,
         updatedAt: Timestamp.now()
@@ -235,8 +299,12 @@ export const dbService = {
   },
 
   async deleteDocument(collectionPath: string, docId: string): Promise<void> {
+    if (isQuotaExhausted()) {
+      return;
+    }
     try {
-      const docRef = doc(db, collectionPath, docId);
+      if (!docId) return;
+      const docRef = doc(db, collectionPath, String(docId));
       await deleteDoc(docRef);
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `${collectionPath}/${docId}`);

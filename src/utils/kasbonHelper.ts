@@ -190,7 +190,10 @@ export function calculateKasbonBalances(
     const isRecent = isDateOnOrAfter(r.date, KASBON_REKAP_START_DATE);
 
     if (isKasbon && !isSalary && isRecent) {
-      seenIds.add(r.id);
+      if ((r.id && seenIds.has(r.id)) || (r.customId && seenIds.has(r.customId))) {
+        return;
+      }
+      if (r.id) seenIds.add(r.id);
       if (r.customId) seenIds.add(r.customId);
 
       const empName = extractKasbonRecipient(r, knownPersonnel);

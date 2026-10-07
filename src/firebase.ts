@@ -1,7 +1,12 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { initializeFirestore, memoryLocalCache } from 'firebase/firestore';
+import { initializeFirestore, memoryLocalCache, setLogLevel } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
+
+// Silence internal Firestore SDK retry and backoff logs to keep console clean
+try {
+  setLogLevel('silent');
+} catch (_) {}
 
 const app = initializeApp(firebaseConfig);
 

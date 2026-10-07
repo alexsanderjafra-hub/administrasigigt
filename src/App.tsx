@@ -6769,7 +6769,15 @@ const getEffectiveDebtRecords = (
 
     // Exclude Kasbon records from general Hutang/Piutang (Kasbon is strictly managed in dedicated Kasbon Pegawai menu)
     // EXCEPTION: Personal Fund debts (Dana Pribadi / Talangan Pribadi) created by user are legitimate Hutang PT to personnel!
-    const isPersonalFundDebt = Boolean((r as any).originFinancialRecordId) || rTitle.includes("dana pribadi") || rTitle.includes("talangan pribadi") || rTitle.includes("rekening pribadi");
+    const isPersonalFundDebt = Boolean((r as any).originFinancialRecordId) ||
+      Boolean((r as any).originCustomId) ||
+      rTitle.includes("dana pribadi") ||
+      rTitle.includes("talangan pribadi") ||
+      rTitle.includes("rekening pribadi") ||
+      rDesc.includes("dana pribadi") ||
+      rDesc.includes("talangan dana pribadi") ||
+      rDesc.includes("ref transaksi");
+
     if (!isPersonalFundDebt) {
       if (
         rTitle.includes("kasbon") ||
@@ -6784,7 +6792,7 @@ const getEffectiveDebtRecords = (
 
     // Sesuai instruksi resmi: Data hutang awal maksimal mentok di 1 Juli 2026 (HTG-001 s/d HTG-010).
     // Transaksi/hutang setelah 1 Juli tidak dimasukkan default, biar user yang edit/tambah sendiri nanti saat berjalan.
-    if (r.type === "HUTANG" && !((r as any).originFinancialRecordId) && !isPersonalFundDebt) {
+    if (r.type === "HUTANG" && !((r as any).originFinancialRecordId) && !((r as any).originCustomId) && !isPersonalFundDebt) {
       const customUpper = (r.customId || r.id || "").toUpperCase();
       if (customUpper.startsWith("HTG-")) {
         const numPart = parseInt(customUpper.replace("HTG-", ""), 10);
@@ -6869,20 +6877,28 @@ const getEffectiveDebtRecords = (
       });
 
       const rTitleUpper = (r.title || "").toUpperCase();
-      const isPersonalFund = Boolean((r as any).originFinancialRecordId) || rTitleUpper.includes("DANA PRIBADI") || rTitleUpper.includes("TALANGAN PRIBADI") || rTitleUpper.includes("REKENING PRIBADI");
+      const rDescUpper = (r.description || "").toUpperCase();
+      const isPersonalFund = Boolean((r as any).originFinancialRecordId) ||
+        Boolean((r as any).originCustomId) ||
+        rTitleUpper.includes("DANA PRIBADI") ||
+        rTitleUpper.includes("TALANGAN PRIBADI") ||
+        rTitleUpper.includes("REKENING PRIBADI") ||
+        rDescUpper.includes("DANA PRIBADI") ||
+        rDescUpper.includes("TALANGAN DANA PRIBADI") ||
+        rDescUpper.includes("REF TRANSAKSI");
 
-      if (matchingFin) {
+      if (matchingFin && !isPersonalFund) {
         const sRaw = (matchingFin.sumberDana || "").trim().toUpperCase();
-        const isPersonalSource = sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT") || isPersonalFund;
+        const fFlow = (matchingFin.flowType || "").trim().toUpperCase();
+        const isPersonalSource = sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT") || fFlow === "PERSONAL_TALANGAN_REIMBURSE";
         const isPtSource = (sRaw === "REKENING PT" || (sRaw.includes("PT") && !sRaw.includes("NON-PT"))) && !isPersonalSource;
         if (isPtSource) {
           return; // Strictly exclude: REKENING PT is NOT a debt!
         }
       }
 
-      const descUpper = ((r.description || "") + " " + (r.title || "")).toUpperCase();
-      if (descUpper.includes("REF TRANSAKSI:")) {
-        const matchCode = descUpper.match(/REF TRANSAKSI:\s*([A-Z0-9_-]+)/);
+      if (!isPersonalFund && rDescUpper.includes("REF TRANSAKSI:")) {
+        const matchCode = rDescUpper.match(/REF TRANSAKSI:\s*([A-Z0-9_-]+)/);
         if (matchCode && matchCode[1]) {
           const targetCode = matchCode[1].trim().toUpperCase();
           const foundFin = (financialRecords || []).find(
@@ -6890,7 +6906,8 @@ const getEffectiveDebtRecords = (
           );
           if (foundFin) {
             const sRaw = (foundFin.sumberDana || "").trim().toUpperCase();
-            const isPersonalSource = sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT") || isPersonalFund;
+            const fFlow = (foundFin.flowType || "").trim().toUpperCase();
+            const isPersonalSource = sRaw === "REKENING PRIBADI" || sRaw === "DANA PRIBADI" || sRaw.includes("PRIBADI") || sRaw.includes("NON-PT") || fFlow === "PERSONAL_TALANGAN_REIMBURSE";
             const isPtSource = (sRaw === "REKENING PT" || (sRaw.includes("PT") && !sRaw.includes("NON-PT"))) && !isPersonalSource;
             if (isPtSource) {
               return; // Strictly exclude: REKENING PT is NOT a debt!
@@ -11484,14 +11501,14 @@ const AdminDebtScreen = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredRecords.map((r) => {
+                {filteredRecords.map((r, rIdx) => {
                   const sched = getScheduleForRecord(r, projects, financialRecords);
                   const totalPaid = sched.totalPaid;
                   const remaining = Math.max(0, sched.contractValue - totalPaid);
 
                   return (
                     <tr
-                      key={r.id}
+                      key={`${r.id || r.customId || 'debt-row'}-${rIdx}`}
                       onClick={(e) => {
                         const target = e.target as HTMLElement;
                         if (target.closest('button') || target.closest('a') || target.closest('select') || target.closest('input')) {
@@ -15367,12 +15384,14 @@ const AdminFinanceScreen = ({
     if (editingTransaction) {
       const linkedDebt = editingTransaction.linkedDebtId ? debtRecords.find(d => d.id === editingTransaction.linkedDebtId) : null;
       const associatedTerm = linkedDebt?.terms?.find((t: any) => t.financialRecordId === editingTransaction.id);
+      const isPersonal = editingTransaction.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+        (editingTransaction.sumberDana || "").toUpperCase().includes("PRIBADI");
 
       setEditFormData({
         date: editingTransaction.date || "",
         type: editingTransaction.type || "OUT",
-        flowType: editingTransaction.flowType || "OUT_BANK_DIRECT",
-        personalHolder: editingTransaction.personalHolder || "",
+        flowType: isPersonal ? "PERSONAL_TALANGAN_REIMBURSE" : (editingTransaction.flowType || "OUT_BANK_DIRECT"),
+        personalHolder: editingTransaction.personalHolder || (editingTransaction as any).pemilikUangPribadi || "",
         amount: String(editingTransaction.amount || ""),
         paymentMethod: editingTransaction.paymentMethod || "TRANSFER",
         adminFee: String(editingTransaction.adminFee || ""),
@@ -15381,7 +15400,7 @@ const AdminFinanceScreen = ({
         projectId: getFinancialRecordProjectId(editingTransaction, projects),
         linkedDebtId: editingTransaction.linkedDebtId || "",
         customId: editingTransaction.customId || "",
-        sumberDana: editingTransaction.sumberDana || "",
+        sumberDana: isPersonal ? "REKENING PRIBADI" : (editingTransaction.sumberDana || "REKENING PT"),
         rekPenerima: editingTransaction.rekPenerima || "",
         refIdBank: editingTransaction.refIdBank || "",
         refPiutang: editingTransaction.refPiutang || "",
@@ -15389,7 +15408,7 @@ const AdminFinanceScreen = ({
         senderName: editingTransaction.senderName || "",
         totalGaji: String((editingTransaction as any).totalGaji || ""),
         potonganKasbon: String((editingTransaction as any).potonganKasbon || ""),
-        pemilikUangPribadi: (editingTransaction as any).pemilikUangPribadi || editingTransaction.personalHolder || "",
+        pemilikUangPribadi: (editingTransaction as any).pemilikUangPribadi || editingTransaction.personalHolder || (isPersonal ? "FAISAL MUSTOPA" : ""),
         terminName: associatedTerm?.name || editingTransaction.terminName || "",
         terminDescription: associatedTerm?.description || editingTransaction.terminDescription || "",
         terminPercentage: associatedTerm?.percentage !== undefined ? String(associatedTerm.percentage) : (editingTransaction.terminPercentage !== undefined ? String(editingTransaction.terminPercentage) : ""),
@@ -15404,7 +15423,7 @@ const AdminFinanceScreen = ({
       setUseManualRefHutangEdit(false);
       setUseManualRefIdBankEdit(false);
     }
-  }, [editingTransaction, debtRecords]);
+  }, [editingTransaction?.id, editingTransaction?.customId]);
 
   const [bankAllocations, setBankAllocations] = useState<Array<{ bankId: string; amount: number }>>([{ bankId: "", amount: 0 }]);
   const [editBankAllocations, setEditBankAllocations] = useState<Array<{ bankId: string; amount: number }>>([{ bankId: "", amount: 0 }]);
@@ -17390,9 +17409,25 @@ const AdminFinanceScreen = ({
           senderName: formData.type === "IN" ? (formData.senderName || "") : "",
         };
 
-        const isPattyCashAdd = formData.flowType === "OUT_PERSONAL_SPEND" || 
+        const isPersonalAdd = formData.type === "OUT" && (
+          formData.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+          formData.sumberDana === "REKENING PRIBADI" ||
+          (formData.sumberDana || "").toUpperCase().includes("PRIBADI") ||
+          (formData.sumberDana || "").toUpperCase().includes("NON-PT")
+        ) && !(formData.sumberDana || "").toUpperCase().includes("REKENING PT");
+
+        if (isPersonalAdd) {
+          eachRecord.flowType = "PERSONAL_TALANGAN_REIMBURSE";
+          eachRecord.sumberDana = "REKENING PRIBADI";
+          (eachRecord as any).pemilikUangPribadi = formData.pemilikUangPribadi || formData.personalHolder || "FAISAL MUSTOPA";
+          if (!eachRecord.personalHolder) {
+            eachRecord.personalHolder = formData.pemilikUangPribadi || formData.personalHolder || "FAISAL MUSTOPA";
+          }
+        }
+
+        const isPattyCashAdd = !isPersonalAdd && (formData.flowType === "OUT_PERSONAL_SPEND" || 
                                (formData.sumberDana || "").toUpperCase().includes("PATTY") || 
-                               formData.sumberDana === "DANA PATTYCASH";
+                               formData.sumberDana === "DANA PATTYCASH");
         if (isPattyCashAdd && formData.type === "OUT") {
           eachRecord.flowType = "OUT_PERSONAL_SPEND";
           eachRecord.sumberDana = "DANA PATTYCASH";
@@ -17470,6 +17505,12 @@ const AdminFinanceScreen = ({
           if (setDebtRecords) {
             setDebtRecords((prev) => [newDebt, ...prev]);
           }
+          autoBackupService.saveInstantDataSnapshot(
+            currentRecordsList,
+            [newDebt, ...debtRecords],
+            projects,
+            `Catat Pengeluaran Talangan Pribadi ${eachCustomId}`
+          );
         }
 
         // Handle linkage to Debt/Receivable
@@ -17915,20 +17956,24 @@ const AdminFinanceScreen = ({
 
     const originalCustomId = editingTransaction.customId;
     const finalCustomId = editFormData.customId;
+    const docId = editingTransaction.id || editingTransaction.customId || finalCustomId || `FIN-${Date.now()}`;
+
+    const sEdit = (editFormData.sumberDana || "").trim().toUpperCase();
+    const isPersonalSumberEdit = (sEdit === "REKENING PRIBADI" || sEdit === "DANA PRIBADI" || sEdit.includes("PRIBADI") || sEdit.includes("NON-PT") || editFormData.flowType === "PERSONAL_TALANGAN_REIMBURSE") && !sEdit.includes("REKENING PT");
 
     const updatedRecord: Partial<FinancialRecord> = {
-      id: editingTransaction.id,
+      id: docId,
       date: editFormData.date,
       type: editFormData.type,
-      flowType: editFormData.type === "IN" ? "IN" : editFormData.flowType,
+      flowType: editFormData.type === "IN" ? "IN" : (isPersonalSumberEdit ? "PERSONAL_TALANGAN_REIMBURSE" : editFormData.flowType),
       personalHolder: editFormData.personalHolder || editFormData.pemilikUangPribadi || "",
-      pemilikUangPribadi: editFormData.pemilikUangPribadi || editFormData.personalHolder || "",
+      pemilikUangPribadi: editFormData.pemilikUangPribadi || editFormData.personalHolder || (isPersonalSumberEdit ? "FAISAL MUSTOPA" : ""),
       amount: Number(editFormData.amount),
       adminFee: editFormData.paymentMethod === "TRANSFER" ? Number(editFormData.adminFee || 0) : 0,
       projectId: editFormData.projectId || "",
       referenceId: editFormData.projectId || "",
       customId: finalCustomId,
-      sumberDana: editFormData.sumberDana || "",
+      sumberDana: isPersonalSumberEdit ? "REKENING PRIBADI" : (editFormData.sumberDana || ""),
       rekPenerima: editFormData.rekPenerima || "",
       refIdBank: editFormData.refIdBank || "",
       refPiutang: editFormData.refPiutang || "",
@@ -17937,6 +17982,7 @@ const AdminFinanceScreen = ({
       category: editFormData.category,
       description: (editFormData.description || "").trim().toUpperCase(),
       paymentMethod: editFormData.paymentMethod,
+      timestamp: editingTransaction.timestamp || Date.now(),
       terminName: editFormData.terminName || "",
       terminDescription: editFormData.terminDescription || "",
       terminPercentage: editFormData.terminPercentage !== "" ? Number(editFormData.terminPercentage) : "",
@@ -18009,22 +18055,30 @@ const AdminFinanceScreen = ({
     }
 
     try {
-      await dbService.setDocument("financialRecords", editingTransaction.id, {
+      await dbService.setDocument("financialRecords", docId, {
         ...editingTransaction,
         ...updatedRecord,
-        id: editingTransaction.id,
+        id: docId,
       });
-      if (editingTransaction.customId && editingTransaction.customId !== editingTransaction.id) {
-        await dbService.setDocument("financialRecords", editingTransaction.customId, {
+      if (finalCustomId && finalCustomId !== docId) {
+        await dbService.setDocument("financialRecords", finalCustomId, {
           ...editingTransaction,
           ...updatedRecord,
-          id: editingTransaction.id,
+          id: docId,
+        }).catch(() => {});
+      }
+      if (originalCustomId && originalCustomId !== docId && originalCustomId !== finalCustomId) {
+        await dbService.setDocument("financialRecords", originalCustomId, {
+          ...editingTransaction,
+          ...updatedRecord,
+          id: docId,
         }).catch(() => {});
       }
       setFinancialRecords((prev) =>
         prev.map((r) =>
-          r.id === editingTransaction.id || (Boolean(editingTransaction.customId) && r.customId === editingTransaction.customId)
-            ? ({ ...r, ...updatedRecord } as FinancialRecord)
+          (r.id && (r.id === docId || r.id === originalCustomId || r.id === finalCustomId)) ||
+          (r.customId && (r.customId === finalCustomId || r.customId === originalCustomId))
+            ? ({ ...r, ...updatedRecord, id: docId } as FinancialRecord)
             : r
         )
       );
@@ -18274,13 +18328,13 @@ const AdminFinanceScreen = ({
       }
 
       // Auto-sync Personal Fund debt upon edit (Dana Pribadi otomatis menjadi Hutang Perusahaan)
-      const sEdit = (editFormData.sumberDana || "").trim().toUpperCase();
-      const isPersonalSumberEdit = (sEdit === "REKENING PRIBADI" || sEdit === "DANA PRIBADI" || sEdit.includes("PRIBADI") || sEdit.includes("NON-PT")) && !sEdit.includes("REKENING PT");
       const existingPersonalDebt = debtRecords.find(
         (d) =>
           d.type === "HUTANG" &&
-          (((d as any).originFinancialRecordId && (d as any).originFinancialRecordId === editingTransaction.id) ||
-           ((d as any).originCustomId && (d as any).originCustomId === (editingTransaction.customId || originalCustomId)))
+          (((d as any).originFinancialRecordId && ((d as any).originFinancialRecordId === docId || (d as any).originFinancialRecordId === editingTransaction.id)) ||
+           ((d as any).originCustomId && ((d as any).originCustomId === finalCustomId || (d as any).originCustomId === originalCustomId)) ||
+           (d.description && finalCustomId && d.description.includes(finalCustomId)) ||
+           (d.description && originalCustomId && d.description.includes(originalCustomId)))
       );
 
       let finalDebtList = [...debtRecords];
@@ -18295,12 +18349,12 @@ const AdminFinanceScreen = ({
             contactName: creditorName,
             dueDate: updatedRecord.date || existingPersonalDebt.dueDate,
             description: `Hutang perusahaan atas talangan dana pribadi ${creditorName} (Ref Transaksi: ${finalCustomId})`,
-            originFinancialRecordId: editingTransaction.id,
+            originFinancialRecordId: docId,
             originCustomId: finalCustomId,
             timestamp: existingPersonalDebt.timestamp || Date.now(),
           };
           await dbService.setDocument("debtRecords", existingPersonalDebt.id, updatedDebt);
-          if (existingPersonalDebt.customId) {
+          if (existingPersonalDebt.customId && existingPersonalDebt.customId !== existingPersonalDebt.id) {
             await dbService.setDocument("debtRecords", existingPersonalDebt.customId, updatedDebt).catch(() => {});
           }
           finalDebtList = finalDebtList.map((d) => (d.id === existingPersonalDebt.id ? updatedDebt : d));
@@ -18309,7 +18363,7 @@ const AdminFinanceScreen = ({
           }
         } else {
           const deletedSet = getDeletedDebtOriginIds();
-          if (!deletedSet.has(editingTransaction.id.toLowerCase()) && !deletedSet.has((originalCustomId || "").toLowerCase())) {
+          if (!deletedSet.has(docId.toLowerCase()) && !deletedSet.has((originalCustomId || "").toLowerCase()) && !deletedSet.has((finalCustomId || "").toLowerCase())) {
             const nextHtgCustomId = getNextDebtCustomId(debtRecords, "HUTANG");
             const newDebt: DebtRecord = {
               id: nextHtgCustomId,
@@ -18324,7 +18378,7 @@ const AdminFinanceScreen = ({
               recordedBy: user?.name || creditorName || "Admin",
               timestamp: Date.now(),
               payments: [],
-              originFinancialRecordId: editingTransaction.id,
+              originFinancialRecordId: docId,
               originCustomId: finalCustomId,
               projectId: updatedRecord.referenceId || editFormData.projectId || "",
             };
@@ -18349,8 +18403,9 @@ const AdminFinanceScreen = ({
 
       // Synchronously and immediately save snapshot to local storage & backup history
       const finalFinList = financialRecords.map((r) =>
-        r.id === editingTransaction.id || (Boolean(editingTransaction.customId) && r.customId === editingTransaction.customId)
-          ? ({ ...r, ...updatedRecord } as FinancialRecord)
+        (r.id && (r.id === docId || r.id === originalCustomId || r.id === finalCustomId)) ||
+        (r.customId && (r.customId === finalCustomId || r.customId === originalCustomId))
+          ? ({ ...r, ...updatedRecord, id: docId } as FinancialRecord)
           : r
       );
       autoBackupService.saveInstantDataSnapshot(
@@ -20962,8 +21017,8 @@ const AdminFinanceScreen = ({
 
                           return (
                             <tr
-                              key={record.id}
-                              id={`row-${record.id}`}
+                              key={`${record.id || record.customId || 'row'}-${iIdx}`}
+                              id={`row-${record.id || record.customId || iIdx}`}
                               className={`hover:bg-slate-100/50 transition-all font-medium ${
                                 isDirectTarget
                                   ? "bg-indigo-50/90 ring-2 ring-indigo-400 ring-inset shadow-xs"
@@ -21365,10 +21420,10 @@ const AdminFinanceScreen = ({
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
-                            {detailedTalanganList.map((item) => {
+                            {detailedTalanganList.map((item, dIdx) => {
                               const expenseCount = getPattyCashExpenseCount(item);
                               return (
-                                <tr key={item.id} className="hover:bg-slate-50/30 transition-all">
+                                <tr key={`${item.id || item.customId || 'talangan'}-${dIdx}`} className="hover:bg-slate-50/30 transition-all">
                                   <td className="py-2.5 px-3 text-slate-400 font-medium whitespace-nowrap">{item.date}</td>
                                   <td className="py-2.5 px-3 font-mono font-black text-slate-900 whitespace-nowrap">
                                     {item.customId}
@@ -21456,8 +21511,8 @@ const AdminFinanceScreen = ({
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {incomingTransfersFiltered.length > 0 ? (
-                            incomingTransfersFiltered.map((rec) => (
-                              <tr key={rec.id} className="hover:bg-slate-50/50 font-medium">
+                            incomingTransfersFiltered.map((rec, rIdx) => (
+                              <tr key={`${rec.id || rec.customId || 'in-transfer'}-${rIdx}`} className="hover:bg-slate-50/50 font-medium">
                                 <td className="py-2.5 px-3 whitespace-nowrap">{rec.date}</td>
                                 <td className="py-2.5 px-3 font-mono font-bold text-slate-600">{rec.customId || "-"}</td>
                                 <td className="py-2.5 px-3 font-bold">
@@ -21572,8 +21627,8 @@ const AdminFinanceScreen = ({
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {outgoingSpendsFiltered.length > 0 ? (
-                            outgoingSpendsFiltered.map((rec) => (
-                              <tr key={rec.id} className="hover:bg-slate-50/50 font-medium">
+                            outgoingSpendsFiltered.map((rec, rIdx) => (
+                              <tr key={`${rec.id || rec.customId || 'out-spend'}-${rIdx}`} className="hover:bg-slate-50/50 font-medium">
                                 <td className="py-2.5 px-3 whitespace-nowrap">{rec.date}</td>
                                 <td className="py-2.5 px-3 font-mono font-bold text-slate-600">{rec.customId || "-"}</td>
                                 <td className="py-2.5 px-3 font-bold">
@@ -22308,8 +22363,8 @@ const AdminFinanceScreen = ({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {selectedPattyCashRecords.map((rec) => (
-                          <tr key={rec.id} className="hover:bg-slate-50/80 transition-all font-medium">
+                        {selectedPattyCashRecords.map((rec, rIdx) => (
+                          <tr key={`${rec.id || rec.customId || 'patty'}-${rIdx}`} className="hover:bg-slate-50/80 transition-all font-medium">
                             <td className="py-2.5 px-3 font-semibold text-slate-500 whitespace-nowrap">{rec.date}</td>
                             <td className="py-2.5 px-3 font-mono font-bold text-slate-700">{rec.customId || "-"}</td>
                             <td className="py-2.5 px-3 font-bold text-slate-900">
@@ -22562,14 +22617,20 @@ const AdminFinanceScreen = ({
                                     updatedHolder = "Faisal Mustopa (Admin)";
                                   }
                                 } else if (lowerCat === "kasbon" || lowerCat.includes("kasbon")) {
-                                  updatedFlow = "OUT_BANK_DIRECT";
-                                  updatedSumber = "REKENING PT";
+                                  if (formData.flowType !== "PERSONAL_TALANGAN_REIMBURSE" && formData.sumberDana !== "REKENING PRIBADI") {
+                                    updatedFlow = "OUT_BANK_DIRECT";
+                                    updatedSumber = "REKENING PT";
+                                  }
                                 } else if (lowerCat.includes("hutang")) {
-                                  updatedFlow = "OUT_BANK_DIRECT";
-                                  updatedSumber = "REKENING PT";
+                                  if (formData.flowType !== "PERSONAL_TALANGAN_REIMBURSE" && formData.sumberDana !== "REKENING PRIBADI") {
+                                    updatedFlow = "OUT_BANK_DIRECT";
+                                    updatedSumber = "REKENING PT";
+                                  }
                                 } else if (lowerCat.includes("reimburse")) {
-                                  updatedFlow = "OUT_BANK_DIRECT";
-                                  updatedSumber = "REKENING PT";
+                                  if (formData.flowType !== "PERSONAL_TALANGAN_REIMBURSE" && formData.sumberDana !== "REKENING PRIBADI") {
+                                    updatedFlow = "OUT_BANK_DIRECT";
+                                    updatedSumber = "REKENING PT";
+                                  }
                                 }
                                 setFormData((prev) => ({
                                   ...prev,
@@ -22622,24 +22683,27 @@ const AdminFinanceScreen = ({
                             if (val === "DANA PATTYCASH") {
                               newFlow = "OUT_PERSONAL_SPEND";
                             } else if (val === "REKENING PRIBADI") {
+                              newFlow = "PERSONAL_TALANGAN_REIMBURSE";
+                            } else if (val === "REKENING PT") {
                               newFlow = "OUT_BANK_DIRECT";
                             }
                             setFormData({
                               ...formData,
                               sumberDana: val,
                               flowType: newFlow,
+                              pemilikUangPribadi: val === "REKENING PRIBADI" ? (formData.pemilikUangPribadi || formData.personalHolder || "FAISAL MUSTOPA") : formData.pemilikUangPribadi,
                             });
                           }}
                           className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm cursor-pointer"
                         >
                           <option value="REKENING PT">REKENING PT</option>
-                          <option value="REKENING PRIBADI">REKENING PRIBADI (Dana Pribadi → Tambah Hutang PT)</option>
+                          <option value="REKENING PRIBADI">REKENING PRIBADI (Uang Karyawan = Tambah Hutang PT)</option>
                           <option value="DANA PATTYCASH">DANA PATTYCASH / KASBON (Potong Saldo Kasbon/Pattycash)</option>
                         </select>
                       </div>
 
                       {/* Input Pemilik Uang Pribadi (Khusus Pengeluaran Sumber Rekening Pribadi) */}
-                      {formData.type === "OUT" && (formData.sumberDana === "REKENING PRIBADI" || (formData.sumberDana || "").toUpperCase().includes("PRIBADI")) && (
+                      {formData.type === "OUT" && (formData.sumberDana === "REKENING PRIBADI" || (formData.sumberDana || "").toUpperCase().includes("PRIBADI") || formData.flowType === "PERSONAL_TALANGAN_REIMBURSE") && (
                         <div className="col-span-1 md:col-span-2 space-y-3 bg-amber-50/70 p-6 md:p-8 rounded-[28px] border border-amber-200">
                           <label className="text-xs md:text-sm font-black text-amber-900 uppercase tracking-widest ml-1 flex items-center gap-2">
                             <span>💳</span> Pemilik Uang Pribadi (Otomatis Dicatat Sebagai Hutang PT)
@@ -23393,8 +23457,11 @@ const AdminFinanceScreen = ({
                                 ...prev,
                                 flowType: chosenFlow,
                                 personalHolder: chosenFlow === "OUT_BANK_DIRECT" ? "" : (prev.personalHolder || "Faisal Mustopa (Admin)"),
+                                pemilikUangPribadi: chosenFlow === "PERSONAL_TALANGAN_REIMBURSE" ? (prev.pemilikUangPribadi || prev.personalHolder || "FAISAL MUSTOPA") : prev.pemilikUangPribadi,
                                 sumberDana: chosenFlow === "OUT_PERSONAL_SPEND"
                                   ? "DANA PATTYCASH"
+                                  : chosenFlow === "PERSONAL_TALANGAN_REIMBURSE"
+                                  ? "REKENING PRIBADI"
                                   : (chosenFlow === "OUT_BANK_DIRECT" || chosenFlow === "OUT_PERSONAL_TRANSFER" ? "REKENING PT" : prev.sumberDana),
                               }));
                             }}
@@ -23403,6 +23470,7 @@ const AdminFinanceScreen = ({
                             <option value="OUT_BANK_DIRECT">1. Ke PT Supplier Langsung (Dari Rekening PT ke Supplier)</option>
                             <option value="OUT_PERSONAL_TRANSFER">2. Dari Rekening PT ke Rekening Pribadi / PIC (Kasbon/Pegangan)</option>
                             <option value="OUT_PERSONAL_SPEND">3. Dari Pribadi (PIC) ke Supplier dan Lainnya (Belanja/Realisasi)</option>
+                            <option value="PERSONAL_TALANGAN_REIMBURSE">4. Dari Pribadi (Peminjam) Untuk Kebutuhan Perusahaan (HUTANG PT)</option>
                           </select>
                         </div>
 
@@ -23890,7 +23958,10 @@ const AdminFinanceScreen = ({
                               flowType: chosenFlow,
                               sumberDana: chosenFlow === "OUT_PERSONAL_SPEND"
                                 ? "DANA PATTYCASH"
+                                : chosenFlow === "PERSONAL_TALANGAN_REIMBURSE"
+                                ? "REKENING PRIBADI"
                                 : (prev.sumberDana === "DANA PATTYCASH" ? "REKENING PT" : prev.sumberDana),
+                              pemilikUangPribadi: chosenFlow === "PERSONAL_TALANGAN_REIMBURSE" ? (prev.pemilikUangPribadi || prev.personalHolder || "FAISAL MUSTOPA") : prev.pemilikUangPribadi,
                               personalHolder: chosenFlow === "OUT_BANK_DIRECT" ? "" : (prev.personalHolder || "Faisal Mustopa (Admin)"),
                             }));
                           }}
@@ -23902,6 +23973,7 @@ const AdminFinanceScreen = ({
                               <option value="OUT_BANK_DIRECT">1. Ke PT Supplier Langsung (Dari Rekening PT ke Supplier)</option>
                               <option value="OUT_PERSONAL_TRANSFER">2. Dari Rekening PT ke Rekening Pribadi / PIC (Kasbon/Pegangan)</option>
                               <option value="OUT_PERSONAL_SPEND">3. Dari Pribadi (PIC) ke Supplier dan Lainnya (Belanja/Realisasi)</option>
+                              <option value="PERSONAL_TALANGAN_REIMBURSE">4. Dari Pribadi (Peminjam) Untuk Kebutuhan Perusahaan (HUTANG PT)</option>
                             </>
                           )}
                         </select>
@@ -23932,8 +24004,10 @@ const AdminFinanceScreen = ({
                                 updatedHolder = "Faisal Mustopa (Admin)";
                               }
                             } else if (lowerCat === "kasbon" || lowerCat.includes("kasbon")) {
-                              updatedFlow = "OUT_BANK_DIRECT";
-                              updatedSumber = "REKENING PT";
+                              if (editFormData.flowType !== "PERSONAL_TALANGAN_REIMBURSE" && editFormData.sumberDana !== "REKENING PRIBADI") {
+                                updatedFlow = "OUT_BANK_DIRECT";
+                                updatedSumber = "REKENING PT";
+                              }
                             }
                             setEditFormData((prev) => ({
                               ...prev,
@@ -23985,14 +24059,20 @@ const AdminFinanceScreen = ({
                                     updatedHolder = "Faisal Mustopa (Admin)";
                                   }
                                 } else if (lowerCat === "kasbon" || lowerCat.includes("kasbon")) {
-                                  updatedFlow = "OUT_BANK_DIRECT";
-                                  updatedSumber = "REKENING PT";
+                                  if (editFormData.flowType !== "PERSONAL_TALANGAN_REIMBURSE" && editFormData.sumberDana !== "REKENING PRIBADI") {
+                                    updatedFlow = "OUT_BANK_DIRECT";
+                                    updatedSumber = "REKENING PT";
+                                  }
                                 } else if (lowerCat.includes("hutang")) {
-                                  updatedFlow = "OUT_BANK_DIRECT";
-                                  updatedSumber = "REKENING PT";
+                                  if (editFormData.flowType !== "PERSONAL_TALANGAN_REIMBURSE" && editFormData.sumberDana !== "REKENING PRIBADI") {
+                                    updatedFlow = "OUT_BANK_DIRECT";
+                                    updatedSumber = "REKENING PT";
+                                  }
                                 } else if (lowerCat.includes("reimburse")) {
-                                  updatedFlow = "OUT_BANK_DIRECT";
-                                  updatedSumber = "REKENING PT";
+                                  if (editFormData.flowType !== "PERSONAL_TALANGAN_REIMBURSE" && editFormData.sumberDana !== "REKENING PRIBADI") {
+                                    updatedFlow = "OUT_BANK_DIRECT";
+                                    updatedSumber = "REKENING PT";
+                                  }
                                 }
                                 setEditFormData((prev) => ({
                                   ...prev,
@@ -24176,7 +24256,7 @@ const AdminFinanceScreen = ({
                             if (val === "DANA PATTYCASH") {
                               newFlow = "OUT_PERSONAL_SPEND";
                             } else if (val === "REKENING PRIBADI") {
-                              newFlow = "OUT_BANK_DIRECT";
+                              newFlow = "PERSONAL_TALANGAN_REIMBURSE";
                             } else if (val === "REKENING PT") {
                               newFlow = "OUT_BANK_DIRECT";
                             }
@@ -24184,18 +24264,19 @@ const AdminFinanceScreen = ({
                               ...editFormData,
                               sumberDana: val,
                               flowType: newFlow,
+                              pemilikUangPribadi: val === "REKENING PRIBADI" ? (editFormData.pemilikUangPribadi || editFormData.personalHolder || "FAISAL MUSTOPA") : editFormData.pemilikUangPribadi,
                             });
                           }}
                           className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer"
                         >
                           <option value="REKENING PT">REKENING PT (Transfer Bank Langsung ke Supplier)</option>
                           <option value="DANA PATTYCASH">DANA PATTYCASH / KASBON (Potong Saldo Kas Kecil PIC - Bukan Hutang)</option>
-                          <option value="REKENING PRIBADI">REKENING PRIBADI (Uang Pribadi Karyawan/PIC → Tambah Hutang PT)</option>
+                          <option value="REKENING PRIBADI">REKENING PRIBADI (Uang Karyawan = Tambah Hutang PT)</option>
                         </select>
                       </div>
 
                       {/* Input Pemilik Uang Pribadi (Khusus Pengeluaran Sumber Rekening Pribadi - Edit Modal) */}
-                      {editFormData.type === "OUT" && (editFormData.sumberDana === "REKENING PRIBADI" || (editFormData.sumberDana || "").toUpperCase().includes("PRIBADI")) && (
+                      {editFormData.type === "OUT" && (editFormData.sumberDana === "REKENING PRIBADI" || (editFormData.sumberDana || "").toUpperCase().includes("PRIBADI") || editFormData.flowType === "PERSONAL_TALANGAN_REIMBURSE") && (
                         <div className="col-span-1 md:col-span-2 space-y-3 bg-amber-50/70 p-6 md:p-8 rounded-[28px] border border-amber-200">
                           <label className="text-xs md:text-sm font-black text-amber-900 uppercase tracking-widest ml-1 flex items-center gap-2">
                             <span>💳</span> Pemilik Uang Pribadi (Otomatis Dicatat Sebagai Hutang PT)
@@ -34384,16 +34465,37 @@ export default function App() {
         }
         if (Array.isArray(cloudData.financialRecords) && cloudData.financialRecords.length > 0) {
           setFinancialRecords((prev) => {
-            const fMap = new Map<string, FinancialRecord>();
-            prev.forEach((f) => fMap.set((f.customId || f.id || "").toUpperCase(), f));
+            const seenIds = new Set<string>();
+            const seenCustomIds = new Set<string>();
+            const deduped: FinancialRecord[] = [];
+
+            prev.forEach((f) => {
+              const fId = (f.id || "").trim().toUpperCase();
+              const fCust = (f.customId || "").trim().toUpperCase();
+              if ((fId && seenIds.has(fId)) || (fCust && seenCustomIds.has(fCust))) return;
+              if (fId) seenIds.add(fId);
+              if (fCust) seenCustomIds.add(fCust);
+              deduped.push(f);
+            });
+
             cloudData.financialRecords.forEach((cf: FinancialRecord) => {
-              const k = (cf.customId || cf.id || "").toUpperCase();
-              if (k) {
-                const ex = fMap.get(k);
-                fMap.set(k, ex ? { ...ex, ...cf } : cf);
+              if (!cf) return;
+              const cfId = (cf.id || "").trim().toUpperCase();
+              const cfCust = (cf.customId || "").trim().toUpperCase();
+              const exIdx = deduped.findIndex((ex) => {
+                const exId = (ex.id || "").trim().toUpperCase();
+                const exCust = (ex.customId || "").trim().toUpperCase();
+                return (cfId && exId && cfId === exId) || (cfCust && exCust && cfCust === exCust);
+              });
+              if (exIdx >= 0) {
+                deduped[exIdx] = { ...deduped[exIdx], ...cf };
+              } else if (!((cfId && seenIds.has(cfId)) || (cfCust && seenCustomIds.has(cfCust)))) {
+                if (cfId) seenIds.add(cfId);
+                if (cfCust) seenCustomIds.add(cfCust);
+                deduped.push(cf);
               }
             });
-            return Array.from(fMap.values());
+            return deduped;
           });
         }
       }
@@ -34549,7 +34651,8 @@ export default function App() {
     const unsubscribeFinance = dbService.onCollectionSnapshot<FinancialRecord>(
       "financialRecords",
       (data) => {
-        const seen = new Set<string>();
+        const seenIds = new Set<string>();
+        const seenCustomIds = new Set<string>();
         const deduped: FinancialRecord[] = [];
 
         // Check persistent local backup cache for any edits made by user
@@ -34564,33 +34667,57 @@ export default function App() {
 
         // 1. Data keuangan resmi sampai akhir September 2026 (580 transaksi orisinal)
         (seedFinancialRecords || []).forEach((seed) => {
-          const key = (seed.customId || seed.id || "").trim().toUpperCase();
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            const fromDb = (data || []).find((item) => (item.customId || item.id || "").trim().toUpperCase() === key);
-            const fromLocal = localFinMap.get(key);
-            const source = fromDb || fromLocal;
-            const enriched: FinancialRecord = source ? {
-              ...seed,
-              ...(fromLocal || {}),
-              ...(fromDb || {}),
-              description: fromDb?.description ?? fromLocal?.description ?? seed.description ?? "",
-              referenceId: fromDb?.referenceId ?? fromLocal?.referenceId ?? seed.referenceId ?? fromDb?.projectId ?? fromLocal?.projectId ?? seed.projectId ?? "",
-              projectId: fromDb?.projectId ?? fromLocal?.projectId ?? seed.projectId ?? fromDb?.referenceId ?? fromLocal?.referenceId ?? seed.referenceId ?? "",
-              category: fromDb?.category ?? fromLocal?.category ?? seed.category ?? "OPERASIONAL",
-              sumberDana: (fromDb?.sumberDana === "REKENING PRIBADI" || fromLocal?.sumberDana === "REKENING PRIBADI")
-                ? "REKENING PRIBADI"
-                : (fromDb?.sumberDana ?? fromLocal?.sumberDana ?? seed.sumberDana ?? "REKENING PT"),
-              paymentMethod: fromDb?.paymentMethod ?? fromLocal?.paymentMethod ?? seed.paymentMethod ?? "TRANSFER",
-              personalHolder: fromDb?.personalHolder ?? fromLocal?.personalHolder ?? fromDb?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? seed.personalHolder ?? "",
-              pemilikUangPribadi: fromDb?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? fromDb?.personalHolder ?? fromLocal?.personalHolder ?? "",
-              penerimaKasbon: fromDb?.penerimaKasbon ?? fromLocal?.penerimaKasbon ?? seed.penerimaKasbon ?? "",
-              refIdBank: fromDb?.refIdBank !== undefined ? fromDb.refIdBank : (fromLocal?.refIdBank !== undefined ? fromLocal.refIdBank : (seed.refIdBank || "")),
-              refHutang: fromDb?.refHutang !== undefined ? fromDb.refHutang : (fromLocal?.refHutang !== undefined ? fromLocal.refHutang : (seed.refHutang || "")),
-              flowType: fromDb?.flowType ?? fromLocal?.flowType ?? seed.flowType,
-            } as FinancialRecord : (seed as FinancialRecord);
-            deduped.push(enriched);
+          const rawId = (seed.id || "").trim().toUpperCase();
+          const rawCustomId = (seed.customId || "").trim().toUpperCase();
+          const fallbackKey = rawCustomId || rawId;
+          if (!fallbackKey) return;
+
+          if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId))) {
+            return;
           }
+          if (rawId) seenIds.add(rawId);
+          if (rawCustomId) seenCustomIds.add(rawCustomId);
+          if (fallbackKey) {
+            seenIds.add(fallbackKey);
+            seenCustomIds.add(fallbackKey);
+          }
+
+          const fromDb = (data || []).find((item) => {
+            const iId = (item.id || "").trim().toUpperCase();
+            const iCustom = (item.customId || "").trim().toUpperCase();
+            return (rawId && iId === rawId) || (rawCustomId && iCustom === rawCustomId) || (fallbackKey && (iId === fallbackKey || iCustom === fallbackKey));
+          });
+          const fromLocal = localFinMap.get(rawCustomId) || localFinMap.get(rawId) || localFinMap.get(fallbackKey);
+          const source = fromDb || fromLocal;
+          const isPersonalFund = fromDb?.sumberDana === "REKENING PRIBADI" || fromLocal?.sumberDana === "REKENING PRIBADI" || fromDb?.flowType === "PERSONAL_TALANGAN_REIMBURSE" || fromLocal?.flowType === "PERSONAL_TALANGAN_REIMBURSE";
+          const enriched: FinancialRecord = source ? {
+            ...seed,
+            ...(fromLocal || {}),
+            ...(fromDb || {}),
+            id: fromDb?.id || fromLocal?.id || seed.id || seed.customId || fallbackKey,
+            customId: fromDb?.customId || fromLocal?.customId || seed.customId || seed.id || fallbackKey,
+            description: fromDb?.description ?? fromLocal?.description ?? seed.description ?? "",
+            referenceId: fromDb?.referenceId ?? fromLocal?.referenceId ?? seed.referenceId ?? fromDb?.projectId ?? fromLocal?.projectId ?? seed.projectId ?? "",
+            projectId: fromDb?.projectId ?? fromLocal?.projectId ?? seed.projectId ?? fromDb?.referenceId ?? fromLocal?.referenceId ?? seed.referenceId ?? "",
+            category: fromDb?.category ?? fromLocal?.category ?? seed.category ?? "OPERASIONAL",
+            sumberDana: isPersonalFund
+              ? "REKENING PRIBADI"
+              : (fromDb?.sumberDana ?? fromLocal?.sumberDana ?? seed.sumberDana ?? "REKENING PT"),
+            paymentMethod: fromDb?.paymentMethod ?? fromLocal?.paymentMethod ?? seed.paymentMethod ?? "TRANSFER",
+            personalHolder: fromDb?.personalHolder ?? fromLocal?.personalHolder ?? fromDb?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? seed.personalHolder ?? "",
+            pemilikUangPribadi: fromDb?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? fromDb?.personalHolder ?? fromLocal?.personalHolder ?? (isPersonalFund ? "FAISAL MUSTOPA" : ""),
+            penerimaKasbon: fromDb?.penerimaKasbon ?? fromLocal?.penerimaKasbon ?? seed.penerimaKasbon ?? "",
+            refIdBank: fromDb?.refIdBank !== undefined ? fromDb.refIdBank : (fromLocal?.refIdBank !== undefined ? fromLocal.refIdBank : (seed.refIdBank || "")),
+            refHutang: fromDb?.refHutang !== undefined ? fromDb.refHutang : (fromLocal?.refHutang !== undefined ? fromLocal.refHutang : (seed.refHutang || "")),
+            flowType: isPersonalFund
+              ? "PERSONAL_TALANGAN_REIMBURSE"
+              : (fromDb?.flowType ?? fromLocal?.flowType ?? seed.flowType),
+          } as FinancialRecord : ({
+            ...seed,
+            id: seed.id || seed.customId || fallbackKey,
+            customId: seed.customId || seed.id || fallbackKey,
+          } as FinancialRecord);
+          deduped.push(enriched);
         });
 
         // 2. Data tambahan dari database DAN local cache (transaksi baru yang dibuat oleh user)
@@ -34611,23 +34738,34 @@ export default function App() {
         combinedFin.forEach((item) => {
           if (!item) return;
           if (item.customId && item.customId.startsWith("INC-060826-") && item.customId !== "INC-060826-001") return;
-          const key = (item.customId || item.id || "").trim().toUpperCase();
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            deduped.push(item);
+          const rawId = (item.id || "").trim().toUpperCase();
+          const rawCustomId = (item.customId || "").trim().toUpperCase();
+          const fallbackKey = rawCustomId || rawId;
+          if (!fallbackKey) return;
+
+          if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId)) || (fallbackKey && (seenIds.has(fallbackKey) || seenCustomIds.has(fallbackKey)))) {
+            return;
           }
+          if (rawId) seenIds.add(rawId);
+          if (rawCustomId) seenCustomIds.add(rawCustomId);
+          if (fallbackKey) {
+            seenIds.add(fallbackKey);
+            seenCustomIds.add(fallbackKey);
+          }
+          deduped.push(item);
         });
 
         setFinancialRecords(deduped);
         setIsFinanceLoaded(true);
       },
-      [orderBy("timestamp", "desc")],
+      [],
     );
 
     const unsubscribeDebt = dbService.onCollectionSnapshot<DebtRecord>(
       "debtRecords",
       (data) => {
-        const seen = new Set<string>();
+        const seenIds = new Set<string>();
+        const seenCustomIds = new Set<string>();
         const deduped: DebtRecord[] = [];
 
         // Check persistent local backup cache for debt records
@@ -34642,22 +34780,37 @@ export default function App() {
 
         // 1. Data resmi hutang dan piutang akhir Juli dari berkas ZIP (24 catatan)
         (seedDebtRecords || []).forEach((seed) => {
-          const key = (seed.customId || seed.id || "").trim().toUpperCase();
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            const fromDb = (data || []).find((item) => (item.customId || item.id || "").trim().toUpperCase() === key);
-            const fromLocal = localDebtMap.get(key);
-            const source = fromDb || fromLocal;
-            const baseRecord = (source ? { ...seed, ...(fromLocal || {}), ...(fromDb || {}) } : seed) as DebtRecord;
-            if (baseRecord.type === "HUTANG") {
-              // Jika data belum pernah diedit user, data hutang & pembayaran awal mentok di 1 Juli 2026.
-              // Jika user sudah mengedit/menambahkan pembayaran di local atau db, pertahankan hasil editan user.
-              if (!fromLocal?.payments && !fromDb?.payments) {
-                baseRecord.payments = (baseRecord.payments || []).filter((p) => !p.date || p.date <= "2026-07-01");
-              }
-            }
-            deduped.push(baseRecord);
+          const rawId = (seed.id || "").trim().toUpperCase();
+          const rawCustomId = (seed.customId || "").trim().toUpperCase();
+          const fallbackKey = rawCustomId || rawId;
+          if (!fallbackKey) return;
+
+          if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId))) {
+            return;
           }
+          if (rawId) seenIds.add(rawId);
+          if (rawCustomId) seenCustomIds.add(rawCustomId);
+          if (fallbackKey) {
+            seenIds.add(fallbackKey);
+            seenCustomIds.add(fallbackKey);
+          }
+
+          const fromDb = (data || []).find((item) => {
+            const iId = (item.id || "").trim().toUpperCase();
+            const iCustom = (item.customId || "").trim().toUpperCase();
+            return (rawId && iId === rawId) || (rawCustomId && iCustom === rawCustomId) || (fallbackKey && (iId === fallbackKey || iCustom === fallbackKey));
+          });
+          const fromLocal = localDebtMap.get(rawCustomId) || localDebtMap.get(rawId) || localDebtMap.get(fallbackKey);
+          const source = fromDb || fromLocal;
+          const baseRecord = (source ? { ...seed, ...(fromLocal || {}), ...(fromDb || {}) } : seed) as DebtRecord;
+          if (baseRecord.type === "HUTANG") {
+            // Jika data belum pernah diedit user, data hutang & pembayaran awal mentok di 1 Juli 2026.
+            // Jika user sudah mengedit/menambahkan pembayaran di local atau db, pertahankan hasil editan user.
+            if (!fromLocal?.payments && !fromDb?.payments) {
+              baseRecord.payments = (baseRecord.payments || []).filter((p) => !p.date || p.date <= "2026-07-01");
+            }
+          }
+          deduped.push(baseRecord);
         });
 
         // 2. Data tambahan hutang/piutang baru dari database DAN local cache
@@ -34683,36 +34836,57 @@ export default function App() {
         // 2. Data tambahan hutang/piutang baru dari database DAN local cache
         (data || []).forEach((item) => {
           if (!item) return;
-          const key = (item.customId || item.id || "").trim().toUpperCase();
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            const localMatch = localDebtMapByKey.get(key);
-            const mergedDebt: DebtRecord = localMatch ? {
-              ...item,
-              ...localMatch,
-              originFinancialRecordId: item.originFinancialRecordId || localMatch.originFinancialRecordId || (localMatch as any).originFinancialRecordId,
-              originCustomId: item.originCustomId || localMatch.originCustomId || (localMatch as any).originCustomId,
-              amount: (localMatch.amount && localMatch.amount > 0) ? localMatch.amount : item.amount,
-              contactName: localMatch.contactName || item.contactName,
-              title: localMatch.title || item.title,
-              description: localMatch.description || item.description,
-            } : item;
-            deduped.push(mergedDebt);
+          const rawId = (item.id || "").trim().toUpperCase();
+          const rawCustomId = (item.customId || "").trim().toUpperCase();
+          const fallbackKey = rawCustomId || rawId;
+          if (!fallbackKey) return;
+
+          if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId)) || (fallbackKey && (seenIds.has(fallbackKey) || seenCustomIds.has(fallbackKey)))) {
+            return;
           }
+          if (rawId) seenIds.add(rawId);
+          if (rawCustomId) seenCustomIds.add(rawCustomId);
+          if (fallbackKey) {
+            seenIds.add(fallbackKey);
+            seenCustomIds.add(fallbackKey);
+          }
+
+          const localMatch = localDebtMapByKey.get(rawCustomId) || localDebtMapByKey.get(rawId) || localDebtMapByKey.get(fallbackKey);
+          const mergedDebt: DebtRecord = localMatch ? {
+            ...item,
+            ...localMatch,
+            originFinancialRecordId: item.originFinancialRecordId || localMatch.originFinancialRecordId || (localMatch as any).originFinancialRecordId,
+            originCustomId: item.originCustomId || localMatch.originCustomId || (localMatch as any).originCustomId,
+            amount: (localMatch.amount && localMatch.amount > 0) ? localMatch.amount : item.amount,
+            contactName: localMatch.contactName || item.contactName,
+            title: localMatch.title || item.title,
+            description: localMatch.description || item.description,
+          } : item;
+          deduped.push(mergedDebt);
         });
 
         allLocalDebts.forEach((ld) => {
           if (!ld) return;
-          const key = (ld.customId || ld.id || "").trim().toUpperCase();
-          if (key && !seen.has(key)) {
-            seen.add(key);
-            deduped.push(ld);
+          const rawId = (ld.id || "").trim().toUpperCase();
+          const rawCustomId = (ld.customId || "").trim().toUpperCase();
+          const fallbackKey = rawCustomId || rawId;
+          if (!fallbackKey) return;
+
+          if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId)) || (fallbackKey && (seenIds.has(fallbackKey) || seenCustomIds.has(fallbackKey)))) {
+            return;
           }
+          if (rawId) seenIds.add(rawId);
+          if (rawCustomId) seenCustomIds.add(rawCustomId);
+          if (fallbackKey) {
+            seenIds.add(fallbackKey);
+            seenCustomIds.add(fallbackKey);
+          }
+          deduped.push(ld);
         });
 
         setDebtRecords(deduped);
       },
-      [orderBy("timestamp", "desc")],
+      [],
     );
 
     const unsubscribeAnnouncements =
@@ -40263,8 +40437,8 @@ export default function App() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
-                                {filteredProjectFinancials.map((rec) => (
-                                  <tr key={rec.id} className="hover:bg-slate-50/40 transition-colors">
+                                {filteredProjectFinancials.map((rec, rIdx) => (
+                                  <tr key={`${rec.id || rec.customId || 'proj-fin'}-${rIdx}`} className="hover:bg-slate-50/40 transition-colors">
                                     <td className="py-3 px-4 whitespace-nowrap">{rec.date}</td>
                                     <td className="py-3 px-4 whitespace-nowrap font-mono text-[10px] text-slate-500">
                                       {rec.customId || rec.id}
@@ -40334,8 +40508,8 @@ export default function App() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100 font-bold text-slate-600">
-                                {projectDebts.map((d) => (
-                                  <tr key={d.id} className="hover:bg-slate-50/30">
+                                {projectDebts.map((d, dIdx) => (
+                                  <tr key={`${d.id || d.customId || 'debt'}-${dIdx}`} className="hover:bg-slate-50/30">
                                     <td className="py-2.5 px-3">
                                       <p className="font-mono text-[9px] text-slate-400">{d.customId || d.id}</p>
                                       <p className="text-slate-800 max-w-[100px] truncate">{d.contactName}</p>
@@ -40393,8 +40567,8 @@ export default function App() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-slate-100 font-bold text-slate-600">
-                                {projectReceivables.map((d) => (
-                                  <tr key={d.id} className="hover:bg-slate-50/30">
+                                {projectReceivables.map((d, dIdx) => (
+                                  <tr key={`${d.id || d.customId || 'piutang'}-${dIdx}`} className="hover:bg-slate-50/30">
                                     <td className="py-2.5 px-3">
                                       <p className="font-mono text-[9px] text-slate-400">{d.customId || d.id}</p>
                                       <p className="text-slate-800 max-w-[100px] truncate">{d.contactName}</p>
@@ -40597,8 +40771,8 @@ export default function App() {
                           </thead>
                           <tbody>
                             {currentRabItems.length > 0 ? (
-                              currentRabItems.map((item) => (
-                                <tr key={item.id} className="border-b border-slate-50 text-xs font-bold text-slate-700 hover:bg-slate-50/50 transition-all">
+                              currentRabItems.map((item, rIdx) => (
+                                <tr key={`${item.id || 'rab'}-${rIdx}`} className="border-b border-slate-50 text-xs font-bold text-slate-700 hover:bg-slate-50/50 transition-all">
                                   <td className="p-4 pl-6 font-black text-slate-800">{item.description}</td>
                                   <td className="p-4 text-center">
                                     {item.qty} <span className="text-slate-400 text-[10px] font-semibold">{item.unit}</span>

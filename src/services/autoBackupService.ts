@@ -6,7 +6,7 @@
  * and application feature updates.
  */
 
-import { dbService } from "./db";
+import { dbService, isQuotaExhausted } from "./db";
 
 export interface SystemBackup {
   id?: string;
@@ -41,6 +41,33 @@ const LAST_DAILY_KEY = "last_auto_daily_backup_date";
 const MAX_HISTORY_ITEMS = 20;
 
 let saveTimeout: any = null;
+let lastCloudSyncTimestamp = 0;
+const CLOUD_SYNC_THROTTLE_MS = 5 * 60 * 1000; // at most once every 5 minutes for master cloud snapshot
+
+function deduplicateList<T extends { id?: string; customId?: string }>(list: T[]): T[] {
+  if (!Array.isArray(list)) return [];
+  const seenIds = new Set<string>();
+  const seenCustomIds = new Set<string>();
+  const deduped: T[] = [];
+  list.forEach((item) => {
+    if (!item) return;
+    const rawId = (item.id || "").trim().toUpperCase();
+    const rawCustom = (item.customId || "").trim().toUpperCase();
+    const key = rawCustom || rawId;
+    if (!key) return;
+    if ((rawId && seenIds.has(rawId)) || (rawCustom && seenCustomIds.has(rawCustom)) || (key && (seenIds.has(key) || seenCustomIds.has(key)))) {
+      return;
+    }
+    if (rawId) seenIds.add(rawId);
+    if (rawCustom) seenCustomIds.add(rawCustom);
+    if (key) {
+      seenIds.add(key);
+      seenCustomIds.add(key);
+    }
+    deduped.push(item);
+  });
+  return deduped;
+}
 
 export const autoBackupService = {
   /**
@@ -67,8 +94,8 @@ export const autoBackupService = {
 
     // Guard: Don't let an empty array overwrite existing populated cache
     let finalProjects = Array.isArray(projects) ? projects : [];
-    let finalDebts = Array.isArray(debtRecords) ? debtRecords : [];
-    let finalFin = Array.isArray(financialRecords) ? financialRecords : [];
+    let finalDebts = deduplicateList(Array.isArray(debtRecords) ? debtRecords : []);
+    let finalFin = deduplicateList(Array.isArray(financialRecords) ? financialRecords : []);
 
     try {
       const existing = autoBackupService.getPersistentData();
@@ -76,10 +103,10 @@ export const autoBackupService = {
         finalProjects = existing.projects;
       }
       if (finalDebts.length === 0 && existing && Array.isArray(existing.debtRecords) && existing.debtRecords.length > 0) {
-        finalDebts = existing.debtRecords;
+        finalDebts = deduplicateList(existing.debtRecords);
       }
       if (finalFin.length === 0 && existing && Array.isArray(existing.financialRecords) && existing.financialRecords.length > 0) {
-        finalFin = existing.financialRecords;
+        finalFin = deduplicateList(existing.financialRecords);
       }
     } catch (_) {}
 
@@ -145,20 +172,23 @@ export const autoBackupService = {
         }
 
         // Cloud Master Snapshot in Firestore (syncs data across AI Studio & Vercel)
-        try {
-          await dbService.setDocument("systemBackups", "latest_synced_data", {
-            updatedAt: dateStr,
-            timestamp: now,
-            trigger: triggerReason,
-            financialRecordsCount: finalFin.length,
-            debtRecordsCount: finalDebts.length,
-            projectsCount: finalProjects.length,
-            financialRecords: finalFin,
-            debtRecords: finalDebts,
-            projects: finalProjects,
-          });
-        } catch (cloudErr) {
-          console.warn("[AutoBackup] Cloud sync Firestore skipped, data tetap aman di LocalStorage:", cloudErr);
+        if (!isQuotaExhausted() && (now - lastCloudSyncTimestamp > CLOUD_SYNC_THROTTLE_MS)) {
+          try {
+            lastCloudSyncTimestamp = now;
+            await dbService.setDocument("systemBackups", "latest_synced_data", {
+              updatedAt: dateStr,
+              timestamp: now,
+              trigger: triggerReason,
+              financialRecordsCount: finalFin.length,
+              debtRecordsCount: finalDebts.length,
+              projectsCount: finalProjects.length,
+              financialRecords: finalFin,
+              debtRecords: finalDebts,
+              projects: finalProjects,
+            });
+          } catch (cloudErr) {
+            console.warn("[AutoBackup] Cloud sync Firestore skipped, data tetap aman di LocalStorage:", cloudErr);
+          }
         }
       } catch (err) {
         console.error("[AutoBackup] Error saving instant snapshot background tasks:", err);
@@ -264,6 +294,12 @@ export const autoBackupService = {
           Array.isArray(parsed.debtRecords) ||
           Array.isArray(parsed.projects)
         ) {
+          if (Array.isArray(parsed.financialRecords)) {
+            parsed.financialRecords = deduplicateList(parsed.financialRecords);
+          }
+          if (Array.isArray(parsed.debtRecords)) {
+            parsed.debtRecords = deduplicateList(parsed.debtRecords);
+          }
           return parsed as PersistentDataPayload;
         }
       }
@@ -271,8 +307,8 @@ export const autoBackupService = {
       // If parsed was still null but dedicated fallbacks exist
       if (projFallback.length > 0 || debtFallback.length > 0 || finFallback.length > 0) {
         return {
-          financialRecords: finFallback,
-          debtRecords: debtFallback,
+          financialRecords: deduplicateList(finFallback),
+          debtRecords: deduplicateList(debtFallback),
           projects: projFallback,
           updatedAt: new Date().toISOString(),
           timestamp: Date.now(),
