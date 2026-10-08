@@ -223,14 +223,14 @@ function saveLocalCollectionStore<T>(collectionPath: string, map: Map<string, T>
   }
 }
 
-function getDeletedCollectionIds(collectionPath: string): Set<string> {
+export function getDeletedCollectionIds(collectionPath: string): Set<string> {
   try {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(DELETED_COL_PREFIX + collectionPath);
       if (raw) {
         const arr = JSON.parse(raw);
         if (Array.isArray(arr)) {
-          return new Set(arr.map((x: string) => String(x).trim()));
+          return new Set(arr.map((x: string) => String(x).trim().toUpperCase()));
         }
       }
     }
@@ -238,26 +238,89 @@ function getDeletedCollectionIds(collectionPath: string): Set<string> {
   return new Set();
 }
 
-function addDeletedCollectionId(collectionPath: string, docId: string): void {
+export function addDeletedCollectionId(collectionPath: string, docId: string): void {
   try {
     if (typeof window !== "undefined" && docId) {
       const set = getDeletedCollectionIds(collectionPath);
-      set.add(String(docId).trim());
+      set.add(String(docId).trim().toUpperCase());
       localStorage.setItem(DELETED_COL_PREFIX + collectionPath, JSON.stringify(Array.from(set)));
     }
   } catch (_) {}
 }
 
-function removeDeletedCollectionId(collectionPath: string, docId: string): void {
+export function removeDeletedCollectionId(collectionPath: string, docId: string): void {
   try {
     if (typeof window !== "undefined" && docId) {
       const set = getDeletedCollectionIds(collectionPath);
-      if (set.has(String(docId).trim())) {
-        set.delete(String(docId).trim());
+      const upper = String(docId).trim().toUpperCase();
+      if (set.has(upper)) {
+        set.delete(upper);
         localStorage.setItem(DELETED_COL_PREFIX + collectionPath, JSON.stringify(Array.from(set)));
       }
     }
   } catch (_) {}
+}
+
+export function mergeWithLocalCollection<T>(collectionPath: string, serverData: T[]): T[] {
+  const localMap = getLocalCollectionStore<T>(collectionPath);
+  const deletedIds = getDeletedCollectionIds(collectionPath);
+  
+  // Index local items by uppercase id, customId, and map key
+  const localByKey = new Map<string, any>();
+  localMap.forEach((localItem: any, k) => {
+    const k1 = (localItem?.id || "").trim().toUpperCase();
+    const k2 = (localItem?.customId || "").trim().toUpperCase();
+    const kRaw = String(k).trim().toUpperCase();
+    if (kRaw) localByKey.set(kRaw, localItem);
+    if (k1) localByKey.set(k1, localItem);
+    if (k2) localByKey.set(k2, localItem);
+  });
+
+  const resultMap = new Map<string, any>();
+
+  // 1. Process server data: if there is a local version, merge local ON TOP of server. If marked deleted, skip.
+  (serverData || []).forEach((item: any) => {
+    if (!item) return;
+    const idKey = (item.id || "").trim().toUpperCase();
+    const custKey = (item.customId || "").trim().toUpperCase();
+    const primaryKey = custKey || idKey;
+    if (!primaryKey) return;
+
+    // Skip deleted
+    if (
+      (idKey && deletedIds.has(idKey)) ||
+      (custKey && deletedIds.has(custKey)) ||
+      (primaryKey && deletedIds.has(primaryKey))
+    ) {
+      return;
+    }
+
+    const localMatch = localByKey.get(idKey) || localByKey.get(custKey) || localByKey.get(primaryKey);
+    const merged = localMatch ? { ...item, ...localMatch } : item;
+    resultMap.set(primaryKey, merged);
+  });
+
+  // 2. Add local items that weren't in server data
+  localMap.forEach((localItem: any) => {
+    if (!localItem) return;
+    const idKey = (localItem.id || "").trim().toUpperCase();
+    const custKey = (localItem.customId || "").trim().toUpperCase();
+    const primaryKey = custKey || idKey;
+    if (!primaryKey) return;
+
+    if (
+      (idKey && deletedIds.has(idKey)) ||
+      (custKey && deletedIds.has(custKey)) ||
+      (primaryKey && deletedIds.has(primaryKey))
+    ) {
+      return;
+    }
+
+    const existing = resultMap.get(primaryKey);
+    resultMap.set(primaryKey, existing ? { ...existing, ...localItem } : localItem);
+  });
+
+  return Array.from(resultMap.values()) as T[];
 }
 
 export const dbService = {
@@ -293,20 +356,7 @@ export const dbService = {
         const q = queryConstraints.length > 0 ? query(colRef, ...queryConstraints) : colRef;
         const querySnapshot = await getDocs(q);
         const serverDocs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as T));
-        const localMap = getLocalCollectionStore<T>(collectionPath);
-        const deletedIds = getDeletedCollectionIds(collectionPath);
-        const resultMap = new Map<string, T>();
-        serverDocs.forEach((d: any) => {
-          const k = (d?.id || d?.customId || "").trim();
-          if (k && !deletedIds.has(k)) resultMap.set(k, d);
-        });
-        Array.from(localMap.entries()).forEach(([k, localDoc]: [string, any]) => {
-          if (!deletedIds.has(k)) {
-            const ex = resultMap.get(k);
-            resultMap.set(k, ex ? { ...ex, ...localDoc } : localDoc);
-          }
-        });
-        return Array.from(resultMap.values());
+        return mergeWithLocalCollection<T>(collectionPath, serverDocs);
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         const isPermissionDenied = errMsg.toLowerCase().includes("permission") || errMsg.toLowerCase().includes("insufficient");
@@ -318,12 +368,10 @@ export const dbService = {
         }
         
         handleFirestoreError(error, OperationType.LIST, collectionPath);
-        const localMap = getLocalCollectionStore<T>(collectionPath);
-        return Array.from(localMap.values());
+        return mergeWithLocalCollection<T>(collectionPath, []);
       }
     }
-    const localMap = getLocalCollectionStore<T>(collectionPath);
-    return Array.from(localMap.values());
+    return mergeWithLocalCollection<T>(collectionPath, []);
   },
 
   async setDocument(collectionPath: string, docId: string, data: any): Promise<void> {
@@ -433,39 +481,15 @@ export const dbService = {
     queryConstraints: any[] = [],
     errorCallback?: (error: any) => void
   ) {
-    const mergeWithLocal = (serverData: T[]): T[] => {
-      const localMap = getLocalCollectionStore<T>(collectionPath);
-      const deletedIds = getDeletedCollectionIds(collectionPath);
-      const resultMap = new Map<string, T>();
-
-      // 1. Base from server data (filtered by deleted)
-      (serverData || []).forEach((item: any) => {
-        const idKey = (item?.id || item?.customId || "").trim();
-        if (idKey && !deletedIds.has(idKey)) {
-          resultMap.set(idKey, item);
-        }
-      });
-
-      // 2. Overlay local data (local edits and additions always take absolute priority over stale server data)
-      Array.from(localMap.entries()).forEach(([key, localItem]: [string, any]) => {
-        if (!deletedIds.has(key)) {
-          const ex = resultMap.get(key);
-          resultMap.set(key, ex ? { ...ex, ...localItem } : localItem);
-        }
-      });
-
-      return Array.from(resultMap.values());
-    };
-
     const colRef = collection(db, collectionPath);
     const q = queryConstraints.length > 0 ? query(colRef, ...queryConstraints) : colRef;
     
     return onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as T));
-      callback(mergeWithLocal(data));
+      callback(mergeWithLocalCollection<T>(collectionPath, data));
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, collectionPath);
-      const localFallback = mergeWithLocal([]);
+      const localFallback = mergeWithLocalCollection<T>(collectionPath, []);
       if (localFallback.length > 0) {
         callback(localFallback);
       }

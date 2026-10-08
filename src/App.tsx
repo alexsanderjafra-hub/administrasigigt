@@ -225,7 +225,7 @@ import { normalizeContactName } from "./utils/contactHelper";
 import { DebtPaymentManager } from "./components/DebtPaymentManager";
 import { SyncBackupModal } from "./components/SyncBackupModal";
 import { autoBackupService } from "./services/autoBackupService";
-import { isQuotaExhausted } from "./services/db";
+import { isQuotaExhausted, getDeletedCollectionIds } from "./services/db";
 import {
   getFinancialOverrides,
   saveFinancialOverride,
@@ -18054,6 +18054,48 @@ const AdminFinanceScreen = ({
       terminNotes: editFormData.terminNotes || "",
     } as any;
 
+    const fullSavedRecord: FinancialRecord = {
+      ...editingTransaction,
+      ...updatedRecord,
+      id: docId,
+      customId: finalCustomId,
+      projectId: editFormData.projectId || "",
+      referenceId: editFormData.projectId || "",
+      category: editFormData.category,
+      description: (editFormData.description || "").trim().toUpperCase(),
+      timestamp: Date.now(),
+      updatedAt: new Date().toISOString(),
+      isUserEdited: true,
+    } as FinancialRecord;
+
+    // Immediately persist user override to localStorage before any async background work
+    saveFinancialOverride(fullSavedRecord);
+    if (originalCustomId && originalCustomId !== finalCustomId) {
+      saveFinancialOverride({ ...fullSavedRecord, customId: originalCustomId });
+    }
+
+    // Update in-memory state and snapshot cache immediately
+    setFinancialRecords((prev) => {
+      const nextList = prev.map((r) => {
+        const rId = (r.id || "").trim().toUpperCase();
+        const rCust = (r.customId || "").trim().toUpperCase();
+        const targetDocId = (docId || "").trim().toUpperCase();
+        const targetOrig = (originalCustomId || "").trim().toUpperCase();
+        const targetFinal = (finalCustomId || "").trim().toUpperCase();
+        const match =
+          (rId && (rId === targetDocId || rId === targetOrig || rId === targetFinal)) ||
+          (rCust && (rCust === targetDocId || rCust === targetOrig || rCust === targetFinal));
+        return match ? fullSavedRecord : r;
+      });
+      autoBackupService.saveInstantDataSnapshot(
+        nextList,
+        debtRecords,
+        projects,
+        `Update Transaksi ${finalCustomId} (${updatedRecord.sumberDana || "Rekening PT"})`
+      );
+      return nextList;
+    });
+
     let targetDebtId = editFormData.linkedDebtId;
     const validEditDebtAllocs = editFormData.type === "OUT" ? editDebtAllocations.filter((a) => a.debtId && a.amount > 0) : [];
     if (validEditDebtAllocs.length > 0) {
@@ -18178,7 +18220,7 @@ const AdminFinanceScreen = ({
               date: editFormData.date,
               note: updatedRecord.description || `Pembayaran Hutang ${targetDebt.title}`,
               financialRecordId: editingTransaction.id,
-              recordedBy: user.name,
+              recordedBy: user?.name || "Admin",
             };
             const updatedPayments = [...basePayments, newPayment];
             const totalPaid = updatedPayments.reduce((acc, curr) => acc + curr.amount, 0);
@@ -18252,7 +18294,7 @@ const AdminFinanceScreen = ({
                   date: editFormData.date,
                   note: isProjectPayment && editFormData.terminNotes ? editFormData.terminNotes : (updatedRecord.description || ""),
                   financialRecordId: editingTransaction.id,
-                  recordedBy: user.name,
+                  recordedBy: user?.name || "Admin",
                 };
                 updatedPayments.push(newPayment);
               }
@@ -18482,19 +18524,26 @@ const AdminFinanceScreen = ({
         saveFinancialOverride({ ...fullSavedRecord, customId: originalCustomId });
       }
 
-      const finalFinList = financialRecords.map((r) =>
-        (r.id && (r.id === docId || r.id === originalCustomId || r.id === finalCustomId)) ||
-        (r.customId && (r.customId === finalCustomId || r.customId === originalCustomId))
-          ? fullSavedRecord
-          : r
-      );
-      setFinancialRecords(finalFinList);
-      autoBackupService.saveInstantDataSnapshot(
-        finalFinList,
-        finalDebtList,
-        projects,
-        `Update Transaksi ${finalCustomId} (${updatedRecord.sumberDana || "Rekening Pribadi"})`
-      );
+      setFinancialRecords((prev) => {
+        const targetDocId = (docId || "").trim().toUpperCase();
+        const targetOrig = (originalCustomId || "").trim().toUpperCase();
+        const targetFinal = (finalCustomId || "").trim().toUpperCase();
+        const nextFin = prev.map((r) => {
+          const rId = (r.id || "").trim().toUpperCase();
+          const rCust = (r.customId || "").trim().toUpperCase();
+          const match =
+            (rId && (rId === targetDocId || rId === targetOrig || rId === targetFinal)) ||
+            (rCust && (rCust === targetDocId || rCust === targetOrig || rCust === targetFinal));
+          return match ? fullSavedRecord : r;
+        });
+        autoBackupService.saveInstantDataSnapshot(
+          nextFin,
+          finalDebtList,
+          projects,
+          `Update Transaksi ${finalCustomId} (${updatedRecord.sumberDana || "Rekening PT"})`
+        );
+        return nextFin;
+      });
 
       const savedRecordId = editingTransaction.id || editingTransaction.customId;
       lastEditedRecordIdRef.current = savedRecordId;
@@ -29302,12 +29351,15 @@ export default function App() {
   const [reports, setReports] = useState<FieldReport[]>([]);
   const [projects, setProjects] = useState<Project[]>(() => {
     try {
+      const deletedProjIds = getDeletedCollectionIds("projects");
       const cached = autoBackupService.getPersistentData();
       if (cached && Array.isArray(cached.projects) && cached.projects.length > 0) {
         const pMap = new Map<string, Project>();
-        defaultProjects.forEach((dp) => pMap.set(dp.id, dp));
+        defaultProjects.forEach((dp) => {
+          if (!deletedProjIds.has(dp.id.trim().toUpperCase())) pMap.set(dp.id, dp);
+        });
         cached.projects.forEach((cp: any) => {
-          if (cp && cp.id) {
+          if (cp && cp.id && !deletedProjIds.has(cp.id.trim().toUpperCase())) {
             const ex = pMap.get(cp.id);
             pMap.set(cp.id, ex ? { ...ex, ...cp } : cp);
           }
@@ -29318,9 +29370,11 @@ export default function App() {
       for (const h of history) {
         if (Array.isArray(h.data?.projects) && h.data.projects.length > 0) {
           const pMap = new Map<string, Project>();
-          defaultProjects.forEach((dp) => pMap.set(dp.id, dp));
+          defaultProjects.forEach((dp) => {
+            if (!deletedProjIds.has(dp.id.trim().toUpperCase())) pMap.set(dp.id, dp);
+          });
           h.data.projects.forEach((cp: any) => {
-            if (cp && cp.id) {
+            if (cp && cp.id && !deletedProjIds.has(cp.id.trim().toUpperCase())) {
               const ex = pMap.get(cp.id);
               pMap.set(cp.id, ex ? { ...ex, ...cp } : cp);
             }
@@ -29329,7 +29383,7 @@ export default function App() {
         }
       }
     } catch (_) {}
-    return defaultProjects;
+    return defaultProjects.filter((dp) => !getDeletedCollectionIds("projects").has(dp.id.trim().toUpperCase()));
   });
   const [projectStatusFilter, setProjectStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [projectTypeFilter, setProjectTypeFilter] = useState<"ALL" | "PENGADAAN BARANG DAN JASA" | "PROJEK STP/IPAL">("ALL");
@@ -34546,11 +34600,14 @@ export default function App() {
       (cloudData) => {
         if (!cloudData) return;
         if (Array.isArray(cloudData.projects) && cloudData.projects.length > 0) {
+          const deletedProjIds = getDeletedCollectionIds("projects");
           setProjects((prev) => {
             const pMap = new Map<string, Project>();
-            prev.forEach((p) => pMap.set(p.id, p));
+            prev.forEach((p) => {
+              if (!deletedProjIds.has(p.id.trim().toUpperCase())) pMap.set(p.id, p);
+            });
             cloudData.projects.forEach((cp: Project) => {
-              if (cp && cp.id) {
+              if (cp && cp.id && !deletedProjIds.has(cp.id.trim().toUpperCase())) {
                 const ex = pMap.get(cp.id);
                 pMap.set(cp.id, ex ? { ...ex, ...cp } : cp);
               }
@@ -34559,12 +34616,16 @@ export default function App() {
           });
         }
         if (Array.isArray(cloudData.debtRecords) && cloudData.debtRecords.length > 0) {
+          const deletedDebtIds = getDeletedDebtOriginIds();
           setDebtRecords((prev) => {
             const dMap = new Map<string, DebtRecord>();
-            prev.forEach((d) => dMap.set((d.customId || d.id || "").toUpperCase(), d));
+            prev.forEach((d) => {
+              const k = (d.customId || d.id || "").toUpperCase();
+              if (k && !deletedDebtIds.has(k.toLowerCase())) dMap.set(k, d);
+            });
             cloudData.debtRecords.forEach((cd: DebtRecord) => {
               const k = (cd.customId || cd.id || "").toUpperCase();
-              if (k) {
+              if (k && !deletedDebtIds.has(k.toLowerCase())) {
                 const ex = dMap.get(k);
                 dMap.set(k, ex ? { ...ex, ...cd } : cd);
               }
@@ -34660,19 +34721,24 @@ export default function App() {
           }
         }
 
+        const deletedProjIds = getDeletedCollectionIds("projects");
         const mergedMap = new Map<string, Project>();
         // 1. Defaults as baseline
-        defaultProjects.forEach((dp) => mergedMap.set(dp.id, dp));
+        defaultProjects.forEach((dp) => {
+          if (!deletedProjIds.has(dp.id.trim().toUpperCase())) {
+            mergedMap.set(dp.id, dp);
+          }
+        });
         // 2. Firestore projects (if any)
         (data || []).forEach((dp) => {
-          if (dp && dp.id) {
+          if (dp && dp.id && !deletedProjIds.has(dp.id.trim().toUpperCase())) {
             const ex = mergedMap.get(dp.id);
             mergedMap.set(dp.id, ex ? { ...ex, ...dp } : dp);
           }
         });
         // 3. User local/backup projects (preserves user-edited contract values & newly added projects with top priority)
         localProjects.forEach((lp) => {
-          if (lp && lp.id) {
+          if (lp && lp.id && !deletedProjIds.has(lp.id.trim().toUpperCase())) {
             const ex = mergedMap.get(lp.id);
             mergedMap.set(lp.id, ex ? { ...ex, ...lp } : lp);
           }

@@ -10,7 +10,16 @@ const DELETED_FINANCIAL_IDS_KEY = "workflow_pro_deleted_financial_ids";
 export const getFinancialOverrides = (): Record<string, Partial<FinancialRecord>> => {
   try {
     const raw = localStorage.getItem(FINANCIAL_OVERRIDES_KEY);
-    return raw ? JSON.parse(raw) : {};
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const normalized: Record<string, Partial<FinancialRecord>> = {};
+    Object.entries(parsed).forEach(([k, v]) => {
+      if (k) {
+        normalized[k] = v as any;
+        normalized[k.trim().toUpperCase()] = v as any;
+      }
+    });
+    return normalized;
   } catch (err) {
     console.warn("[FinancialStorage] Failed to read overrides:", err);
     return {};
