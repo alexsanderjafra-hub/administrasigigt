@@ -226,6 +226,13 @@ import { DebtPaymentManager } from "./components/DebtPaymentManager";
 import { SyncBackupModal } from "./components/SyncBackupModal";
 import { autoBackupService } from "./services/autoBackupService";
 import { isQuotaExhausted } from "./services/db";
+import {
+  getFinancialOverrides,
+  saveFinancialOverride,
+  removeFinancialOverride,
+  getDeletedFinancialIds,
+  markFinancialRecordDeleted,
+} from "./services/financialStorage";
 
 export const isReimbursementOrDebtRepayment = (r: any) => {
   if (!r) return false;
@@ -6677,6 +6684,17 @@ const resolvePiutangClient = (r: DebtRecord, projectsList: Project[] = []): stri
     return r.title.trim();
   }
   return "Proyek Umum";
+};
+
+export const getFinancialRecordDisplayProjectName = (
+  r: FinancialRecord | Partial<FinancialRecord> | null | undefined,
+  projectsList: Project[] = []
+): string => {
+  if (!r) return "-";
+  const pid = (r.projectId || r.referenceId || "").trim();
+  if (!pid) return "-";
+  const match = projectsList.find((p) => p.id === pid || (p as any).customId === pid || p.name === pid);
+  return match?.name || pid;
 };
 
 const DELETED_DEBT_ORIGINS_KEY = "gig_deleted_debt_origins";
@@ -14204,7 +14222,7 @@ const AdminDebtScreen = ({
                                   const status = remaining <= 0 ? "PAID" : paid > 0 ? "PARTIAL" : "UNPAID";
 
                                   return (
-                                    <tr key={rec.id || rIdx} className="hover:bg-slate-50/70 transition-colors">
+                                    <tr key={`${rec.id || rec.customId || 'rec'}-${rIdx}`} className="hover:bg-slate-50/70 transition-colors">
                                       <td className="p-3.5 pl-4 font-mono text-slate-400 text-[11px]">{rIdx + 1}</td>
                                       <td className="p-3.5 font-mono text-indigo-600 font-black text-[11px]">
                                         {rec.customId || rec.id}
@@ -14541,7 +14559,7 @@ const AdminDebtScreen = ({
                                   (fin.description || "").toUpperCase().includes("REIMBURSE");
 
                                 return (
-                                  <tr key={fin.id || fIdx} className="hover:bg-slate-50/70 transition-colors">
+                                  <tr key={`${fin.id || fin.customId || 'fin'}-${fIdx}`} className="hover:bg-slate-50/70 transition-colors">
                                     <td className="p-3.5 pl-4 font-mono text-slate-400 text-[11px]">{fIdx + 1}</td>
                                     <td className="p-3.5 font-mono text-slate-800 text-[11px]">{fin.date || "-"}</td>
                                     <td className="p-3.5 font-mono text-indigo-600 font-black text-[11px]">{fin.customId || fin.id}</td>
@@ -16336,11 +16354,21 @@ const AdminFinanceScreen = ({
       }
     ] : [];
 
+    const seenTalanganKeys = new Set<string>();
+    list.forEach((item) => {
+      if (item.id) seenTalanganKeys.add(item.id.toUpperCase());
+      if (item.customId) seenTalanganKeys.add(item.customId.toUpperCase());
+    });
+
     // 2. Scan through all OUT records from Bank PT that are custody transfers (Patty Cash / Kasbon topups)
     financialRecords.forEach((record) => {
       if (isUsingJuneBaseline && record.date.startsWith("2026-06")) return;
       if (record.type !== "OUT") return;
       if (record.flowType === "OUT_PERSONAL_SPEND" || record.customId?.startsWith("PRS-")) return;
+
+      const rCustom = (record.customId || record.id || "").trim().toUpperCase();
+      const rId = (record.id || "").trim().toUpperCase();
+      if ((rId && seenTalanganKeys.has(rId)) || (rCustom && seenTalanganKeys.has(rCustom))) return;
 
       const sDana = (record.sumberDana || "").toUpperCase();
       if (sDana.includes("PRIBADI") || sDana.includes("NON-PT")) return;
@@ -16386,6 +16414,9 @@ const AdminFinanceScreen = ({
             });
             return sum + (matching ? matching.amount : 0);
           }, 0);
+
+        if (rId) seenTalanganKeys.add(rId);
+        if (rCustom) seenTalanganKeys.add(rCustom);
 
         list.push({
           id: record.id,
@@ -17470,7 +17501,9 @@ const AdminFinanceScreen = ({
         }
 
         const finId = await dbService.createDocument("financialRecords", eachRecord);
-        currentRecordsList.push({ id: finId, ...eachRecord } as FinancialRecord);
+        const newRecordFull = { id: finId, ...eachRecord } as FinancialRecord;
+        currentRecordsList.push(newRecordFull);
+        saveFinancialOverride(newRecordFull);
 
         await logActivity(
           "FINANCE",
@@ -17920,6 +17953,13 @@ const AdminFinanceScreen = ({
         terminNotes: "",
       });
       setBankAllocations([{ bankId: "", amount: 0 }]); // Reset split view
+      setFinancialRecords(currentRecordsList);
+      autoBackupService.saveInstantDataSnapshot(
+        currentRecordsList,
+        debtRecords,
+        projects,
+        `Catat Transaksi Baru ${formData.type}`
+      );
     } catch (err) {
       console.error(err);
     }
@@ -17931,9 +17971,28 @@ const AdminFinanceScreen = ({
       return;
     }
     try {
+      const target = financialRecords.find((r) => r.id === id || r.customId === id);
+      const updated = {
+        ...(target || { id }),
+        category: newCategory,
+      };
+      saveFinancialOverride(updated);
+
+      const nextList = financialRecords.map((r) =>
+        r.id === id || r.customId === id ? { ...r, category: newCategory } : r
+      );
+      setFinancialRecords(nextList);
+
+      autoBackupService.saveInstantDataSnapshot(
+        nextList,
+        debtRecords,
+        projects,
+        `Ubah Kategori Transaksi ${id} -> ${newCategory}`
+      );
+
       await dbService.updateDocument("financialRecords", id, {
         category: newCategory,
-      });
+      }).catch(() => {});
       await logActivity(
         "FINANCE",
         "UPDATE",
@@ -17982,7 +18041,9 @@ const AdminFinanceScreen = ({
       category: editFormData.category,
       description: (editFormData.description || "").trim().toUpperCase(),
       paymentMethod: editFormData.paymentMethod,
-      timestamp: editingTransaction.timestamp || Date.now(),
+      timestamp: Date.now(),
+      updatedAt: new Date().toISOString(),
+      isUserEdited: true,
       terminName: editFormData.terminName || "",
       terminDescription: editFormData.terminDescription || "",
       terminPercentage: editFormData.terminPercentage !== "" ? Number(editFormData.terminPercentage) : "",
@@ -17991,7 +18052,7 @@ const AdminFinanceScreen = ({
       terminPaymentDate: editFormData.terminPaymentDate || "",
       terminStatus: editFormData.terminStatus as any || "LUNAS",
       terminNotes: editFormData.terminNotes || "",
-    };
+    } as any;
 
     let targetDebtId = editFormData.linkedDebtId;
     const validEditDebtAllocs = editFormData.type === "OUT" ? editDebtAllocations.filter((a) => a.debtId && a.amount > 0) : [];
@@ -18402,12 +18463,32 @@ const AdminFinanceScreen = ({
       }
 
       // Synchronously and immediately save snapshot to local storage & backup history
+      const fullSavedRecord: FinancialRecord = {
+        ...editingTransaction,
+        ...updatedRecord,
+        id: docId,
+        customId: finalCustomId,
+        projectId: editFormData.projectId || "",
+        referenceId: editFormData.projectId || "",
+        category: editFormData.category,
+        description: (editFormData.description || "").trim().toUpperCase(),
+        timestamp: Date.now(),
+        updatedAt: new Date().toISOString(),
+        isUserEdited: true,
+      } as FinancialRecord;
+
+      saveFinancialOverride(fullSavedRecord);
+      if (originalCustomId && originalCustomId !== finalCustomId) {
+        saveFinancialOverride({ ...fullSavedRecord, customId: originalCustomId });
+      }
+
       const finalFinList = financialRecords.map((r) =>
         (r.id && (r.id === docId || r.id === originalCustomId || r.id === finalCustomId)) ||
         (r.customId && (r.customId === finalCustomId || r.customId === originalCustomId))
-          ? ({ ...r, ...updatedRecord, id: docId } as FinancialRecord)
+          ? fullSavedRecord
           : r
       );
+      setFinancialRecords(finalFinList);
       autoBackupService.saveInstantDataSnapshot(
         finalFinList,
         finalDebtList,
@@ -18516,9 +18597,24 @@ const AdminFinanceScreen = ({
         );
       }
 
-      await dbService.deleteDocument("financialRecords", id);
-      setFinancialRecords?.((prev) => prev.filter((r) => r.id !== id));
+      await dbService.deleteDocument("financialRecords", id).catch(() => {});
+      markFinancialRecordDeleted(id);
+      if (targetFin?.customId) {
+        markFinancialRecordDeleted(targetFin.customId);
+        await dbService.deleteDocument("financialRecords", targetFin.customId).catch(() => {});
+      }
+      removeFinancialOverride(id);
+      if (targetFin?.customId) removeFinancialOverride(targetFin.customId);
+
+      const nextFinList = financialRecords.filter((r) => r.id !== id && r.customId !== id && (!targetFin?.customId || r.customId !== targetFin.customId));
+      setFinancialRecords(nextFinList);
       setSelectedIds((prev) => prev.filter((item) => item !== id));
+      autoBackupService.saveInstantDataSnapshot(
+        nextFinList,
+        debtRecords,
+        projects,
+        `Hapus Transaksi Keuangan ${targetFin?.customId || id}`
+      );
     } catch (err) {
       console.error(err);
     }
@@ -21065,7 +21161,7 @@ const AdminFinanceScreen = ({
                                     )}
                                   </td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-bold whitespace-nowrap">
-                                    {record.referenceId ? projects.find(p => p.id === record.referenceId)?.name || "-" : "-"}
+                                    {getFinancialRecordDisplayProjectName(record, projects)}
                                   </td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">
                                     <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-bold uppercase tracking-wider">
@@ -21121,7 +21217,7 @@ const AdminFinanceScreen = ({
                                   <td className="py-3 px-3 border-r border-slate-100 font-mono font-bold text-slate-700 whitespace-nowrap">{record.customId || "-"}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">{record.date}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-bold whitespace-nowrap">
-                                    {record.referenceId ? projects.find(p => p.id === record.referenceId)?.name || "-" : "-"}
+                                    {getFinancialRecordDisplayProjectName(record, projects)}
                                   </td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-bold text-slate-800 whitespace-nowrap">
                                     {record.senderName ? (
@@ -21174,7 +21270,7 @@ const AdminFinanceScreen = ({
                                   </td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">{record.date}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-bold whitespace-nowrap">
-                                    {record.referenceId ? projects.find(p => p.id === record.referenceId)?.name || "-" : "-"}
+                                    {getFinancialRecordDisplayProjectName(record, projects)}
                                   </td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">
                                     <select
@@ -21247,7 +21343,7 @@ const AdminFinanceScreen = ({
                                   <td className="py-3 px-3 border-r border-slate-100 font-mono font-bold text-purple-700 whitespace-nowrap">{record.customId || "-"}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">{record.date}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-bold whitespace-nowrap">
-                                    {record.referenceId ? projects.find(p => p.id === record.referenceId)?.name || "-" : "-"}
+                                    {getFinancialRecordDisplayProjectName(record, projects)}
                                   </td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-black text-slate-700 whitespace-nowrap">{record.personalHolder || "-"}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">
@@ -21516,7 +21612,7 @@ const AdminFinanceScreen = ({
                                 <td className="py-2.5 px-3 whitespace-nowrap">{rec.date}</td>
                                 <td className="py-2.5 px-3 font-mono font-bold text-slate-600">{rec.customId || "-"}</td>
                                 <td className="py-2.5 px-3 font-bold">
-                                  {rec.referenceId ? projects.find(p => p.id === rec.referenceId)?.name || "-" : "-"}
+                                  {getFinancialRecordDisplayProjectName(rec, projects)}
                                 </td>
                                 <td className="py-2.5 px-3 font-black text-slate-700">{rec.personalHolder || "-"}</td>
                                 <td className="py-2.5 px-3">
@@ -21595,8 +21691,8 @@ const AdminFinanceScreen = ({
                             className="text-[10px] font-extrabold bg-transparent text-slate-800 outline-none cursor-pointer"
                           >
                             <option value="ALL">Semua Top-Up Petty Cash</option>
-                            {detailedTalanganList.map((t) => (
-                              <option key={t.id} value={t.customId}>
+                            {detailedTalanganList.map((t, tIdx) => (
+                              <option key={`${t.id || t.customId || 'talangan'}-${tIdx}`} value={t.customId}>
                                 {t.customId} - {t.holder.split(" ")[0]} ({formatCurrency(t.initialAmount)})
                               </option>
                             ))}
@@ -21632,7 +21728,7 @@ const AdminFinanceScreen = ({
                                 <td className="py-2.5 px-3 whitespace-nowrap">{rec.date}</td>
                                 <td className="py-2.5 px-3 font-mono font-bold text-slate-600">{rec.customId || "-"}</td>
                                 <td className="py-2.5 px-3 font-bold">
-                                  {rec.referenceId ? projects.find(p => p.id === rec.referenceId)?.name || "-" : "-"}
+                                  {getFinancialRecordDisplayProjectName(rec, projects)}
                                 </td>
                                 <td className="py-2.5 px-3 font-black text-slate-700">{rec.personalHolder || "-"}</td>
                                 <td className="py-2.5 px-3">
@@ -22368,7 +22464,7 @@ const AdminFinanceScreen = ({
                             <td className="py-2.5 px-3 font-semibold text-slate-500 whitespace-nowrap">{rec.date}</td>
                             <td className="py-2.5 px-3 font-mono font-bold text-slate-700">{rec.customId || "-"}</td>
                             <td className="py-2.5 px-3 font-bold text-slate-900">
-                              {rec.referenceId ? projects.find((p) => p.id === rec.referenceId)?.name || "-" : "-"}
+                              {getFinancialRecordDisplayProjectName(rec, projects)}
                             </td>
                             <td className="py-2.5 px-3 font-black text-slate-800">{rec.personalHolder || "-"}</td>
                             <td className="py-2.5 px-3">
@@ -23628,7 +23724,7 @@ const AdminFinanceScreen = ({
                                         className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-xs md:text-sm font-mono font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer text-slate-700"
                                       >
                                         <option value="">-- Pilih ID Unik Transfer Bank PT --</option>
-                                        {availablePattyCashTopups.map((r) => {
+                                        {availablePattyCashTopups.map((r, rIdx) => {
                                           const available = getBankRemainingBalance(r, false, bankAllocations, idx);
                                           const targetCid = (r.customId || r.id || "").trim().toUpperCase();
                                           const targetId = (r.id || "").trim().toUpperCase();
@@ -23637,7 +23733,7 @@ const AdminFinanceScreen = ({
                                           const allocAmt = Number(alloc.amount) || 0;
                                           const left = isSelected ? Math.max(0, available - allocAmt) : available;
                                           return (
-                                            <option key={r.id} value={r.customId || r.id}>
+                                            <option key={`${r.id || r.customId || 'topup'}-${rIdx}`} value={r.customId || r.id}>
                                               {r.customId || "KSP"} - {r.holder} ({r.description.length > 28 ? r.description.slice(0, 28) + "..." : r.description}) [Sisa: Rp {left.toLocaleString("id-ID")}]
                                             </option>
                                           );
@@ -25047,7 +25143,7 @@ const AdminFinanceScreen = ({
                                           className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-mono font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer text-slate-700"
                                         >
                                           <option value="">-- Hubungkan ID Bank (BNK-) --</option>
-                                          {availablePattyCashTopups.map((bankRec) => {
+                                          {availablePattyCashTopups.map((bankRec, bIdx) => {
                                             const available = getBankRemainingBalance(bankRec, true, editBankAllocations, idx);
                                             const targetCid = (bankRec.customId || bankRec.id || "").trim().toUpperCase();
                                             const targetId = (bankRec.id || "").trim().toUpperCase();
@@ -25056,7 +25152,7 @@ const AdminFinanceScreen = ({
                                             const allocAmt = Number(alloc.amount) || 0;
                                             const left = isSelected ? Math.max(0, available - allocAmt) : available;
                                             return (
-                                              <option key={bankRec.id} value={bankRec.customId || bankRec.id}>
+                                              <option key={`${bankRec.id || bankRec.customId || 'bnk'}-${bIdx}`} value={bankRec.customId || bankRec.id}>
                                                 {bankRec.customId || bankRec.id} - {bankRec.holder} ({bankRec.description.length > 28 ? bankRec.description.slice(0, 28) + "..." : bankRec.description}) [Sisa: Rp {left.toLocaleString("id-ID")}]
                                               </option>
                                             );
@@ -29286,16 +29382,29 @@ export default function App() {
   const [notifications, setNotifications] = useState<any[]>([]);
   const [financialRecords, setFinancialRecords] = useState<FinancialRecord[]>(() => {
     try {
+      const overrides = getFinancialOverrides();
       const cached = autoBackupService.getPersistentData();
+      let records: FinancialRecord[] = [];
       if (cached && Array.isArray(cached.financialRecords) && cached.financialRecords.length > 0) {
-        return cached.financialRecords;
-      }
-      const history = autoBackupService.getAvailableBackups();
-      for (const h of history) {
-        if (Array.isArray(h.data?.financialRecords) && h.data.financialRecords.length > 0) {
-          return h.data.financialRecords;
+        records = cached.financialRecords;
+      } else {
+        const history = autoBackupService.getAvailableBackups();
+        for (const h of history) {
+          if (Array.isArray(h.data?.financialRecords) && h.data.financialRecords.length > 0) {
+            records = h.data.financialRecords;
+            break;
+          }
         }
       }
+      if (records.length > 0 && Object.keys(overrides).length > 0) {
+        records = records.map((r) => {
+          const k1 = (r.customId || "").trim().toUpperCase();
+          const k2 = (r.id || "").trim().toUpperCase();
+          const ov = overrides[k1] || overrides[k2];
+          return ov ? { ...r, ...ov } : r;
+        });
+      }
+      return records;
     } catch (_) {}
     return [];
   });
@@ -34464,6 +34573,8 @@ export default function App() {
           });
         }
         if (Array.isArray(cloudData.financialRecords) && cloudData.financialRecords.length > 0) {
+          const userOverrides = getFinancialOverrides();
+          const deletedIds = getDeletedFinancialIds();
           setFinancialRecords((prev) => {
             const seenIds = new Set<string>();
             const seenCustomIds = new Set<string>();
@@ -34472,6 +34583,7 @@ export default function App() {
             prev.forEach((f) => {
               const fId = (f.id || "").trim().toUpperCase();
               const fCust = (f.customId || "").trim().toUpperCase();
+              if ((fId && deletedIds.has(fId)) || (fCust && deletedIds.has(fCust))) return;
               if ((fId && seenIds.has(fId)) || (fCust && seenCustomIds.has(fCust))) return;
               if (fId) seenIds.add(fId);
               if (fCust) seenCustomIds.add(fCust);
@@ -34482,17 +34594,32 @@ export default function App() {
               if (!cf) return;
               const cfId = (cf.id || "").trim().toUpperCase();
               const cfCust = (cf.customId || "").trim().toUpperCase();
+              if ((cfId && deletedIds.has(cfId)) || (cfCust && deletedIds.has(cfCust))) return;
+
               const exIdx = deduped.findIndex((ex) => {
                 const exId = (ex.id || "").trim().toUpperCase();
                 const exCust = (ex.customId || "").trim().toUpperCase();
                 return (cfId && exId && cfId === exId) || (cfCust && exCust && cfCust === exCust);
               });
+              const userEdit = userOverrides[cfId] || userOverrides[cfCust];
               if (exIdx >= 0) {
-                deduped[exIdx] = { ...deduped[exIdx], ...cf };
+                // Preserve local state & user overrides!
+                deduped[exIdx] = {
+                  ...cf,
+                  ...deduped[exIdx],
+                  ...(userEdit || {}),
+                  category: userEdit?.category || deduped[exIdx].category || cf.category,
+                  projectId: userEdit?.projectId !== undefined ? userEdit.projectId : (deduped[exIdx].projectId || cf.projectId || ""),
+                  referenceId: userEdit?.referenceId !== undefined ? userEdit.referenceId : (deduped[exIdx].referenceId || cf.referenceId || ""),
+                  description: userEdit?.description || deduped[exIdx].description || cf.description,
+                  amount: userEdit?.amount !== undefined ? userEdit.amount : (deduped[exIdx].amount ?? cf.amount),
+                  sumberDana: userEdit?.sumberDana || deduped[exIdx].sumberDana || cf.sumberDana,
+                  flowType: userEdit?.flowType || deduped[exIdx].flowType || cf.flowType,
+                };
               } else if (!((cfId && seenIds.has(cfId)) || (cfCust && seenCustomIds.has(cfCust)))) {
                 if (cfId) seenIds.add(cfId);
                 if (cfCust) seenCustomIds.add(cfCust);
-                deduped.push(cf);
+                deduped.push(userEdit ? { ...cf, ...userEdit } : cf);
               }
             });
             return deduped;
@@ -34536,18 +34663,18 @@ export default function App() {
         const mergedMap = new Map<string, Project>();
         // 1. Defaults as baseline
         defaultProjects.forEach((dp) => mergedMap.set(dp.id, dp));
-        // 2. User local/backup projects (preserves user-edited contract values & newly added projects)
-        localProjects.forEach((lp) => {
-          if (lp && lp.id) {
-            const ex = mergedMap.get(lp.id);
-            mergedMap.set(lp.id, ex ? { ...ex, ...lp } : lp);
-          }
-        });
-        // 3. Firestore projects (if any)
+        // 2. Firestore projects (if any)
         (data || []).forEach((dp) => {
           if (dp && dp.id) {
             const ex = mergedMap.get(dp.id);
             mergedMap.set(dp.id, ex ? { ...ex, ...dp } : dp);
+          }
+        });
+        // 3. User local/backup projects (preserves user-edited contract values & newly added projects with top priority)
+        localProjects.forEach((lp) => {
+          if (lp && lp.id) {
+            const ex = mergedMap.get(lp.id);
+            mergedMap.set(lp.id, ex ? { ...ex, ...lp } : lp);
           }
         });
 
@@ -34651,6 +34778,8 @@ export default function App() {
     const unsubscribeFinance = dbService.onCollectionSnapshot<FinancialRecord>(
       "financialRecords",
       (data) => {
+        const userOverrides = getFinancialOverrides();
+        const deletedIds = getDeletedFinancialIds();
         const seenIds = new Set<string>();
         const seenCustomIds = new Set<string>();
         const deduped: FinancialRecord[] = [];
@@ -34660,8 +34789,10 @@ export default function App() {
         const localFinMap = new Map<string, any>();
         if (localPersistent && Array.isArray(localPersistent.financialRecords)) {
           localPersistent.financialRecords.forEach((item) => {
-            const k = (item.customId || item.id || "").trim().toUpperCase();
-            if (k) localFinMap.set(k, item);
+            const k1 = (item.customId || "").trim().toUpperCase();
+            const k2 = (item.id || "").trim().toUpperCase();
+            if (k1) localFinMap.set(k1, item);
+            if (k2) localFinMap.set(k2, item);
           });
         }
 
@@ -34672,14 +34803,13 @@ export default function App() {
           const fallbackKey = rawCustomId || rawId;
           if (!fallbackKey) return;
 
-          if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId))) {
+          // Never resurrect items deleted by user
+          if ((rawId && deletedIds.has(rawId)) || (rawCustomId && deletedIds.has(rawCustomId)) || (fallbackKey && deletedIds.has(fallbackKey))) {
             return;
           }
-          if (rawId) seenIds.add(rawId);
-          if (rawCustomId) seenCustomIds.add(rawCustomId);
-          if (fallbackKey) {
-            seenIds.add(fallbackKey);
-            seenCustomIds.add(fallbackKey);
+
+          if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId)) || (fallbackKey && (seenIds.has(fallbackKey) || seenCustomIds.has(fallbackKey)))) {
+            return;
           }
 
           const fromDb = (data || []).find((item) => {
@@ -34688,39 +34818,74 @@ export default function App() {
             return (rawId && iId === rawId) || (rawCustomId && iCustom === rawCustomId) || (fallbackKey && (iId === fallbackKey || iCustom === fallbackKey));
           });
           const fromLocal = localFinMap.get(rawCustomId) || localFinMap.get(rawId) || localFinMap.get(fallbackKey);
-          const source = fromDb || fromLocal;
-          const isPersonalFund = fromDb?.sumberDana === "REKENING PRIBADI" || fromLocal?.sumberDana === "REKENING PRIBADI" || fromDb?.flowType === "PERSONAL_TALANGAN_REIMBURSE" || fromLocal?.flowType === "PERSONAL_TALANGAN_REIMBURSE";
-          const enriched: FinancialRecord = source ? {
+          const userEdit = userOverrides[rawCustomId] || userOverrides[rawId] || userOverrides[fallbackKey];
+
+          const isPersonalFund =
+            userEdit?.sumberDana === "REKENING PRIBADI" ||
+            fromLocal?.sumberDana === "REKENING PRIBADI" ||
+            fromDb?.sumberDana === "REKENING PRIBADI" ||
+            userEdit?.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+            fromLocal?.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+            fromDb?.flowType === "PERSONAL_TALANGAN_REIMBURSE";
+
+          const finalId = userEdit?.id || fromLocal?.id || fromDb?.id || seed.id || fallbackKey;
+          const finalCustomId = userEdit?.customId || fromLocal?.customId || fromDb?.customId || seed.customId || fallbackKey;
+
+          // Register all identifier variants in seen sets to completely prevent duplicates
+          [rawId, rawCustomId, fallbackKey, finalId, finalCustomId, fromDb?.id, fromDb?.customId, fromLocal?.id, fromLocal?.customId].forEach((k) => {
+            if (k) {
+              const u = String(k).trim().toUpperCase();
+              seenIds.add(u);
+              seenCustomIds.add(u);
+            }
+          });
+
+          // Precedence: seed < fromDb < fromLocal < userEdit (user explicit edits have absolute priority)
+          const enriched: FinancialRecord = {
             ...seed,
-            ...(fromLocal || {}),
             ...(fromDb || {}),
-            id: fromDb?.id || fromLocal?.id || seed.id || seed.customId || fallbackKey,
-            customId: fromDb?.customId || fromLocal?.customId || seed.customId || seed.id || fallbackKey,
-            description: fromDb?.description ?? fromLocal?.description ?? seed.description ?? "",
-            referenceId: fromDb?.referenceId ?? fromLocal?.referenceId ?? seed.referenceId ?? fromDb?.projectId ?? fromLocal?.projectId ?? seed.projectId ?? "",
-            projectId: fromDb?.projectId ?? fromLocal?.projectId ?? seed.projectId ?? fromDb?.referenceId ?? fromLocal?.referenceId ?? seed.referenceId ?? "",
-            category: fromDb?.category ?? fromLocal?.category ?? seed.category ?? "OPERASIONAL",
+            ...(fromLocal || {}),
+            ...(userEdit || {}),
+            id: finalId,
+            customId: finalCustomId,
+            category: userEdit?.category || fromLocal?.category || fromDb?.category || seed.category || "OPERASIONAL",
+            projectId: userEdit?.projectId !== undefined
+              ? userEdit.projectId
+              : (fromLocal?.projectId !== undefined
+                ? fromLocal.projectId
+                : (fromDb?.projectId !== undefined
+                  ? fromDb.projectId
+                  : (seed.projectId || ""))),
+            referenceId: userEdit?.referenceId !== undefined
+              ? userEdit.referenceId
+              : (fromLocal?.referenceId !== undefined
+                ? fromLocal.referenceId
+                : (fromDb?.referenceId !== undefined
+                  ? fromDb.referenceId
+                  : (seed.referenceId || seed.projectId || ""))),
+            description: userEdit?.description || fromLocal?.description || fromDb?.description || seed.description || "",
+            amount: userEdit?.amount !== undefined ? userEdit.amount : (fromLocal?.amount !== undefined ? fromLocal.amount : (fromDb?.amount ?? seed.amount ?? 0)),
+            adminFee: userEdit?.adminFee !== undefined ? userEdit.adminFee : (fromLocal?.adminFee !== undefined ? fromLocal.adminFee : (fromDb?.adminFee ?? seed.adminFee ?? 0)),
+            paymentMethod: userEdit?.paymentMethod || fromLocal?.paymentMethod || fromDb?.paymentMethod || seed.paymentMethod || "TRANSFER",
             sumberDana: isPersonalFund
               ? "REKENING PRIBADI"
-              : (fromDb?.sumberDana ?? fromLocal?.sumberDana ?? seed.sumberDana ?? "REKENING PT"),
-            paymentMethod: fromDb?.paymentMethod ?? fromLocal?.paymentMethod ?? seed.paymentMethod ?? "TRANSFER",
-            personalHolder: fromDb?.personalHolder ?? fromLocal?.personalHolder ?? fromDb?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? seed.personalHolder ?? "",
-            pemilikUangPribadi: fromDb?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? fromDb?.personalHolder ?? fromLocal?.personalHolder ?? (isPersonalFund ? "FAISAL MUSTOPA" : ""),
-            penerimaKasbon: fromDb?.penerimaKasbon ?? fromLocal?.penerimaKasbon ?? seed.penerimaKasbon ?? "",
-            refIdBank: fromDb?.refIdBank !== undefined ? fromDb.refIdBank : (fromLocal?.refIdBank !== undefined ? fromLocal.refIdBank : (seed.refIdBank || "")),
-            refHutang: fromDb?.refHutang !== undefined ? fromDb.refHutang : (fromLocal?.refHutang !== undefined ? fromLocal.refHutang : (seed.refHutang || "")),
+              : (userEdit?.sumberDana ?? fromLocal?.sumberDana ?? fromDb?.sumberDana ?? seed.sumberDana ?? "REKENING PT"),
             flowType: isPersonalFund
               ? "PERSONAL_TALANGAN_REIMBURSE"
-              : (fromDb?.flowType ?? fromLocal?.flowType ?? seed.flowType),
-          } as FinancialRecord : ({
-            ...seed,
-            id: seed.id || seed.customId || fallbackKey,
-            customId: seed.customId || seed.id || fallbackKey,
-          } as FinancialRecord);
+              : (userEdit?.flowType ?? fromLocal?.flowType ?? fromDb?.flowType ?? seed.flowType),
+            personalHolder: userEdit?.personalHolder ?? fromLocal?.personalHolder ?? fromDb?.personalHolder ?? seed.personalHolder ?? "",
+            pemilikUangPribadi: userEdit?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? fromDb?.pemilikUangPribadi ?? (isPersonalFund ? "FAISAL MUSTOPA" : (seed.pemilikUangPribadi || "")),
+            rekPenerima: userEdit?.rekPenerima ?? fromLocal?.rekPenerima ?? fromDb?.rekPenerima ?? seed.rekPenerima ?? "",
+            refIdBank: userEdit?.refIdBank !== undefined ? userEdit.refIdBank : (fromLocal?.refIdBank !== undefined ? fromLocal.refIdBank : (fromDb?.refIdBank ?? seed.refIdBank ?? "")),
+            refHutang: userEdit?.refHutang !== undefined ? userEdit.refHutang : (fromLocal?.refHutang !== undefined ? fromLocal.refHutang : (fromDb?.refHutang ?? seed.refHutang ?? "")),
+            refPiutang: userEdit?.refPiutang !== undefined ? userEdit.refPiutang : (fromLocal?.refPiutang !== undefined ? fromLocal.refPiutang : (fromDb?.refPiutang ?? seed.refPiutang ?? "")),
+            senderName: userEdit?.senderName !== undefined ? userEdit.senderName : (fromLocal?.senderName ?? fromDb?.senderName ?? seed.senderName ?? ""),
+          } as FinancialRecord;
+
           deduped.push(enriched);
         });
 
-        // 2. Data tambahan dari database DAN local cache (transaksi baru yang dibuat oleh user)
+        // 2. Data tambahan dari local cache DAN database (transaksi baru yang dibuat oleh user)
         let allLocalFin: any[] = [];
         if (localPersistent && Array.isArray(localPersistent.financialRecords) && localPersistent.financialRecords.length > 0) {
           allLocalFin = localPersistent.financialRecords;
@@ -34734,7 +34899,8 @@ export default function App() {
           }
         }
 
-        const combinedFin = [...(data || []), ...allLocalFin];
+        // Put local first so local edits to user-created transactions take priority over stale DB
+        const combinedFin = [...allLocalFin, ...(data || [])];
         combinedFin.forEach((item) => {
           if (!item) return;
           if (item.customId && item.customId.startsWith("INC-060826-") && item.customId !== "INC-060826-001") return;
@@ -34743,19 +34909,42 @@ export default function App() {
           const fallbackKey = rawCustomId || rawId;
           if (!fallbackKey) return;
 
+          if ((rawId && deletedIds.has(rawId)) || (rawCustomId && deletedIds.has(rawCustomId)) || (fallbackKey && deletedIds.has(fallbackKey))) {
+            return;
+          }
+
           if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId)) || (fallbackKey && (seenIds.has(fallbackKey) || seenCustomIds.has(fallbackKey)))) {
             return;
           }
-          if (rawId) seenIds.add(rawId);
-          if (rawCustomId) seenCustomIds.add(rawCustomId);
-          if (fallbackKey) {
-            seenIds.add(fallbackKey);
-            seenCustomIds.add(fallbackKey);
-          }
-          deduped.push(item);
+
+          const userEdit = userOverrides[rawCustomId] || userOverrides[rawId] || userOverrides[fallbackKey];
+          let finalItem: FinancialRecord = userEdit ? { ...item, ...userEdit } : item;
+
+          [rawId, rawCustomId, fallbackKey, finalItem.id, finalItem.customId].forEach((k) => {
+            if (k) {
+              const u = String(k).trim().toUpperCase();
+              seenIds.add(u);
+              seenCustomIds.add(u);
+            }
+          });
+
+          deduped.push(finalItem);
         });
 
-        setFinancialRecords(deduped);
+        // Final strict deduplication pass
+        const finalDeduped: FinancialRecord[] = [];
+        const finalSeen = new Set<string>();
+        for (const item of deduped) {
+          const k1 = (item.id || "").trim().toUpperCase();
+          const k2 = (item.customId || "").trim().toUpperCase();
+          if (k1 && finalSeen.has(k1)) continue;
+          if (k2 && finalSeen.has(k2)) continue;
+          if (k1) finalSeen.add(k1);
+          if (k2) finalSeen.add(k2);
+          finalDeduped.push(item);
+        }
+
+        setFinancialRecords(finalDeduped);
         setIsFinanceLoaded(true);
       },
       [],
@@ -34767,14 +34956,17 @@ export default function App() {
         const seenIds = new Set<string>();
         const seenCustomIds = new Set<string>();
         const deduped: DebtRecord[] = [];
+        const deletedOrigins = getDeletedDebtOriginIds();
 
         // Check persistent local backup cache for debt records
         const localPersistent = autoBackupService.getPersistentData();
         const localDebtMap = new Map<string, any>();
         if (localPersistent && Array.isArray(localPersistent.debtRecords)) {
           localPersistent.debtRecords.forEach((item) => {
-            const k = (item.customId || item.id || "").trim().toUpperCase();
-            if (k) localDebtMap.set(k, item);
+            const k1 = (item.customId || "").trim().toUpperCase();
+            const k2 = (item.id || "").trim().toUpperCase();
+            if (k1) localDebtMap.set(k1, item);
+            if (k2) localDebtMap.set(k2, item);
           });
         }
 
@@ -34784,6 +34976,15 @@ export default function App() {
           const rawCustomId = (seed.customId || "").trim().toUpperCase();
           const fallbackKey = rawCustomId || rawId;
           if (!fallbackKey) return;
+
+          // Never resurrect debts deleted by user
+          if (
+            (rawId && deletedOrigins.has(rawId.toLowerCase())) ||
+            (rawCustomId && deletedOrigins.has(rawCustomId.toLowerCase())) ||
+            (fallbackKey && deletedOrigins.has(fallbackKey.toLowerCase()))
+          ) {
+            return;
+          }
 
           if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId))) {
             return;
@@ -34802,7 +35003,8 @@ export default function App() {
           });
           const fromLocal = localDebtMap.get(rawCustomId) || localDebtMap.get(rawId) || localDebtMap.get(fallbackKey);
           const source = fromDb || fromLocal;
-          const baseRecord = (source ? { ...seed, ...(fromLocal || {}), ...(fromDb || {}) } : seed) as DebtRecord;
+          // Local edits take precedence over stale DB
+          const baseRecord = (source ? { ...seed, ...(fromDb || {}), ...(fromLocal || {}) } : seed) as DebtRecord;
           if (baseRecord.type === "HUTANG") {
             // Jika data belum pernah diedit user, data hutang & pembayaran awal mentok di 1 Juli 2026.
             // Jika user sudah mengedit/menambahkan pembayaran di local atau db, pertahankan hasil editan user.
@@ -34829,8 +35031,10 @@ export default function App() {
 
         const localDebtMapByKey = new Map<string, DebtRecord>();
         allLocalDebts.forEach((ld) => {
-          const k = (ld.customId || ld.id || "").trim().toUpperCase();
-          if (k) localDebtMapByKey.set(k, ld);
+          const k1 = (ld.customId || "").trim().toUpperCase();
+          const k2 = (ld.id || "").trim().toUpperCase();
+          if (k1) localDebtMapByKey.set(k1, ld);
+          if (k2) localDebtMapByKey.set(k2, ld);
         });
 
         // 2. Data tambahan hutang/piutang baru dari database DAN local cache
@@ -34840,6 +35044,14 @@ export default function App() {
           const rawCustomId = (item.customId || "").trim().toUpperCase();
           const fallbackKey = rawCustomId || rawId;
           if (!fallbackKey) return;
+
+          if (
+            (rawId && deletedOrigins.has(rawId.toLowerCase())) ||
+            (rawCustomId && deletedOrigins.has(rawCustomId.toLowerCase())) ||
+            (fallbackKey && deletedOrigins.has(fallbackKey.toLowerCase()))
+          ) {
+            return;
+          }
 
           if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId)) || (fallbackKey && (seenIds.has(fallbackKey) || seenCustomIds.has(fallbackKey)))) {
             return;
@@ -34871,6 +35083,14 @@ export default function App() {
           const rawCustomId = (ld.customId || "").trim().toUpperCase();
           const fallbackKey = rawCustomId || rawId;
           if (!fallbackKey) return;
+
+          if (
+            (rawId && deletedOrigins.has(rawId.toLowerCase())) ||
+            (rawCustomId && deletedOrigins.has(rawCustomId.toLowerCase())) ||
+            (fallbackKey && deletedOrigins.has(fallbackKey.toLowerCase()))
+          ) {
+            return;
+          }
 
           if ((rawId && seenIds.has(rawId)) || (rawCustomId && seenCustomIds.has(rawCustomId)) || (fallbackKey && (seenIds.has(fallbackKey) || seenCustomIds.has(fallbackKey)))) {
             return;
@@ -35360,8 +35580,15 @@ export default function App() {
     if (!currentUser || !isFinanceLoaded || financialRecords.length === 0 || projects.length === 0 || hasRunAutoHealRef.current) return;
     hasRunAutoHealRef.current = true;
 
+    const overrides = getFinancialOverrides();
     setFinancialRecords((prev) =>
       prev.map((rec) => {
+        const k1 = (rec.customId || "").trim().toUpperCase();
+        const k2 = (rec.id || "").trim().toUpperCase();
+        // NEVER auto-heal or overwrite records that the user has explicitly edited
+        if (rec.isUserEdited || overrides[k1] || overrides[k2]) {
+          return rec;
+        }
         const canonicalProjId = getFinancialRecordProjectId(rec, projects);
         if (canonicalProjId && (rec.projectId !== canonicalProjId || rec.referenceId !== canonicalProjId)) {
           return {
@@ -35377,7 +35604,7 @@ export default function App() {
 
   // Automated Instant Backup upon ANY input or edit in financial records, debt records, or projects
   useEffect(() => {
-    if (isFinanceLoaded && (financialRecords.length > 0 || debtRecords.length > 0)) {
+    if (financialRecords.length > 0 || debtRecords.length > 0 || projects.length > 0) {
       autoBackupService.saveInstantDataSnapshot(
         financialRecords,
         debtRecords,
@@ -35385,7 +35612,7 @@ export default function App() {
         "Auto-backup otomatis (Aktivitas input/edit data)"
       );
     }
-  }, [isFinanceLoaded, financialRecords, debtRecords, projects]);
+  }, [financialRecords, debtRecords, projects]);
 
   // Automated Daily Backup: securely snapshots financialRecords, debtRecords, and projects once per day
   useEffect(() => {

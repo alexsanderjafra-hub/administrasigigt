@@ -190,6 +190,76 @@ export function sanitizeFirestoreData<T>(data: T): T {
   return data;
 }
 
+const LOCAL_COL_PREFIX = "wf_local_col_";
+const DELETED_COL_PREFIX = "wf_deleted_col_";
+
+function getLocalCollectionStore<T>(collectionPath: string): Map<string, T> {
+  const map = new Map<string, T>();
+  try {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(LOCAL_COL_PREFIX + collectionPath);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          arr.forEach((item) => {
+            const key = (item?.id || item?.customId || "").trim();
+            if (key) map.set(key, item);
+          });
+        }
+      }
+    }
+  } catch (_) {}
+  return map;
+}
+
+function saveLocalCollectionStore<T>(collectionPath: string, map: Map<string, T>): void {
+  try {
+    if (typeof window !== "undefined") {
+      const arr = Array.from(map.values());
+      localStorage.setItem(LOCAL_COL_PREFIX + collectionPath, JSON.stringify(arr));
+    }
+  } catch (e) {
+    console.warn(`[LocalStore] Failed to save collection ${collectionPath}:`, e);
+  }
+}
+
+function getDeletedCollectionIds(collectionPath: string): Set<string> {
+  try {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(DELETED_COL_PREFIX + collectionPath);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          return new Set(arr.map((x: string) => String(x).trim()));
+        }
+      }
+    }
+  } catch (_) {}
+  return new Set();
+}
+
+function addDeletedCollectionId(collectionPath: string, docId: string): void {
+  try {
+    if (typeof window !== "undefined" && docId) {
+      const set = getDeletedCollectionIds(collectionPath);
+      set.add(String(docId).trim());
+      localStorage.setItem(DELETED_COL_PREFIX + collectionPath, JSON.stringify(Array.from(set)));
+    }
+  } catch (_) {}
+}
+
+function removeDeletedCollectionId(collectionPath: string, docId: string): void {
+  try {
+    if (typeof window !== "undefined" && docId) {
+      const set = getDeletedCollectionIds(collectionPath);
+      if (set.has(String(docId).trim())) {
+        set.delete(String(docId).trim());
+        localStorage.setItem(DELETED_COL_PREFIX + collectionPath, JSON.stringify(Array.from(set)));
+      }
+    }
+  } catch (_) {}
+}
+
 export const dbService = {
   async getDocument<T>(collectionPath: string, docId: string, retries = 3, delayMs = 300): Promise<T | null> {
     for (let i = 0; i < retries; i++) {
@@ -208,10 +278,12 @@ export const dbService = {
         }
         
         handleFirestoreError(error, OperationType.GET, `${collectionPath}/${docId}`);
-        return null;
+        const localMap = getLocalCollectionStore<T>(collectionPath);
+        return localMap.get(docId) || null;
       }
     }
-    return null;
+    const localMap = getLocalCollectionStore<T>(collectionPath);
+    return localMap.get(docId) || null;
   },
 
   async getCollection<T>(collectionPath: string, queryConstraints: any[] = [], retries = 3, delayMs = 300): Promise<T[]> {
@@ -220,7 +292,21 @@ export const dbService = {
         const colRef = collection(db, collectionPath);
         const q = queryConstraints.length > 0 ? query(colRef, ...queryConstraints) : colRef;
         const querySnapshot = await getDocs(q);
-        return querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as T));
+        const serverDocs = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as T));
+        const localMap = getLocalCollectionStore<T>(collectionPath);
+        const deletedIds = getDeletedCollectionIds(collectionPath);
+        const resultMap = new Map<string, T>();
+        serverDocs.forEach((d: any) => {
+          const k = (d?.id || d?.customId || "").trim();
+          if (k && !deletedIds.has(k)) resultMap.set(k, d);
+        });
+        Array.from(localMap.entries()).forEach(([k, localDoc]: [string, any]) => {
+          if (!deletedIds.has(k)) {
+            const ex = resultMap.get(k);
+            resultMap.set(k, ex ? { ...ex, ...localDoc } : localDoc);
+          }
+        });
+        return Array.from(resultMap.values());
       } catch (error) {
         const errMsg = error instanceof Error ? error.message : String(error);
         const isPermissionDenied = errMsg.toLowerCase().includes("permission") || errMsg.toLowerCase().includes("insufficient");
@@ -232,18 +318,27 @@ export const dbService = {
         }
         
         handleFirestoreError(error, OperationType.LIST, collectionPath);
-        return [];
+        const localMap = getLocalCollectionStore<T>(collectionPath);
+        return Array.from(localMap.values());
       }
     }
-    return [];
+    const localMap = getLocalCollectionStore<T>(collectionPath);
+    return Array.from(localMap.values());
   },
 
   async setDocument(collectionPath: string, docId: string, data: any): Promise<void> {
+    const finalDocId = docId || data?.id || data?.customId;
+    if (finalDocId) {
+      const map = getLocalCollectionStore(collectionPath);
+      const existing = (map.get(String(finalDocId)) || {}) as any;
+      map.set(String(finalDocId), { ...existing, ...data, id: finalDocId, updatedAt: new Date().toISOString() });
+      saveLocalCollectionStore(collectionPath, map);
+      removeDeletedCollectionId(collectionPath, String(finalDocId));
+    }
     if (isQuotaExhausted()) {
       return;
     }
     try {
-      const finalDocId = docId || data?.id || data?.customId;
       if (!finalDocId) {
         console.warn(`[dbService] setDocument missing docId on ${collectionPath}`);
         return;
@@ -260,6 +355,11 @@ export const dbService = {
 
   async createDocument(collectionPath: string, data: any): Promise<string> {
     const fallbackId = data?.id || data?.customId || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const map = getLocalCollectionStore(collectionPath);
+    map.set(String(fallbackId), { ...data, id: fallbackId, createdAt: Date.now(), updatedAt: new Date().toISOString() });
+    saveLocalCollectionStore(collectionPath, map);
+    removeDeletedCollectionId(collectionPath, String(fallbackId));
+
     if (isQuotaExhausted()) {
       return fallbackId;
     }
@@ -273,6 +373,9 @@ export const dbService = {
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now()
       });
+      map.delete(String(fallbackId));
+      map.set(String(docRef.id), { ...data, id: docRef.id, createdAt: Date.now(), updatedAt: new Date().toISOString() });
+      saveLocalCollectionStore(collectionPath, map);
       return docRef.id;
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, collectionPath);
@@ -281,11 +384,18 @@ export const dbService = {
   },
 
   async updateDocument(collectionPath: string, docId: string, data: any): Promise<void> {
+    const finalDocId = docId || data?.id || data?.customId;
+    if (finalDocId) {
+      const map = getLocalCollectionStore(collectionPath);
+      const existing = (map.get(String(finalDocId)) || {}) as any;
+      map.set(String(finalDocId), { ...existing, ...data, id: finalDocId, updatedAt: new Date().toISOString() });
+      saveLocalCollectionStore(collectionPath, map);
+      removeDeletedCollectionId(collectionPath, String(finalDocId));
+    }
     if (isQuotaExhausted()) {
       return;
     }
     try {
-      const finalDocId = docId || data?.id || data?.customId;
       if (!finalDocId) return;
       const sanitized = sanitizeFirestoreData(data) || {};
       const docRef = doc(db, collectionPath, String(finalDocId));
@@ -299,6 +409,12 @@ export const dbService = {
   },
 
   async deleteDocument(collectionPath: string, docId: string): Promise<void> {
+    if (docId) {
+      const map = getLocalCollectionStore(collectionPath);
+      map.delete(String(docId));
+      saveLocalCollectionStore(collectionPath, map);
+      addDeletedCollectionId(collectionPath, String(docId));
+    }
     if (isQuotaExhausted()) {
       return;
     }
@@ -317,14 +433,42 @@ export const dbService = {
     queryConstraints: any[] = [],
     errorCallback?: (error: any) => void
   ) {
+    const mergeWithLocal = (serverData: T[]): T[] => {
+      const localMap = getLocalCollectionStore<T>(collectionPath);
+      const deletedIds = getDeletedCollectionIds(collectionPath);
+      const resultMap = new Map<string, T>();
+
+      // 1. Base from server data (filtered by deleted)
+      (serverData || []).forEach((item: any) => {
+        const idKey = (item?.id || item?.customId || "").trim();
+        if (idKey && !deletedIds.has(idKey)) {
+          resultMap.set(idKey, item);
+        }
+      });
+
+      // 2. Overlay local data (local edits and additions always take absolute priority over stale server data)
+      Array.from(localMap.entries()).forEach(([key, localItem]: [string, any]) => {
+        if (!deletedIds.has(key)) {
+          const ex = resultMap.get(key);
+          resultMap.set(key, ex ? { ...ex, ...localItem } : localItem);
+        }
+      });
+
+      return Array.from(resultMap.values());
+    };
+
     const colRef = collection(db, collectionPath);
     const q = queryConstraints.length > 0 ? query(colRef, ...queryConstraints) : colRef;
     
     return onSnapshot(q, (snapshot) => {
       const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as T));
-      callback(data);
+      callback(mergeWithLocal(data));
     }, (error) => {
       handleFirestoreError(error, OperationType.LIST, collectionPath);
+      const localFallback = mergeWithLocal([]);
+      if (localFallback.length > 0) {
+        callback(localFallback);
+      }
       if (errorCallback) {
         errorCallback(error);
       }
@@ -342,10 +486,13 @@ export const dbService = {
       if (docSnap.exists()) {
         callback({ id: docSnap.id, ...docSnap.data() } as T);
       } else {
-        callback(null);
+        const localMap = getLocalCollectionStore<T>(collectionPath);
+        callback(localMap.get(docId) || null);
       }
     }, (error) => {
       console.warn(`[Firestore] onDocumentSnapshot error on ${collectionPath}/${docId}:`, error);
+      const localMap = getLocalCollectionStore<T>(collectionPath);
+      callback(localMap.get(docId) || null);
       if (errorCallback) errorCallback(error);
     });
   }
