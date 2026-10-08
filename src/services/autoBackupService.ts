@@ -7,6 +7,8 @@
  */
 
 import { dbService, isQuotaExhausted } from "./db";
+import { idbStorage } from "./indexedDbStorage";
+import { getFinancialOverrides } from "./financialStorage";
 
 export interface SystemBackup {
   id?: string;
@@ -38,11 +40,43 @@ const PROJECTS_CACHE_KEY = "PT_PROJECTS_CACHE";
 const DEBTS_CACHE_KEY = "PT_DEBTS_CACHE";
 const FINANCE_CACHE_KEY = "PT_FINANCE_CACHE";
 const LAST_DAILY_KEY = "last_auto_daily_backup_date";
-const MAX_HISTORY_ITEMS = 20;
+const MAX_HISTORY_ITEMS = 2; // Keep at most 2 in localStorage to prevent 5MB quota overflow; full history is kept in IndexedDB
 
 let saveTimeout: any = null;
 let lastCloudSyncTimestamp = 0;
 const CLOUD_SYNC_THROTTLE_MS = 5 * 60 * 1000; // at most once every 5 minutes for master cloud snapshot
+
+let cachedInMemoryPayload: PersistentDataPayload | null = null;
+
+export function evictHeavyCaches(): void {
+  try {
+    if (typeof window === "undefined") return;
+    localStorage.removeItem(BACKUP_HISTORY_KEY);
+    localStorage.removeItem("last_sync_error_log");
+  } catch (_) {}
+}
+
+function safeSetLocalStorage(key: string, value: string): void {
+  try {
+    if (typeof window === "undefined") return;
+    localStorage.setItem(key, value);
+  } catch (err: any) {
+    const isQuota =
+      err?.name === "QuotaExceededError" ||
+      err?.code === 22 ||
+      err?.code === 1014 ||
+      String(err).includes("exceeded the quota");
+    if (isQuota) {
+      console.warn("[AutoBackup] LocalStorage quota exceeded, evicting bulky history...");
+      evictHeavyCaches();
+      try {
+        localStorage.setItem(key, value);
+      } catch (retryErr) {
+        console.warn("[AutoBackup] LocalStorage retry failed, relying on IndexedDB:", retryErr);
+      }
+    }
+  }
+}
 
 function deduplicateList<T extends { id?: string; customId?: string }>(list: T[]): T[] {
   if (!Array.isArray(list)) return [];
@@ -110,26 +144,43 @@ export const autoBackupService = {
       }
     } catch (_) {}
 
-    // 1. Primary Persistent Cache in LocalStorage - WRITE SYNCHRONOUSLY & INSTANTLY
+    // Guarantee that any active user overrides (e.g. edited category) are applied before saving snapshots
     try {
-      const payload: PersistentDataPayload = {
-        financialRecords: finalFin,
-        debtRecords: finalDebts,
-        projects: finalProjects,
-        updatedAt: dateStr,
-        timestamp: now,
-        version: 2,
-      };
+      const userOverrides = getFinancialOverrides();
+      if (finalFin.length > 0 && Object.keys(userOverrides).length > 0) {
+        finalFin = finalFin.map((r: any) => {
+          const k1 = (r.customId || "").trim().toUpperCase();
+          const k2 = (r.id || "").trim().toUpperCase();
+          const ov = userOverrides[k1] || userOverrides[k2];
+          return ov ? { ...r, ...ov, category: ov.category || r.category, isUserEdited: true } : r;
+        });
+      }
+    } catch (_) {}
 
-      localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(payload));
+    // 1. In-Memory and Primary Persistent Cache - WRITE SYNCHRONOUSLY & INSTANTLY
+    const payload: PersistentDataPayload = {
+      financialRecords: finalFin,
+      debtRecords: finalDebts,
+      projects: finalProjects,
+      updatedAt: dateStr,
+      timestamp: now,
+      version: 2,
+    };
+    cachedInMemoryPayload = payload;
+
+    try {
+      safeSetLocalStorage(PERSISTENT_CACHE_KEY, JSON.stringify(payload));
 
       // Dedicated per-entity fallback storage
-      if (finalProjects.length > 0) localStorage.setItem(PROJECTS_CACHE_KEY, JSON.stringify(finalProjects));
-      if (finalDebts.length > 0) localStorage.setItem(DEBTS_CACHE_KEY, JSON.stringify(finalDebts));
-      if (finalFin.length > 0) localStorage.setItem(FINANCE_CACHE_KEY, JSON.stringify(finalFin));
+      if (finalProjects.length > 0) safeSetLocalStorage(PROJECTS_CACHE_KEY, JSON.stringify(finalProjects));
+      if (finalDebts.length > 0) safeSetLocalStorage(DEBTS_CACHE_KEY, JSON.stringify(finalDebts));
+      if (finalFin.length > 0) safeSetLocalStorage(FINANCE_CACHE_KEY, JSON.stringify(finalFin));
     } catch (lsErr) {
       console.warn("[AutoBackup] Synchronous localStorage save warning:", lsErr);
     }
+
+    // Persist to IndexedDB asynchronously (guaranteed durability without quota limitations)
+    idbStorage.set("snapshots", "latest", payload).catch(() => {});
 
     if (saveTimeout) {
       clearTimeout(saveTimeout);
@@ -138,7 +189,7 @@ export const autoBackupService = {
     // 2. Debounced background updates for Rolling History and Cloud Master Snapshot
     saveTimeout = setTimeout(async () => {
       try {
-        // Rolling History of Snapshots in LocalStorage
+        // Rolling History of Snapshots in LocalStorage and IndexedDB
         try {
           const rawHistory = localStorage.getItem(BACKUP_HISTORY_KEY);
           let history: SystemBackup[] = rawHistory ? JSON.parse(rawHistory) : [];
@@ -161,11 +212,14 @@ export const autoBackupService = {
               },
             };
 
+            // Full snapshot saved to IndexedDB
+            idbStorage.set("backups", newSnap.id || `snap_${now}`, newSnap).catch(() => {});
+
             history.unshift(newSnap);
             if (history.length > MAX_HISTORY_ITEMS) {
               history = history.slice(0, MAX_HISTORY_ITEMS);
             }
-            localStorage.setItem(BACKUP_HISTORY_KEY, JSON.stringify(history));
+            safeSetLocalStorage(BACKUP_HISTORY_KEY, JSON.stringify(history));
           }
         } catch (histErr) {
           console.warn("[AutoBackup] Gagal memperbarui riwayat backup:", histErr);
@@ -239,6 +293,9 @@ export const autoBackupService = {
    */
   getPersistentData: (): PersistentDataPayload | null => {
     try {
+      if (cachedInMemoryPayload && (cachedInMemoryPayload.financialRecords?.length || cachedInMemoryPayload.projects?.length)) {
+        return cachedInMemoryPayload;
+      }
       const raw = localStorage.getItem(PERSISTENT_CACHE_KEY);
       let parsed = raw ? JSON.parse(raw) : null;
 
@@ -295,7 +352,17 @@ export const autoBackupService = {
           Array.isArray(parsed.projects)
         ) {
           if (Array.isArray(parsed.financialRecords)) {
-            parsed.financialRecords = deduplicateList(parsed.financialRecords);
+            let finList = deduplicateList(parsed.financialRecords);
+            const userOverrides = getFinancialOverrides();
+            if (Object.keys(userOverrides).length > 0) {
+              finList = finList.map((r: any) => {
+                const k1 = (r.customId || "").trim().toUpperCase();
+                const k2 = (r.id || "").trim().toUpperCase();
+                const ov = userOverrides[k1] || userOverrides[k2];
+                return ov ? { ...r, ...ov, category: ov.category || r.category, isUserEdited: true } : r;
+              });
+            }
+            parsed.financialRecords = finList;
           }
           if (Array.isArray(parsed.debtRecords)) {
             parsed.debtRecords = deduplicateList(parsed.debtRecords);
@@ -306,8 +373,18 @@ export const autoBackupService = {
 
       // If parsed was still null but dedicated fallbacks exist
       if (projFallback.length > 0 || debtFallback.length > 0 || finFallback.length > 0) {
+        let finalFallbackFin = deduplicateList(finFallback);
+        const userOverrides = getFinancialOverrides();
+        if (Object.keys(userOverrides).length > 0) {
+          finalFallbackFin = finalFallbackFin.map((r: any) => {
+            const k1 = (r.customId || "").trim().toUpperCase();
+            const k2 = (r.id || "").trim().toUpperCase();
+            const ov = userOverrides[k1] || userOverrides[k2];
+            return ov ? { ...r, ...ov, category: ov.category || r.category, isUserEdited: true } : r;
+          });
+        }
         return {
-          financialRecords: deduplicateList(finFallback),
+          financialRecords: finalFallbackFin,
           debtRecords: deduplicateList(debtFallback),
           projects: projFallback,
           updatedAt: new Date().toISOString(),

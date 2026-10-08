@@ -315,6 +315,8 @@ export interface FinancialRecord {
   terminPaymentDate?: string;
   terminStatus?: 'LUNAS' | 'BELUM LUNAS' | 'BELUM BAYAR';
   terminNotes?: string;
+  isUserEdited?: boolean;
+  updatedAt?: string;
 }
 
 export interface AuditLog {

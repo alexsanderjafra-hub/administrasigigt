@@ -227,6 +227,7 @@ import { SyncBackupModal } from "./components/SyncBackupModal";
 import { autoBackupService } from "./services/autoBackupService";
 import { isQuotaExhausted, getDeletedCollectionIds } from "./services/db";
 import {
+  initFinancialStorage,
   getFinancialOverrides,
   saveFinancialOverride,
   removeFinancialOverride,
@@ -17972,34 +17973,53 @@ const AdminFinanceScreen = ({
     }
     try {
       const target = financialRecords.find((r) => r.id === id || r.customId === id);
+      const targetId = target?.id || id;
+      const targetCustomId = target?.customId || id;
       const updated = {
-        ...(target || { id }),
+        ...(target || { id: targetId, customId: targetCustomId }),
+        id: targetId,
+        customId: targetCustomId,
         category: newCategory,
+        isUserEdited: true,
       };
-      saveFinancialOverride(updated);
 
-      const nextList = financialRecords.map((r) =>
-        r.id === id || r.customId === id ? { ...r, category: newCategory } : r
-      );
+      // 1. Immediately persist in user overrides (localStorage & IndexedDB)
+      saveFinancialOverride(updated);
+      if (targetId) saveFinancialOverride({ ...updated, id: targetId });
+      if (targetCustomId) saveFinancialOverride({ ...updated, customId: targetCustomId });
+
+      // 2. Persist to local collection store and backend
+      await dbService.setDocument("financialRecords", targetId, updated).catch(() => {});
+      if (targetCustomId && targetCustomId !== targetId) {
+        await dbService.setDocument("financialRecords", targetCustomId, updated).catch(() => {});
+      }
+
+      // 3. Update React in-memory state
+      const nextList = financialRecords.map((r) => {
+        const match =
+          r.id === id ||
+          r.customId === id ||
+          (targetId && r.id === targetId) ||
+          (targetCustomId && r.customId === targetCustomId);
+        return match ? { ...r, category: newCategory, isUserEdited: true } : r;
+      });
       setFinancialRecords(nextList);
 
+      // 4. Update instant backup snapshot
       autoBackupService.saveInstantDataSnapshot(
         nextList,
         debtRecords,
         projects,
-        `Ubah Kategori Transaksi ${id} -> ${newCategory}`
+        `Ubah Kategori Transaksi ${targetCustomId || id} -> ${newCategory}`
       );
 
-      await dbService.updateDocument("financialRecords", id, {
-        category: newCategory,
-      }).catch(() => {});
       await logActivity(
         "FINANCE",
         "UPDATE",
-        `Mengubah kategori transaksi ID [${id}] menjadi ${newCategory}`
+        `Mengubah kategori transaksi ID [${targetCustomId || id}] menjadi ${newCategory}`
       );
     } catch (err) {
-      console.error(err);
+      console.error("Gagal mengubah kategori transaksi:", err);
     }
   };
 
@@ -18072,6 +18092,12 @@ const AdminFinanceScreen = ({
     saveFinancialOverride(fullSavedRecord);
     if (originalCustomId && originalCustomId !== finalCustomId) {
       saveFinancialOverride({ ...fullSavedRecord, customId: originalCustomId });
+    }
+    if (editingTransaction.id) {
+      saveFinancialOverride({ ...fullSavedRecord, id: editingTransaction.id });
+    }
+    if (editingTransaction.customId) {
+      saveFinancialOverride({ ...fullSavedRecord, customId: editingTransaction.customId });
     }
 
     // Update in-memory state and snapshot cache immediately
@@ -18522,6 +18548,12 @@ const AdminFinanceScreen = ({
       saveFinancialOverride(fullSavedRecord);
       if (originalCustomId && originalCustomId !== finalCustomId) {
         saveFinancialOverride({ ...fullSavedRecord, customId: originalCustomId });
+      }
+      if (editingTransaction.id) {
+        saveFinancialOverride({ ...fullSavedRecord, id: editingTransaction.id });
+      }
+      if (editingTransaction.customId) {
+        saveFinancialOverride({ ...fullSavedRecord, customId: editingTransaction.customId });
       }
 
       setFinancialRecords((prev) => {
@@ -29449,18 +29481,21 @@ export default function App() {
             break;
           }
         }
+        if (records.length === 0 && Array.isArray(seedFinancialRecords)) {
+          records = [...seedFinancialRecords] as FinancialRecord[];
+        }
       }
       if (records.length > 0 && Object.keys(overrides).length > 0) {
         records = records.map((r) => {
           const k1 = (r.customId || "").trim().toUpperCase();
           const k2 = (r.id || "").trim().toUpperCase();
           const ov = overrides[k1] || overrides[k2];
-          return ov ? { ...r, ...ov } : r;
+          return ov ? { ...r, ...ov, category: ov.category || r.category } : r;
         });
       }
       return records;
     } catch (_) {}
-    return [];
+    return (seedFinancialRecords || []) as FinancialRecord[];
   });
   const [isFinanceLoaded, setIsFinanceLoaded] = useState(false);
   const [hasAutoSeeded, setHasAutoSeeded] = useState(false);
@@ -34513,6 +34548,44 @@ export default function App() {
     return timestamp > lastReset.getTime();
   };
 
+  // Asynchronously initialize persistent overrides from IndexedDB & localStorage on mount
+  useEffect(() => {
+    initFinancialStorage()
+      .then((loadedOverrides) => {
+        if (loadedOverrides && Object.keys(loadedOverrides).length > 0) {
+          setFinancialRecords((prev) => {
+            let hasChanges = false;
+            const updated = prev.map((r) => {
+              const k1 = (r.customId || "").trim().toUpperCase();
+              const k2 = (r.id || "").trim().toUpperCase();
+              const ov = loadedOverrides[k1] || loadedOverrides[k2];
+              if (ov && ov.category && ov.category !== r.category) {
+                hasChanges = true;
+                return { ...r, ...ov, category: ov.category, isUserEdited: true };
+              }
+              if (ov && (ov.projectId !== undefined || ov.amount !== undefined)) {
+                hasChanges = true;
+                return { ...r, ...ov, isUserEdited: true };
+              }
+              return r;
+            });
+            if (hasChanges) {
+              autoBackupService.saveInstantDataSnapshot(
+                updated,
+                debtRecords,
+                projects,
+                "Sinkronisasi override kategori dari penyimpanan permanen"
+              );
+            }
+            return hasChanges ? updated : prev;
+          });
+        }
+      })
+      .catch((err) => {
+        console.warn("[App] Error initializing financial storage:", err);
+      });
+  }, []);
+
   // Load reports and attendance from storage/Firebase
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
@@ -34680,7 +34753,7 @@ export default function App() {
               } else if (!((cfId && seenIds.has(cfId)) || (cfCust && seenCustomIds.has(cfCust)))) {
                 if (cfId) seenIds.add(cfId);
                 if (cfCust) seenCustomIds.add(cfCust);
-                deduped.push(userEdit ? { ...cf, ...userEdit } : cf);
+                deduped.push(userEdit ? { ...cf, ...userEdit, category: userEdit.category || cf.category, isUserEdited: true } : cf);
               }
             });
             return deduped;
@@ -34907,6 +34980,15 @@ export default function App() {
           });
 
           // Precedence: seed < fromDb < fromLocal < userEdit (user explicit edits have absolute priority)
+          const resolvedCategory =
+            userEdit?.category ||
+            (fromLocal?.category && fromLocal.category !== "TERMIN" ? fromLocal.category : undefined) ||
+            (fromDb?.category && fromDb.category !== "TERMIN" ? fromDb.category : undefined) ||
+            fromLocal?.category ||
+            fromDb?.category ||
+            seed.category ||
+            "OPERASIONAL";
+
           const enriched: FinancialRecord = {
             ...seed,
             ...(fromDb || {}),
@@ -34914,7 +34996,8 @@ export default function App() {
             ...(userEdit || {}),
             id: finalId,
             customId: finalCustomId,
-            category: userEdit?.category || fromLocal?.category || fromDb?.category || seed.category || "OPERASIONAL",
+            category: resolvedCategory,
+            isUserEdited: Boolean(userEdit?.isUserEdited || fromLocal?.isUserEdited || (resolvedCategory !== seed.category)),
             projectId: userEdit?.projectId !== undefined
               ? userEdit.projectId
               : (fromLocal?.projectId !== undefined
@@ -34984,7 +35067,9 @@ export default function App() {
           }
 
           const userEdit = userOverrides[rawCustomId] || userOverrides[rawId] || userOverrides[fallbackKey];
-          let finalItem: FinancialRecord = userEdit ? { ...item, ...userEdit } : item;
+          let finalItem: FinancialRecord = userEdit
+            ? { ...item, ...userEdit, category: userEdit.category || item.category, isUserEdited: true }
+            : item;
 
           [rawId, rawCustomId, fallbackKey, finalItem.id, finalItem.customId].forEach((k) => {
             if (k) {
@@ -35010,7 +35095,41 @@ export default function App() {
           finalDeduped.push(item);
         }
 
-        setFinancialRecords(finalDeduped);
+        // Functional state update that preserves any in-memory user-edited categories from prev
+        setFinancialRecords((prev) => {
+          const prevMap = new Map<string, FinancialRecord>();
+          (prev || []).forEach((r) => {
+            const k1 = (r.customId || "").trim().toUpperCase();
+            const k2 = (r.id || "").trim().toUpperCase();
+            if (k1) prevMap.set(k1, r);
+            if (k2) prevMap.set(k2, r);
+          });
+
+          return finalDeduped.map((item) => {
+            const k1 = (item.customId || "").trim().toUpperCase();
+            const k2 = (item.id || "").trim().toUpperCase();
+            const ov = userOverrides[k1] || userOverrides[k2];
+            const p = prevMap.get(k1) || prevMap.get(k2);
+
+            const isUserEdited = ov?.isUserEdited || p?.isUserEdited || item.isUserEdited;
+            const category =
+              ov?.category ||
+              (p?.isUserEdited && p.category ? p.category : undefined) ||
+              (p?.category && p.category !== item.category && p.category !== "TERMIN" ? p.category : undefined) ||
+              item.category;
+
+            if (ov || (p && p.isUserEdited) || (category && category !== item.category)) {
+              return {
+                ...item,
+                ...(p && p.isUserEdited ? p : {}),
+                ...(ov || {}),
+                category: category || item.category,
+                isUserEdited: !!isUserEdited,
+              };
+            }
+            return item;
+          });
+        });
         setIsFinanceLoaded(true);
       },
       [],

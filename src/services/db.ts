@@ -12,6 +12,7 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
+import { idbStorage } from './indexedDbStorage';
 
 export enum OperationType {
   CREATE = 'create',
@@ -216,7 +217,26 @@ function saveLocalCollectionStore<T>(collectionPath: string, map: Map<string, T>
   try {
     if (typeof window !== "undefined") {
       const arr = Array.from(map.values());
-      localStorage.setItem(LOCAL_COL_PREFIX + collectionPath, JSON.stringify(arr));
+      try {
+        localStorage.setItem(LOCAL_COL_PREFIX + collectionPath, JSON.stringify(arr));
+      } catch (err: any) {
+        const isQuota =
+          err?.name === "QuotaExceededError" ||
+          err?.code === 22 ||
+          String(err).includes("quota");
+        if (isQuota) {
+          try {
+            localStorage.removeItem("PT_DATA_BACKUP_HISTORY");
+            localStorage.removeItem("last_sync_error_log");
+            localStorage.removeItem("PT_FINANCE_CACHE");
+            localStorage.removeItem("PT_DEBTS_CACHE");
+            localStorage.removeItem("PT_PROJECTS_CACHE");
+            localStorage.setItem(LOCAL_COL_PREFIX + collectionPath, JSON.stringify(arr));
+          } catch (_) {}
+        }
+      }
+      // Unlimited capacity fallback in IndexedDB
+      idbStorage.set("snapshots", LOCAL_COL_PREFIX + collectionPath, arr).catch(() => {});
     }
   } catch (e) {
     console.warn(`[LocalStore] Failed to save collection ${collectionPath}:`, e);
