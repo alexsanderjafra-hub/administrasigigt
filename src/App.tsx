@@ -6770,6 +6770,31 @@ const getEffectiveDebtRecords = (
       return false;
     }
 
+    const deletedFinIds = getDeletedFinancialIds();
+    if (
+      (originFinId && deletedFinIds.has(originFinId.toUpperCase())) ||
+      (originCustom && deletedFinIds.has(originCustom.toUpperCase())) ||
+      (rCustomUpper && deletedFinIds.has(rCustomUpper)) ||
+      (rIdLower && deletedFinIds.has(rIdLower.toUpperCase()))
+    ) {
+      return false;
+    }
+
+    // If this debt originated from a financial transaction that was deleted, do not show it
+    if (financialRecords && financialRecords.length > 0 && (originFinId || originCustom)) {
+      const existsInFin = financialRecords.some((f) => {
+        const fId = (f.id || "").toLowerCase();
+        const fCust = (f.customId || "").toUpperCase();
+        return (
+          (originFinId && (fId === originFinId || fCust === originFinId.toUpperCase())) ||
+          (originCustom && (fCust === originCustom.toUpperCase() || fId === originCustom.toLowerCase()))
+        );
+      });
+      if (!existsInFin) {
+        return false;
+      }
+    }
+
     const rTitle = (r.title || "").toLowerCase();
     const rDesc = (r.description || "").toLowerCase();
     const rCat = ((r as any).category || "").toLowerCase();
@@ -8985,7 +9010,7 @@ const AdminDebtScreen = ({
     const displayId = customId || id;
     if (
       !confirm(
-        `Apakah Anda yakin ingin menghapus catatan ${type === "HUTANG" ? "Hutang" : "Piutang"} [${displayId}] ini secara permanen?\n\nCATATAN: Data transaksi di Catatan Transaksi TIDAK AKAN TERHAPUS (hanya dihapus dari daftar ${type === "HUTANG" ? "Hutang" : "Piutang"}).`
+        `Apakah Anda yakin ingin menghapus catatan ${type === "HUTANG" ? "Hutang" : "Piutang"} [${displayId}] ini secara permanen?\n\nCATATAN: Data transaksi terkait di Catatan Transaksi juga akan otomatis dihapus.`
       )
     ) {
       return;
@@ -9000,22 +9025,76 @@ const AdminDebtScreen = ({
         await dbService.deleteDocument("debtRecords", customId).catch(() => {});
       }
 
+      let updatedDebtList = debtRecords;
       if (setDebtRecords) {
-        setDebtRecords((prev) =>
-          prev.filter(
+        setDebtRecords((prev) => {
+          const next = prev.filter(
             (d) =>
               d.id !== id &&
               d.customId !== customId &&
               (!originFinId || (d as any).originFinancialRecordId !== originFinId) &&
               (!originCustId || (d as any).originCustomId !== originCustId)
-          )
-        );
+          );
+          updatedDebtList = next;
+          return next;
+        });
       }
+
+      // Automatically find and delete associated financial transactions in Catatan Transaksi
+      const matchingFins = (financialRecords || []).filter((f) => {
+        const fId = (f.id || "").toLowerCase();
+        const fCust = (f.customId || "").toUpperCase();
+        const cleanCust = (customId || "").toUpperCase();
+        const cleanId = (id || "").toLowerCase();
+        const oFin = (originFinId || "").toLowerCase();
+        const oCust = (originCustId || "").toUpperCase();
+
+        if (oFin && (fId === oFin || fCust === oFin.toUpperCase())) return true;
+        if (oCust && (fCust === oCust || fId === oCust.toLowerCase())) return true;
+        if (cleanCust && (fCust === cleanCust || fCust === cleanCust.replace(/^HTG-/, "") || fCust === cleanCust.replace(/^PTG-/, ""))) return true;
+        if (cleanId && (fId === cleanId || fId === `htg-prs-${cleanId}`)) return true;
+        if (f.linkedDebtId && (f.linkedDebtId.toLowerCase() === cleanId || f.linkedDebtId.toUpperCase() === cleanCust)) return true;
+        if (f.refHutang && (f.refHutang.toLowerCase() === cleanId || f.refHutang.toUpperCase() === cleanCust || f.refHutang.toUpperCase().includes(cleanCust))) return true;
+        if (f.refPiutang && (f.refPiutang.toLowerCase() === cleanId || f.refPiutang.toUpperCase() === cleanCust)) return true;
+        if (cleanCust && f.description && f.description.toUpperCase().includes(cleanCust)) return true;
+        if (oCust && f.description && f.description.toUpperCase().includes(oCust)) return true;
+        if (targetRec?.payments && targetRec.payments.some((p) => p.financialRecordId === f.id || p.financialRecordId === f.customId)) return true;
+
+        return false;
+      });
+
+      let updatedFinList = financialRecords;
+      if (matchingFins.length > 0) {
+        const finIdsToDelete = new Set<string>();
+        for (const mf of matchingFins) {
+          if (mf.id) {
+            finIdsToDelete.add(mf.id);
+            markFinancialRecordDeleted(mf.id);
+            removeFinancialOverride(mf.id);
+            await dbService.deleteDocument("financialRecords", mf.id).catch(() => {});
+          }
+          if (mf.customId) {
+            finIdsToDelete.add(mf.customId);
+            markFinancialRecordDeleted(mf.customId);
+            removeFinancialOverride(mf.customId);
+            await dbService.deleteDocument("financialRecords", mf.customId).catch(() => {});
+          }
+        }
+        updatedFinList = financialRecords.filter((f) => !finIdsToDelete.has(f.id) && (!f.customId || !finIdsToDelete.has(f.customId)));
+        setFinancialRecords(updatedFinList);
+      }
+
+      autoBackupService.saveInstantDataSnapshot(
+        updatedFinList,
+        updatedDebtList,
+        projects,
+        `Hapus ${type === "HUTANG" ? "Hutang" : "Piutang"} [${displayId}] dan Transaksi Terkait`
+      );
 
       await logActivity(
         "DEBT",
         "DELETE",
-        `Menghapus catatan ${type === "HUTANG" ? "Hutang" : "Piutang"} [${displayId}] (hanya dari daftar Hutang Piutang, Catatan Transaksi tetap aman)`
+        `Menghapus catatan ${type === "HUTANG" ? "Hutang" : "Piutang"} [${displayId}] beserta ${matchingFins.length} transaksi terkait dari Catatan Transaksi`
       );
     } catch (err) {
       console.error("Failed to delete debt record:", err);
@@ -14601,6 +14680,14 @@ const AdminDebtScreen = ({
                                           >
                                             <Eye size={12} />
                                           </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleDeleteDebt(rec.id, rec.customId, rec.type)}
+                                            className="p-1.5 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-600 rounded-lg transition-all cursor-pointer shadow-xs"
+                                            title="Hapus Rekam Data Piutang (Otomatis Hapus Transaksi Terkait)"
+                                          >
+                                            <Trash2 size={12} />
+                                          </button>
                                         </div>
                                       </td>
                                     </tr>
@@ -19275,12 +19362,49 @@ const AdminFinanceScreen = ({
       removeFinancialOverride(id);
       if (targetFin?.customId) removeFinancialOverride(targetFin.customId);
 
+      // Automatically delete any debt records that originated from this financial transaction
+      const targetCustomId = targetFin?.customId;
+      const spawnedDebts = debtRecords.filter((d) => {
+        const dOriginFin = (((d as any).originFinancialRecordId || "") as string).toLowerCase();
+        const dOriginCust = (((d as any).originCustomId || "") as string).toUpperCase();
+        const dCustom = (d.customId || "").toUpperCase();
+        const dId = (d.id || "").toLowerCase();
+
+        return (
+          (dOriginFin && (dOriginFin === id.toLowerCase() || (targetCustomId && dOriginFin === targetCustomId.toLowerCase()))) ||
+          (dOriginCust && targetCustomId && dOriginCust === targetCustomId.toUpperCase()) ||
+          (targetCustomId && d.description && d.description.includes(targetCustomId)) ||
+          dId === id.toLowerCase() ||
+          (targetCustomId && dCustom === targetCustomId.toUpperCase()) ||
+          (targetCustomId && dCustom === `HTG-${targetCustomId.toUpperCase()}`) ||
+          dId === `htg-prs-${id.toLowerCase()}`
+        );
+      });
+
+      for (const d of spawnedDebts) {
+        addDeletedDebtOriginId(d.id, d.customId, id, targetCustomId);
+        await dbService.deleteDocument("debtRecords", d.id).catch(() => {});
+        if (d.customId && d.customId !== d.id) {
+          await dbService.deleteDocument("debtRecords", d.customId).catch(() => {});
+        }
+      }
+
+      let updatedDebtList = debtRecords;
+      if (spawnedDebts.length > 0) {
+        const spawnedSet = new Set(spawnedDebts.flatMap((d) => [d.id, d.customId].filter(Boolean)));
+        setDebtRecords?.((prev) => {
+          const next = prev.filter((d) => !spawnedSet.has(d.id) && !spawnedSet.has(d.customId));
+          updatedDebtList = next;
+          return next;
+        });
+      }
+
       const nextFinList = financialRecords.filter((r) => r.id !== id && r.customId !== id && (!targetFin?.customId || r.customId !== targetFin.customId));
       setFinancialRecords(nextFinList);
       setSelectedIds((prev) => prev.filter((item) => item !== id));
       autoBackupService.saveInstantDataSnapshot(
         nextFinList,
-        debtRecords,
+        updatedDebtList,
         projects,
         `Hapus Transaksi Keuangan ${targetFin?.customId || id}`
       );
@@ -19371,13 +19495,70 @@ const AdminFinanceScreen = ({
         }
       }
 
+      // Clean up any debts spawned from the selected transactions
+      const spawnedDebts = debtRecords.filter((d) => {
+        const dOriginFin = (((d as any).originFinancialRecordId || "") as string).toLowerCase();
+        const dOriginCust = (((d as any).originCustomId || "") as string).toUpperCase();
+        const dCustom = (d.customId || "").toUpperCase();
+        const dId = (d.id || "").toLowerCase();
+
+        return selectedIds.some((sId) => {
+          const sFin = financialRecords.find((f) => f.id === sId);
+          const sCustom = sFin?.customId?.toUpperCase();
+          return (
+            (dOriginFin && (dOriginFin === sId.toLowerCase() || (sCustom && dOriginFin === sCustom.toLowerCase()))) ||
+            (dOriginCust && sCustom && dOriginCust === sCustom) ||
+            (sCustom && d.description && d.description.includes(sCustom)) ||
+            dId === sId.toLowerCase() ||
+            (sCustom && dCustom === sCustom) ||
+            (sCustom && dCustom === `HTG-${sCustom}`) ||
+            dId === `htg-prs-${sId.toLowerCase()}`
+          );
+        });
+      });
+
+      for (const d of spawnedDebts) {
+        addDeletedDebtOriginId(d.id, d.customId);
+        await dbService.deleteDocument("debtRecords", d.id).catch(() => {});
+        if (d.customId && d.customId !== d.id) {
+          await dbService.deleteDocument("debtRecords", d.customId).catch(() => {});
+        }
+      }
+
+      let updatedDebtList = debtRecords;
+      if (spawnedDebts.length > 0) {
+        const spawnedSet = new Set(spawnedDebts.flatMap((d) => [d.id, d.customId].filter(Boolean)));
+        setDebtRecords?.((prev) => {
+          const next = prev.filter((d) => !spawnedSet.has(d.id) && !spawnedSet.has(d.customId));
+          updatedDebtList = next;
+          return next;
+        });
+      }
+
+      for (const sId of selectedIds) {
+        markFinancialRecordDeleted(sId);
+        removeFinancialOverride(sId);
+        const sFin = financialRecords.find((f) => f.id === sId);
+        if (sFin?.customId) {
+          markFinancialRecordDeleted(sFin.customId);
+          removeFinancialOverride(sFin.customId);
+        }
+      }
+
       await Promise.all(
         selectedIds.map((id) =>
           dbService.deleteDocument("financialRecords", id),
         ),
       );
-      setFinancialRecords?.((prev) => prev.filter((r) => !selectedIds.includes(r.id)));
+      const nextFinList = financialRecords.filter((r) => !selectedIds.includes(r.id));
+      setFinancialRecords?.(nextFinList);
       setSelectedIds([]);
+      autoBackupService.saveInstantDataSnapshot(
+        nextFinList,
+        updatedDebtList,
+        projects,
+        `Hapus Bulk ${selectedIds.length} Transaksi Keuangan`
+      );
     } catch (err) {
       console.error("Error during bulk delete:", err);
     }
@@ -30163,24 +30344,30 @@ export default function App() {
         });
       }
       if (records.length > 0) {
-        records = records.map((r) => {
-          const k1 = (r.customId || "").trim().toUpperCase();
-          const k2 = (r.id || "").trim().toUpperCase();
-          if (
-            (k1 === "BNK-290726-002" || k2 === "BNK-290726-002" || 
-             k1 === "BNK-070826-001" || k2 === "BNK-070826-001" ||
-             k1 === "BNK-260926-002" || k2 === "BNK-260926-002") &&
-            (!r.refHutang || r.refHutang === "")
-          ) {
-            return {
-              ...r,
-              refHutang: "HTG-003",
-              linkedDebtId: "HTG-003",
-              rekPenerima: "PAK DODO INVESTOR",
-            };
-          }
-          return r;
-        });
+        records = records
+          .filter((r) => {
+            const k1 = (r.customId || "").trim().toUpperCase();
+            const k2 = (r.id || "").trim().toUpperCase();
+            return k1 !== "BNK-110926-001" && k2 !== "BNK-110926-001";
+          })
+          .map((r) => {
+            const k1 = (r.customId || "").trim().toUpperCase();
+            const k2 = (r.id || "").trim().toUpperCase();
+            if (
+              k1 === "BNK-290726-002" || k2 === "BNK-290726-002" || 
+              k1 === "BNK-070826-001" || k2 === "BNK-070826-001" ||
+              k1 === "BNK-260926-002" || k2 === "BNK-260926-002"
+            ) {
+              return {
+                ...r,
+                amount: (k1 === "BNK-260926-002" || k2 === "BNK-260926-002") ? 10000000 : r.amount,
+                refHutang: "HTG-003",
+                linkedDebtId: "HTG-003",
+                rekPenerima: "PAK DODO INVESTOR",
+              };
+            }
+            return r;
+          });
       }
       return records;
     } catch (_) {}
@@ -35759,6 +35946,7 @@ export default function App() {
         combinedFin.forEach((item) => {
           if (!item) return;
           if (item.customId && item.customId.startsWith("INC-060826-") && item.customId !== "INC-060826-001") return;
+          if (item.customId === "BNK-110926-001" || item.id === "BNK-110926-001") return;
           const rawId = (item.id || "").trim().toUpperCase();
           const rawCustomId = (item.customId || "").trim().toUpperCase();
           const fallbackKey = rawCustomId || rawId;
