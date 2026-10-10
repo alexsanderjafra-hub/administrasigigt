@@ -15382,7 +15382,9 @@ const AdminFinanceScreen = ({
     senderName: "",
     totalGaji: "",
     potonganKasbon: "",
+    penerimaKasbon: "",
     pemilikUangPribadi: "",
+    selectedTermId: "",
     terminName: "",
     terminDescription: "",
     terminPercentage: "",
@@ -15427,7 +15429,9 @@ const AdminFinanceScreen = ({
         senderName: editingTransaction.senderName || "",
         totalGaji: String((editingTransaction as any).totalGaji || ""),
         potonganKasbon: String((editingTransaction as any).potonganKasbon || ""),
+        penerimaKasbon: (editingTransaction as any).penerimaKasbon || editingTransaction.personalHolder || "",
         pemilikUangPribadi: (editingTransaction as any).pemilikUangPribadi || editingTransaction.personalHolder || (isPersonal ? "FAISAL MUSTOPA" : ""),
+        selectedTermId: (associatedTerm as any)?.id || "",
         terminName: associatedTerm?.name || editingTransaction.terminName || "",
         terminDescription: associatedTerm?.description || editingTransaction.terminDescription || "",
         terminPercentage: associatedTerm?.percentage !== undefined ? String(associatedTerm.percentage) : (editingTransaction.terminPercentage !== undefined ? String(editingTransaction.terminPercentage) : ""),
@@ -15744,43 +15748,128 @@ const AdminFinanceScreen = ({
     return null;
   };
 
+  // Helper to calculate next termin payment details (Termin 1, Termin 2, ...) and calculate percentage from contract value
+  const calculateTerminDetails = useCallback((
+    debtIdOrTitle: string,
+    projectId: string,
+    amountValue: string | number,
+    currentTxId?: string,
+    existingDate?: string
+  ) => {
+    const d = effectiveDebtRecords.find(
+      (doc) => (doc.id === debtIdOrTitle || doc.title === debtIdOrTitle) && doc.type === "PIUTANG"
+    );
+    const proj = (projectId ? projects.find((p) => p.id === projectId) : undefined) || (d ? findLinkedProject(d, projects) : undefined);
+    const sched = d ? getScheduleForRecord(d, projects, financialRecords) : null;
+    const contractVal = sched?.contractValue || proj?.contractValue || d?.amount || 0;
+
+    // Count prior payments made for this debt / project
+    const priorPayments = (financialRecords || []).filter((r) => {
+      if (r.type !== "IN") return false;
+      if (currentTxId && (r.id === currentTxId || r.customId === currentTxId)) return false;
+      const matchDebt = d && (r.linkedDebtId === d.id || (r.refPiutang && d.title && r.refPiutang.toLowerCase() === d.title.toLowerCase()));
+      const matchProj = proj && (r.projectId === proj.id || r.referenceId === proj.id);
+      return Boolean(matchDebt || matchProj);
+    });
+
+    const termNum = priorPayments.length + 1;
+    const numAmt = Number(amountValue) || 0;
+    const pct = contractVal > 0 && numAmt > 0 ? parseFloat(((numAmt / contractVal) * 100).toFixed(2)) : 0;
+
+    const name = `Termin ${termNum}`;
+    const desc = contractVal > 0 && pct > 0
+      ? `Pembayaran Termin ${termNum} (${pct}% dari Kontrak Rp ${contractVal.toLocaleString("id-ID")})`
+      : `Pembayaran Termin ${termNum}`;
+
+    return {
+      terminName: name,
+      terminDescription: desc,
+      terminPercentage: pct > 0 ? String(pct) : "",
+      terminStatus: "LUNAS" as const,
+      terminNotes: `Pembayaran Termin ${termNum}`,
+      terminPaymentDate: existingDate || new Date().toISOString().split("T")[0],
+      debtRecord: d,
+      project: proj,
+      contractValue: contractVal,
+    };
+  }, [effectiveDebtRecords, projects, financialRecords]);
+
   // Auto-calculate terminPercentage for Add Form
   useEffect(() => {
-    if (formData.linkedDebtId && formData.amount) {
-      const d = effectiveDebtRecords.find((doc) => doc.id === formData.linkedDebtId);
-      if (d && d.amount > 0) {
+    if ((formData.linkedDebtId || formData.projectId || formData.refPiutang) && formData.amount) {
+      const d = effectiveDebtRecords.find((doc) => (doc.id === formData.linkedDebtId || doc.title === formData.refPiutang) && doc.type === "PIUTANG");
+      const proj = (formData.projectId ? projects.find((p) => p.id === formData.projectId) : undefined) || (d ? findLinkedProject(d, projects) : undefined);
+      const sched = d ? getScheduleForRecord(d, projects, financialRecords) : null;
+      const contractVal = sched?.contractValue || proj?.contractValue || d?.amount || 0;
+
+      if (contractVal > 0) {
         const numAmt = Number(formData.amount);
         if (!isNaN(numAmt) && numAmt > 0) {
-          const pct = parseFloat(((numAmt / d.amount) * 100).toFixed(2));
+          const pct = parseFloat(((numAmt / contractVal) * 100).toFixed(2));
           setFormData((prev) => {
-            if (prev.terminPercentage !== String(pct)) {
-              return { ...prev, terminPercentage: String(pct) };
+            const isProjPay = prev.type === "IN" && (
+              !prev.category ||
+              prev.category.toLowerCase().includes("proyek") ||
+              prev.category.toLowerCase().includes("piutang") ||
+              prev.category.toLowerCase().includes("termin")
+            );
+            const currentDesc = prev.terminDescription || "";
+            const autoDesc = isProjPay && (currentDesc === "" || currentDesc.includes("% dari Kontrak") || currentDesc.startsWith("Pembayaran Termin"))
+              ? `Pembayaran ${prev.terminName || "Termin"} (${pct}% dari Kontrak Rp ${contractVal.toLocaleString("id-ID")})`
+              : prev.terminDescription;
+
+            if (prev.terminPercentage !== String(pct) || (autoDesc && prev.terminDescription !== autoDesc)) {
+              return { 
+                ...prev, 
+                terminPercentage: String(pct),
+                terminDescription: autoDesc || prev.terminDescription,
+              };
             }
             return prev;
           });
         }
       }
     }
-  }, [formData.linkedDebtId, formData.amount, effectiveDebtRecords]);
+  }, [formData.linkedDebtId, formData.projectId, formData.refPiutang, formData.amount, effectiveDebtRecords, projects, financialRecords]);
 
   // Auto-calculate terminPercentage for Edit Form
   useEffect(() => {
-    if (editFormData && editFormData.linkedDebtId && editFormData.amount) {
-      const d = effectiveDebtRecords.find((doc) => doc.id === editFormData.linkedDebtId);
-      if (d && d.amount > 0) {
+    if (editFormData && (editFormData.linkedDebtId || editFormData.projectId || editFormData.refPiutang) && editFormData.amount) {
+      const d = effectiveDebtRecords.find((doc) => (doc.id === editFormData.linkedDebtId || doc.title === editFormData.refPiutang) && doc.type === "PIUTANG");
+      const proj = (editFormData.projectId ? projects.find((p) => p.id === editFormData.projectId) : undefined) || (d ? findLinkedProject(d, projects) : undefined);
+      const sched = d ? getScheduleForRecord(d, projects, financialRecords) : null;
+      const contractVal = sched?.contractValue || proj?.contractValue || d?.amount || 0;
+
+      if (contractVal > 0) {
         const numAmt = Number(editFormData.amount);
         if (!isNaN(numAmt) && numAmt > 0) {
-          const pct = parseFloat(((numAmt / d.amount) * 100).toFixed(2));
+          const pct = parseFloat(((numAmt / contractVal) * 100).toFixed(2));
           setEditFormData((prev) => {
-            if (prev && prev.terminPercentage !== String(pct)) {
-              return { ...prev, terminPercentage: String(pct) };
+            if (!prev) return prev;
+            const isProjPay = prev.type === "IN" && (
+              !prev.category ||
+              prev.category.toLowerCase().includes("proyek") ||
+              prev.category.toLowerCase().includes("piutang") ||
+              prev.category.toLowerCase().includes("termin")
+            );
+            const currentDesc = prev.terminDescription || "";
+            const autoDesc = isProjPay && (currentDesc === "" || currentDesc.includes("% dari Kontrak") || currentDesc.startsWith("Pembayaran Termin"))
+              ? `Pembayaran ${prev.terminName || "Termin"} (${pct}% dari Kontrak Rp ${contractVal.toLocaleString("id-ID")})`
+              : prev.terminDescription;
+
+            if (prev.terminPercentage !== String(pct) || (autoDesc && prev.terminDescription !== autoDesc)) {
+              return { 
+                ...prev, 
+                terminPercentage: String(pct),
+                terminDescription: autoDesc || prev.terminDescription,
+              };
             }
             return prev;
           });
         }
       }
     }
-  }, [editFormData?.linkedDebtId, editFormData?.amount, effectiveDebtRecords]);
+  }, [editFormData?.linkedDebtId, editFormData?.projectId, editFormData?.refPiutang, editFormData?.amount, effectiveDebtRecords, projects, financialRecords]);
 
   // Auto-sync terminPaymentDate to transaction date (tanggal pemasukan)
   useEffect(() => {
@@ -16995,9 +17084,27 @@ const AdminFinanceScreen = ({
   }, [selectedPattyCashDetail, selectedPattyCashRecords, selectedPattyCashTotalSpent, projects]);
 
   // 4. Saldo yang Masih Berada di Tangan Personal (Petty Cash/Kasbon held by Staff)
+  // Sesuai permintaan: Sisa Dana PT di Tangan diambil dari jumlah total keseluruhan "SISA TALANGAN" yang ada di "PENGELUARAN BANK PT (DIRECT)" yang kategorinya "PATTY CASH"
   const personalHoldBalance = useMemo(() => {
-    return talanganSummary.reduce((sum, s) => sum + s.balance, 0);
-  }, [talanganSummary]);
+    const directBankRecords = financialRecords.filter((r) => isPtBankDirectOutRecord(r));
+    const pattyCashDirectRecords = directBankRecords.filter((r) => isPattyCashCategory(r.category));
+
+    return pattyCashDirectRecords.reduce((total, record) => {
+      const talanganItem = detailedTalanganList.find((t) => t.customId === record.customId || t.id === record.id);
+      const linkedSpent = talanganItem
+        ? talanganItem.spentAmount
+        : financialRecords
+            .filter((r) => r.flowType === "OUT_PERSONAL_SPEND")
+            .reduce((sum, r) => {
+              const allocs = parseBankAllocations(r.refIdBank || "", r.amount);
+              const match = allocs.find((a) => a.bankId === record.customId);
+              return sum + (match ? match.amount : 0);
+            }, 0);
+
+      const sisaTalangan = Math.max(0, talanganItem ? talanganItem.balance : (record.amount - linkedSpent));
+      return total + sisaTalangan;
+    }, 0);
+  }, [financialRecords, isPtBankDirectOutRecord, isPattyCashCategory, detailedTalanganList]);
 
   const totalTransferKePribadiGlobal = useMemo(() => {
     return talanganSummary.reduce((sum, s) => sum + s.received, 0);
@@ -22809,12 +22916,25 @@ const AdminFinanceScreen = ({
                                     updatedSumber = "REKENING PT";
                                   }
                                 }
+                                const isProjectCategory = suggestion === "Pembayaran Proyek" || suggestion === "Penerimaan Piutang";
+                                const autoTermin = isProjectCategory && (formData.refPiutang || formData.linkedDebtId || formData.projectId)
+                                  ? calculateTerminDetails(formData.linkedDebtId || formData.refPiutang, formData.projectId, formData.amount, undefined, formData.date)
+                                  : {};
+
                                 setFormData((prev) => ({
                                   ...prev,
                                   category: suggestion,
                                   flowType: updatedFlow,
                                   personalHolder: updatedHolder,
                                   sumberDana: updatedSumber,
+                                  ...(isProjectCategory && autoTermin.terminName ? {
+                                    terminName: autoTermin.terminName,
+                                    terminDescription: autoTermin.terminDescription,
+                                    terminPercentage: autoTermin.terminPercentage,
+                                    terminStatus: autoTermin.terminStatus,
+                                    terminNotes: autoTermin.terminNotes,
+                                    terminPaymentDate: autoTermin.terminPaymentDate,
+                                  } : {}),
                                 }));
                               }}
                               className={`text-xs md:text-sm font-bold px-4 py-2.5 rounded-full border transition-all ${
@@ -23158,12 +23278,31 @@ const AdminFinanceScreen = ({
                                     (d.title.toLowerCase().includes(matchedProj.name.toLowerCase()) ||
                                       matchedProj.name.toLowerCase().includes(d.title.toLowerCase()))))
                             );
+
+                            const isProjPayment = formData.type === "IN" && (
+                              !formData.category ||
+                              formData.category === "Pembayaran Proyek" ||
+                              formData.category === "Penerimaan Piutang" ||
+                              formData.category.toLowerCase().includes("proyek") ||
+                              formData.category.toLowerCase().includes("piutang") ||
+                              formData.category.toLowerCase().includes("termin")
+                            );
+
+                            const autoTermin = isProjPayment
+                              ? calculateTerminDetails(matchedDebt ? matchedDebt.id : "", chosenProjId, formData.amount, undefined, formData.date)
+                              : {};
+
                             setFormData({
                               ...formData,
                               projectId: chosenProjId,
                               linkedDebtId: formData.type === "IN" ? (matchedDebt ? matchedDebt.id : formData.linkedDebtId) : formData.linkedDebtId,
                               refPiutang: formData.type === "IN" ? (matchedDebt ? matchedDebt.title : (matchedProj ? matchedProj.name : formData.refPiutang)) : formData.refPiutang,
-                              terminName: formData.type === "IN" ? (formData.terminName || (matchedProj ? `Pembayaran Proyek ${matchedProj.name}` : "")) : formData.terminName,
+                              terminName: autoTermin.terminName || (formData.type === "IN" ? (formData.terminName || (matchedProj ? `Pembayaran Proyek ${matchedProj.name}` : "")) : formData.terminName),
+                              terminDescription: autoTermin.terminDescription || formData.terminDescription,
+                              terminPercentage: autoTermin.terminPercentage || formData.terminPercentage,
+                              terminStatus: autoTermin.terminStatus || formData.terminStatus,
+                              terminNotes: autoTermin.terminNotes || formData.terminNotes,
+                              terminPaymentDate: autoTermin.terminPaymentDate || formData.terminPaymentDate || formData.date,
                             });
                           }}
                         >
@@ -23568,38 +23707,16 @@ const AdminFinanceScreen = ({
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <div className="space-y-1.5">
-                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                                  Tgl Invoice
-                                </label>
-                                <input
-                                  type="date"
-                                  value={formData.terminInvoiceDate || ""}
-                                  onChange={(e) => setFormData({ ...formData, terminInvoiceDate: e.target.value })}
-                                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all text-slate-800"
-                                />
-                                {formData.linkedDebtId && (() => {
-                                  const prev = getPreviousTerminInfo(formData.linkedDebtId);
-                                  return prev && prev.terminInvoiceDate ? (
-                                    <p className="text-[10px] text-slate-500 font-medium ml-1 mt-1">
-                                      Tgl Sebelumnya: <span className="font-bold text-indigo-600 bg-indigo-50/50 px-1.5 py-0.5 rounded font-mono">{prev.terminInvoiceDate}</span> <span className="text-slate-400">({prev.terminName})</span>
-                                    </p>
-                                  ) : null;
-                                })()}
-                              </div>
-
-                              <div className="space-y-1.5">
-                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                                  Tgl Terbayar
-                                </label>
-                                <input
-                                  type="date"
-                                  value={formData.terminPaymentDate || formData.date}
-                                  onChange={(e) => setFormData({ ...formData, terminPaymentDate: e.target.value })}
-                                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all text-slate-800"
-                                />
-                              </div>
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                                Tanggal Bayar
+                              </label>
+                              <input
+                                type="date"
+                                value={formData.terminPaymentDate || formData.date}
+                                onChange={(e) => setFormData({ ...formData, terminPaymentDate: e.target.value })}
+                                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all text-slate-800"
+                              />
                             </div>
 
                             <div className="space-y-1.5">
@@ -23938,11 +24055,22 @@ const AdminFinanceScreen = ({
                                   } else {
                                     const titleStr = e.target.value;
                                     const d = effectiveDebtRecords.find((doc) => doc.title === titleStr && doc.type === "PIUTANG");
+                                    const matchedProj = d?.projectId ? projects.find((p) => p.id === d.projectId) : undefined;
+                                    
+                                    const autoTermin = calculateTerminDetails(d ? d.id : titleStr, d?.projectId || formData.projectId, formData.amount, undefined, formData.date);
+
                                     setFormData({
                                       ...formData,
                                       refPiutang: titleStr,
                                       linkedDebtId: d ? d.id : formData.linkedDebtId,
                                       projectId: d?.projectId || formData.projectId,
+                                      category: formData.category || "Pembayaran Proyek",
+                                      terminName: autoTermin.terminName || formData.terminName,
+                                      terminDescription: autoTermin.terminDescription || formData.terminDescription,
+                                      terminPercentage: autoTermin.terminPercentage || formData.terminPercentage,
+                                      terminStatus: autoTermin.terminStatus || formData.terminStatus,
+                                      terminNotes: autoTermin.terminNotes || formData.terminNotes,
+                                      terminPaymentDate: autoTermin.terminPaymentDate || formData.terminPaymentDate || formData.date,
                                     });
                                   }
                                 }}
@@ -24070,9 +24198,9 @@ const AdminFinanceScreen = ({
                     <button
                       type="button"
                       onClick={() => setEditingTransaction(null)}
-                      className="w-12 h-12 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center hover:bg-slate-100 transition-all"
+                      className="w-10 h-10 md:w-12 md:h-12 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center hover:bg-slate-100 transition-all"
                     >
-                      <X size={24} />
+                      <X size={20} />
                     </button>
                   </div>
 
@@ -24116,48 +24244,11 @@ const AdminFinanceScreen = ({
                             onChange={(e) =>
                               setEditFormData({ ...editFormData, date: e.target.value })
                             }
-                            className="w-full pl-14 pr-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm cursor-pointer text-slate-900"
+                            className="w-full pl-14 pr-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm cursor-pointer"
                           />
                         </div>
                       </div>
 
-                      <div className="space-y-3">
-                        <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
-                          ALIRAN DANA PENGELUARAN (TIPE ARUS)
-                        </label>
-                        <select
-                          className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all appearance-none cursor-pointer"
-                          value={editFormData.flowType}
-                          onChange={(e) => {
-                            const chosenFlow = e.target.value as any;
-                            setEditFormData((prev) => ({
-                              ...prev,
-                              flowType: chosenFlow,
-                              sumberDana: chosenFlow === "OUT_PERSONAL_SPEND"
-                                ? "DANA PATTYCASH"
-                                : chosenFlow === "PERSONAL_TALANGAN_REIMBURSE"
-                                ? "REKENING PRIBADI"
-                                : (prev.sumberDana === "DANA PATTYCASH" ? "REKENING PT" : prev.sumberDana),
-                              pemilikUangPribadi: chosenFlow === "PERSONAL_TALANGAN_REIMBURSE" ? (prev.pemilikUangPribadi || prev.personalHolder || "FAISAL MUSTOPA") : prev.pemilikUangPribadi,
-                              personalHolder: chosenFlow === "OUT_BANK_DIRECT" ? "" : (prev.personalHolder || "Faisal Mustopa (Admin)"),
-                            }));
-                          }}
-                        >
-                          {editFormData.type === "IN" ? (
-                            <option value="IN">PEMASUKAN REKENING PT</option>
-                          ) : (
-                            <>
-                              <option value="OUT_BANK_DIRECT">1. Ke PT Supplier Langsung (Dari Rekening PT ke Supplier)</option>
-                              <option value="OUT_PERSONAL_TRANSFER">2. Dari Rekening PT ke Rekening Pribadi / PIC (Kasbon/Pegangan)</option>
-                              <option value="OUT_PERSONAL_SPEND">3. Dari Pribadi (PIC) ke Supplier dan Lainnya (Belanja/Realisasi)</option>
-                              <option value="PERSONAL_TALANGAN_REIMBURSE">4. Dari Pribadi (Peminjam) Untuk Kebutuhan Perusahaan (HUTANG PT)</option>
-                            </>
-                          )}
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 bg-slate-50/50 p-6 md:p-10 rounded-[36px] border border-slate-100/80">
                       <div className="space-y-3">
                         <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
                           Kategori Transaksi
@@ -24181,10 +24272,8 @@ const AdminFinanceScreen = ({
                                 updatedHolder = "Faisal Mustopa (Admin)";
                               }
                             } else if (lowerCat === "kasbon" || lowerCat.includes("kasbon")) {
-                              if (editFormData.flowType !== "PERSONAL_TALANGAN_REIMBURSE" && editFormData.sumberDana !== "REKENING PRIBADI") {
-                                updatedFlow = "OUT_BANK_DIRECT";
-                                updatedSumber = "REKENING PT";
-                              }
+                              updatedFlow = "OUT_BANK_DIRECT";
+                              updatedSumber = "REKENING PT";
                             }
                             setEditFormData((prev) => ({
                               ...prev,
@@ -24251,155 +24340,37 @@ const AdminFinanceScreen = ({
                                     updatedSumber = "REKENING PT";
                                   }
                                 }
+                                const isProjectCategory = suggestion === "Pembayaran Proyek" || suggestion === "Penerimaan Piutang";
+                                const autoTermin = isProjectCategory && (editFormData.refPiutang || editFormData.linkedDebtId || editFormData.projectId)
+                                  ? calculateTerminDetails(editFormData.linkedDebtId || editFormData.refPiutang, editFormData.projectId, editFormData.amount, editingTransaction?.id, editFormData.date)
+                                  : {};
+
                                 setEditFormData((prev) => ({
                                   ...prev,
                                   category: suggestion,
                                   flowType: updatedFlow,
                                   personalHolder: updatedHolder,
                                   sumberDana: updatedSumber,
+                                  ...(isProjectCategory && autoTermin.terminName ? {
+                                    terminName: autoTermin.terminName,
+                                    terminDescription: autoTermin.terminDescription,
+                                    terminPercentage: autoTermin.terminPercentage,
+                                    terminStatus: autoTermin.terminStatus,
+                                    terminNotes: autoTermin.terminNotes,
+                                    terminPaymentDate: autoTermin.terminPaymentDate,
+                                  } : {}),
                                 }));
                               }}
-                              className={`text-[10px] md:text-xs font-black px-4 py-2 rounded-full border tracking-wider transition-all uppercase ${
+                              className={`text-xs md:text-sm font-bold px-4 py-2.5 rounded-full border transition-all ${
                                 (editFormData.category || "").trim().toUpperCase() === suggestion.toUpperCase()
                                   ? "bg-slate-900 text-white border-slate-900 shadow-md"
-                                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-slate-300"
+                                  : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
                               }`}
                             >
                               {suggestion}
                             </button>
                           ))}
                         </div>
-                      </div>
-
-                      {editFormData.category && editFormData.category.toLowerCase().includes("gaji") ? (
-                        <>
-                          <div className="space-y-3">
-                            <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
-                              Total Gaji Kotor (IDR)
-                            </label>
-                            <div className="relative">
-                              <DollarSign
-                                className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"
-                                size={18}
-                              />
-                              <input
-                                type="number"
-                                placeholder="0"
-                                required
-                                value={editFormData.totalGaji || ""}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  const potongan = editFormData.potonganKasbon || "0";
-                                  const net = Number(val || 0) - Number(potongan);
-                                  setEditFormData({
-                                    ...editFormData,
-                                    totalGaji: val,
-                                    amount: net >= 0 ? net.toString() : "0",
-                                  });
-                                }}
-                                onWheel={(e) => e.currentTarget.blur()}
-                                className="w-full pl-14 pr-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="space-y-3">
-                            <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
-                              Potongan Kasbon (IDR)
-                            </label>
-                            <div className="relative">
-                              <DollarSign
-                                className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"
-                                size={18}
-                              />
-                              <input
-                                type="number"
-                                placeholder="0"
-                                value={editFormData.potonganKasbon || ""}
-                                onChange={(e) => {
-                                  const val = e.target.value;
-                                  const gross = editFormData.totalGaji || "0";
-                                  const net = Number(gross || 0) - Number(val || 0);
-                                  setEditFormData({
-                                    ...editFormData,
-                                    potonganKasbon: val,
-                                    amount: net >= 0 ? net.toString() : "0",
-                                  });
-                                }}
-                                onWheel={(e) => e.currentTarget.blur()}
-                                className="w-full pl-14 pr-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="space-y-3">
-                            <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
-                              Gaji Diterima (Bersih) (IDR) - Otomatis
-                            </label>
-                            <div className="relative">
-                              <CheckCircle
-                                className="absolute left-5 top-1/2 -translate-y-1/2 text-emerald-500"
-                                size={18}
-                              />
-                              <input
-                                type="number"
-                                placeholder="0"
-                                required
-                                readOnly
-                                value={editFormData.amount}
-                                className="w-full pl-14 pr-6 py-5 md:py-6 bg-emerald-50/50 border border-emerald-100 rounded-3xl text-sm md:text-base font-extrabold text-emerald-700 outline-none transition-all shadow-sm"
-                              />
-                            </div>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="space-y-3">
-                          <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
-                            Jumlah Transaksi (IDR)
-                          </label>
-                          <div className="relative">
-                            <DollarSign
-                              className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"
-                              size={18}
-                            />
-                            <input
-                              type="number"
-                              placeholder="0"
-                              required
-                              value={editFormData.amount}
-                              onChange={(e) =>
-                                setEditFormData({ ...editFormData, amount: e.target.value })
-                              }
-                              onWheel={(e) => e.currentTarget.blur()}
-                              className="w-full pl-14 pr-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="space-y-3">
-                        <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
-                          Hubungkan Ke Proyek (Opsional)
-                        </label>
-                        <select
-                          className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all appearance-none cursor-pointer"
-                          value={editFormData.projectId}
-                          onChange={(e) =>
-                            setEditFormData({
-                              ...editFormData,
-                              projectId: e.target.value,
-                            })
-                          }
-                        >
-                          <option value="">-- Pilih Project --</option>
-                          {projects
-                            .filter(isProjectActive)
-                            .map((p) => (
-                              <option key={p.id} value={p.id}>
-                                {p.name}
-                              </option>
-                            ))}
-                        </select>
                       </div>
 
                       <div className="space-y-3">
@@ -24414,7 +24385,7 @@ const AdminFinanceScreen = ({
                               paymentMethod: e.target.value as any,
                             })
                           }
-                          className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer"
+                          className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm cursor-pointer"
                         >
                           <option value="CASH">Tunai (Cash)</option>
                           <option value="TRANSFER">Transfer Bank</option>
@@ -24444,15 +24415,15 @@ const AdminFinanceScreen = ({
                               pemilikUangPribadi: val === "REKENING PRIBADI" ? (editFormData.pemilikUangPribadi || editFormData.personalHolder || "FAISAL MUSTOPA") : editFormData.pemilikUangPribadi,
                             });
                           }}
-                          className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer"
+                          className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm cursor-pointer"
                         >
-                          <option value="REKENING PT">REKENING PT (Transfer Bank Langsung ke Supplier)</option>
-                          <option value="DANA PATTYCASH">DANA PATTYCASH / KASBON (Potong Saldo Kas Kecil PIC - Bukan Hutang)</option>
+                          <option value="REKENING PT">REKENING PT</option>
                           <option value="REKENING PRIBADI">REKENING PRIBADI (Uang Karyawan = Tambah Hutang PT)</option>
+                          <option value="DANA PATTYCASH">DANA PATTYCASH / KASBON (Potong Saldo Kasbon/Pattycash)</option>
                         </select>
                       </div>
 
-                      {/* Input Pemilik Uang Pribadi (Khusus Pengeluaran Sumber Rekening Pribadi - Edit Modal) */}
+                      {/* Input Pemilik Uang Pribadi (Khusus Pengeluaran Sumber Rekening Pribadi) */}
                       {editFormData.type === "OUT" && (editFormData.sumberDana === "REKENING PRIBADI" || (editFormData.sumberDana || "").toUpperCase().includes("PRIBADI") || editFormData.flowType === "PERSONAL_TALANGAN_REIMBURSE") && (
                         <div className="col-span-1 md:col-span-2 space-y-3 bg-amber-50/70 p-6 md:p-8 rounded-[28px] border border-amber-200">
                           <label className="text-xs md:text-sm font-black text-amber-900 uppercase tracking-widest ml-1 flex items-center gap-2">
@@ -24520,10 +24491,75 @@ const AdminFinanceScreen = ({
                         </div>
                       )}
 
+                      {/* Dynamic Kasbon fields */}
+                      {editFormData.category && editFormData.category.toLowerCase().includes("kasbon") && (
+                        <div className="col-span-1 md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6 p-6 bg-indigo-50/50 border border-indigo-100 rounded-[28px]">
+                          <div className="space-y-3">
+                            <label className="text-xs md:text-sm font-black text-indigo-700 uppercase tracking-widest ml-1">
+                              Nama Penerima Kasbon
+                            </label>
+                            <select
+                              value={editFormData.penerimaKasbon || ""}
+                              onChange={(e) => {
+                                if (e.target.value === "__MANUAL__") {
+                                  const manualName = prompt("Ketik nama penerima kasbon:");
+                                  if (manualName) {
+                                    setEditFormData({ ...editFormData, penerimaKasbon: manualName });
+                                  }
+                                } else {
+                                  setEditFormData({ ...editFormData, penerimaKasbon: e.target.value });
+                                }
+                              }}
+                              className="w-full px-6 py-5 md:py-6 bg-white border border-indigo-100 rounded-3xl text-sm md:text-base font-bold outline-none cursor-pointer"
+                              required
+                            >
+                              <option value="">-- Pilih Penerima Kasbon --</option>
+                              {personnelOptions.map((opt) => (
+                                <option key={opt} value={opt}>
+                                  {opt}
+                                </option>
+                              ))}
+                              <option value="__MANUAL__">+ Ketik Nama Penerima Manual...</option>
+                            </select>
+                          </div>
+
+                          {editFormData.sumberDana === "REKENING PRIBADI" && (
+                            <div className="space-y-3">
+                              <label className="text-xs md:text-sm font-black text-indigo-700 uppercase tracking-widest ml-1">
+                                Uang Pribadi Siapa Yang Dipakai?
+                              </label>
+                              <select
+                                value={editFormData.pemilikUangPribadi || ""}
+                                onChange={(e) => {
+                                  if (e.target.value === "__MANUAL__") {
+                                    const manualName = prompt("Ketik nama pemilik uang pribadi:");
+                                    if (manualName) {
+                                      setEditFormData({ ...editFormData, pemilikUangPribadi: manualName });
+                                    }
+                                  } else {
+                                    setEditFormData({ ...editFormData, pemilikUangPribadi: e.target.value });
+                                  }
+                                }}
+                                className="w-full px-6 py-5 md:py-6 bg-white border border-indigo-100 rounded-3xl text-sm md:text-base font-bold outline-none cursor-pointer"
+                                required
+                              >
+                                <option value="">-- Pilih Pemilik Uang --</option>
+                                {personnelOptions.map((opt) => (
+                                  <option key={opt} value={opt}>
+                                    {opt}
+                                  </option>
+                                ))}
+                                <option value="__MANUAL__">+ Ketik Nama Pemilik Manual...</option>
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
                       {editFormData.paymentMethod === "TRANSFER" && (
-                        <div className="space-y-3 col-span-1 md:col-span-2 bg-slate-100/60 p-5 rounded-[24px] border border-slate-200">
-                          <label className="text-xs md:text-sm font-black text-slate-700 uppercase tracking-widest ml-1 flex items-center gap-2">
-                            <span>💸</span> Biaya Admin (IDR)
+                        <div className="space-y-3">
+                          <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
+                            Biaya Admin (IDR)
                           </label>
                           <input
                             type="number"
@@ -24536,139 +24572,248 @@ const AdminFinanceScreen = ({
                               })
                             }
                             onWheel={(e) => e.currentTarget.blur()}
-                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-2xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                         </div>
                       )}
+
+                      {editFormData.category && editFormData.category.toLowerCase().includes("gaji") ? (
+                        <>
+                          <div className="space-y-3">
+                            <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
+                              Total Gaji Kotor (IDR)
+                            </label>
+                            <div className="relative">
+                              <DollarSign
+                                className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"
+                                size={18}
+                              />
+                              <input
+                                type="number"
+                                placeholder="0"
+                                required
+                                value={editFormData.totalGaji || ""}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const potongan = editFormData.potonganKasbon || "0";
+                                  const net = Number(val || 0) - Number(potongan);
+                                  setEditFormData({
+                                    ...editFormData,
+                                    totalGaji: val,
+                                    amount: net >= 0 ? net.toString() : "0",
+                                  });
+                                }}
+                                onWheel={(e) => e.currentTarget.blur()}
+                                className="w-full pl-14 pr-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
+                              Potongan Kasbon (IDR)
+                            </label>
+                            <div className="relative">
+                              <DollarSign
+                                className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"
+                                size={18}
+                              />
+                              <input
+                                type="number"
+                                placeholder="0"
+                                value={editFormData.potonganKasbon || ""}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  const gross = editFormData.totalGaji || "0";
+                                  const net = Number(gross || 0) - Number(val || 0);
+                                  setEditFormData({
+                                    ...editFormData,
+                                    potonganKasbon: val,
+                                    amount: net >= 0 ? net.toString() : "0",
+                                  });
+                                }}
+                                onWheel={(e) => e.currentTarget.blur()}
+                                className="w-full pl-14 pr-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
+                              Gaji Diterima (Bersih) (IDR) - Otomatis
+                            </label>
+                            <div className="relative">
+                              <CheckCircle
+                                className="absolute left-5 top-1/2 -translate-y-1/2 text-emerald-500"
+                                size={18}
+                              />
+                              <input
+                                type="number"
+                                placeholder="0"
+                                required
+                                readOnly
+                                value={editFormData.amount}
+                                className="w-full pl-14 pr-6 py-5 md:py-6 bg-emerald-50/50 border border-emerald-100 rounded-3xl text-sm md:text-base font-extrabold text-emerald-700 focus:ring-4 focus:ring-primary/5 outline-none transition-all"
+                              />
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="space-y-3">
+                          <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
+                            Jumlah Transaksi (IDR)
+                          </label>
+                          <div className="relative">
+                            <DollarSign
+                              className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400"
+                              size={18}
+                            />
+                            <input
+                              type="number"
+                              placeholder="0"
+                              required
+                              value={editFormData.amount}
+                              onChange={(e) =>
+                                setEditFormData({ ...editFormData, amount: e.target.value })
+                              }
+                              onWheel={(e) => e.currentTarget.blur()}
+                              className="w-full pl-14 pr-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="space-y-3">
+                        <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
+                          Hubungkan Ke Proyek (Opsional)
+                        </label>
+                        <select
+                          className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all appearance-none cursor-pointer"
+                          value={editFormData.projectId}
+                          onChange={(e) => {
+                            const chosenProjId = e.target.value;
+                            const matchedProj = projects.find((p) => p.id === chosenProjId);
+                            const matchedDebt = effectiveDebtRecords.find(
+                              (d) =>
+                                d.type === "PIUTANG" &&
+                                (d.projectId === chosenProjId ||
+                                  d.id === `PTG-PROJ-${chosenProjId}` ||
+                                  (matchedProj &&
+                                    (d.title.toLowerCase().includes(matchedProj.name.toLowerCase()) ||
+                                      matchedProj.name.toLowerCase().includes(d.title.toLowerCase()))))
+                            );
+
+                            const isProjPayment = editFormData.type === "IN" && (
+                              !editFormData.category ||
+                              editFormData.category === "Pembayaran Proyek" ||
+                              editFormData.category === "Penerimaan Piutang" ||
+                              editFormData.category.toLowerCase().includes("proyek") ||
+                              editFormData.category.toLowerCase().includes("piutang") ||
+                              editFormData.category.toLowerCase().includes("termin")
+                            );
+
+                            const autoTermin = isProjPayment
+                              ? calculateTerminDetails(matchedDebt ? matchedDebt.id : "", chosenProjId, editFormData.amount, editingTransaction?.id, editFormData.date)
+                              : {};
+
+                            setEditFormData({
+                              ...editFormData,
+                              projectId: chosenProjId,
+                              linkedDebtId: editFormData.type === "IN" ? (matchedDebt ? matchedDebt.id : editFormData.linkedDebtId) : editFormData.linkedDebtId,
+                              refPiutang: editFormData.type === "IN" ? (matchedDebt ? matchedDebt.title : (matchedProj ? matchedProj.name : editFormData.refPiutang)) : editFormData.refPiutang,
+                              terminName: autoTermin.terminName || (editFormData.type === "IN" ? (editFormData.terminName || (matchedProj ? `Pembayaran Proyek ${matchedProj.name}` : "")) : editFormData.terminName),
+                              terminDescription: autoTermin.terminDescription || editFormData.terminDescription,
+                              terminPercentage: autoTermin.terminPercentage || editFormData.terminPercentage,
+                              terminStatus: autoTermin.terminStatus || editFormData.terminStatus,
+                              terminNotes: autoTermin.terminNotes || editFormData.terminNotes,
+                              terminPaymentDate: autoTermin.terminPaymentDate || editFormData.terminPaymentDate || editFormData.date,
+                            });
+                          }}
+                        >
+                          <option value="">-- Pilih Project --</option>
+                          {projects
+                            .filter(isProjectActive)
+                            .map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
                     </div>
 
-                    {(editFormData.type === "OUT" ||
-                      editFormData.type === "IN" ||
-                      Boolean(editFormData.linkedDebtId) ||
-                      Boolean(editFormData.refHutang) ||
-                      Boolean(editFormData.refPiutang) ||
-                      Boolean(
-                        editFormData.category &&
-                          (editFormData.category.toLowerCase().includes("hutang") ||
-                            editFormData.category.toLowerCase().includes("reimburse") ||
-                            editFormData.category.toLowerCase().includes("gaji") ||
-                            editFormData.category.toLowerCase().includes("proyek") ||
-                            editFormData.category.toLowerCase().includes("termin") ||
-                            editFormData.category.toLowerCase().includes("cicilan"))
-                      )) && (
-                      <div className="space-y-4 pt-4 p-8 bg-amber-50/30 border border-amber-200 rounded-[36px]">
-                        <label className="text-xs md:text-sm font-black text-amber-700 uppercase tracking-widest ml-1 flex items-center gap-2">
-                          <span>🔗</span> {editFormData.category && editFormData.category.toLowerCase().includes("gaji")
-                            ? "Pilih Catatan Kasbon Karyawan (Untuk Dipotong dari Gaji)"
-                            : (editFormData.type === "OUT" || (editFormData.category && (editFormData.category.toLowerCase().includes("hutang") || editFormData.category.toLowerCase().includes("reimburse"))))
-                              ? "Hubungkan Ke Data Hutang Supplier / Pelunasan / Reimbursement"
-                              : "Hubungkan Ke Data Piutang Client / Proyek (Termin)"}
+                    {Boolean(editFormData.category && editFormData.category.toLowerCase().includes("gaji")) && (
+                      <div className="space-y-4 pt-4 p-6 md:p-8 bg-amber-50/20 border border-amber-100 rounded-[36px]">
+                        <label className="text-xs md:text-sm font-black text-amber-600 uppercase tracking-widest ml-1">
+                          Pilih Catatan Kasbon Karyawan (Untuk Dipotong dari Gaji)
                         </label>
+                        <select
+                          value={editFormData.linkedDebtId}
+                          onChange={(e) => {
+                            const selectedId = e.target.value;
+                            let refTitle = "";
+                            if (selectedId.startsWith("GROUP_KASBON:")) {
+                              refTitle = selectedId.replace("GROUP_KASBON:", "").trim();
+                            } else {
+                              refTitle = selectedId;
+                            }
+                            setEditFormData({
+                              ...editFormData,
+                              linkedDebtId: selectedId,
+                              refHutang: refTitle,
+                            });
+                          }}
+                          className="w-full px-6 py-5 md:py-6 bg-white border border-amber-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-amber-50 outline-none transition-all cursor-pointer text-slate-800"
+                        >
+                          <option value="">-- Pilih Kasbon Pegawai (Total / ID Kasbon) --</option>
+                          {kasbonLedgerData.employeeSummaries.map((emp) => (
+                            <option key={`group_${emp.name}`} value={`GROUP_KASBON:${emp.name}`}>
+                              👤 {emp.name} — Sisa Kasbon: {formatCurrencyIDR(emp.remaining)} {emp.remaining === 0 ? "(Lunas)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                        {editFormData.linkedDebtId && (() => {
+                          let empName = "";
+                          if (editFormData.linkedDebtId.startsWith("GROUP_KASBON:")) {
+                            empName = editFormData.linkedDebtId.replace("GROUP_KASBON:", "").trim();
+                          } else if (editFormData.linkedDebtId.startsWith("KASBON_TRX:")) {
+                            const cid = editFormData.linkedDebtId.replace("KASBON_TRX:", "").trim();
+                            const targetKasbonItem = kasbonLedgerData.allBorrowItems.find((b) => b.customId === cid || b.id === cid);
+                            empName = targetKasbonItem ? targetKasbonItem.recipientName : "";
+                          } else {
+                            empName = editFormData.linkedDebtId.trim();
+                          }
+                          const empSummary = kasbonLedgerData.employeeSummaries.find(
+                            (e) => e.name.toLowerCase() === empName.toLowerCase()
+                          );
+                          if (!empSummary) return null;
 
-                        {editFormData.category && editFormData.category.toLowerCase().includes("gaji") ? (
-                          <div className="space-y-4">
-                            <select
-                              value={editFormData.linkedDebtId || ""}
-                              onChange={(e) => {
-                                const selectedId = e.target.value;
-                                let refTitle = "";
-                                if (selectedId.startsWith("GROUP_KASBON:")) {
-                                  refTitle = selectedId.replace("GROUP_KASBON:", "").trim();
-                                } else if (selectedId.startsWith("KASBON_TRX:")) {
-                                  refTitle = selectedId.replace("KASBON_TRX:", "").trim();
-                                } else {
-                                  const d = debtRecords.find((doc) => doc.id === selectedId);
-                                  refTitle = d ? d.title : "";
-                                }
-                                setEditFormData({
-                                  ...editFormData,
-                                  linkedDebtId: selectedId,
-                                  refHutang: refTitle,
-                                  refPiutang: refTitle,
-                                });
-                              }}
-                              className="w-full px-6 py-4 bg-white border border-slate-200 rounded-2xl text-xs md:text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none cursor-pointer transition-all text-amber-800"
-                            >
-                              <option value="">-- Pilih Kasbon Pegawai (Total / ID Kasbon) --</option>
-                              {kasbonLedgerData.employeeSummaries.length > 0 && (
-                                <optgroup label="👤 PILIH TOTAL KASBON PER PEGAWAI (Otomatis Alokasi ke Sisa Kasbon)">
-                                  {kasbonLedgerData.employeeSummaries.map((emp) => (
-                                    <option key={`edit_group_${emp.name}`} value={`GROUP_KASBON:${emp.name}`}>
-                                      👤 {emp.name} (Total Kasbon: {formatCurrencyIDR(emp.totalBorrowed)} | Sisa Kasbon: {formatCurrencyIDR(emp.remaining)} - {emp.borrowRecords.length} Pinjaman)
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              )}
-                              {kasbonLedgerData.allBorrowItems.length > 0 && (
-                                <optgroup label="📌 PILIH PER ID TRANSAKSI KASBON SPESIFIK">
-                                  {kasbonLedgerData.allBorrowItems.map((b) => (
-                                    <option key={`edit_trx_${b.id}`} value={`KASBON_TRX:${b.customId}`}>
-                                      📌 [{b.customId}] {b.recipientName} - {b.description} (Pinjam: {formatCurrencyIDR(b.amount)} | Sisa: {formatCurrencyIDR(b.remainingAmount)})
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              )}
-                            </select>
+                          const potonganVal = Number(editFormData.potonganKasbon || 0);
+                          const allocationResult = simulateKasbonAllocation(empSummary, potonganVal, editFormData.linkedDebtId);
+                          const newRemaining = Math.max(0, empSummary.remaining - potonganVal);
 
-                            {editFormData.linkedDebtId && (() => {
-                              let empName = "";
-                              let targetKasbonItem: any = null;
-                              if (editFormData.linkedDebtId.startsWith("GROUP_KASBON:")) {
-                                empName = editFormData.linkedDebtId.replace("GROUP_KASBON:", "").trim();
-                              } else if (editFormData.linkedDebtId.startsWith("KASBON_TRX:")) {
-                                const cid = editFormData.linkedDebtId.replace("KASBON_TRX:", "").trim();
-                                targetKasbonItem = kasbonLedgerData.allBorrowItems.find((b) => b.customId === cid || b.id === cid);
-                                empName = targetKasbonItem ? targetKasbonItem.recipientName : "";
-                              }
-                              const empSummary = kasbonLedgerData.employeeSummaries.find(
-                                (e) => e.name.toLowerCase() === empName.toLowerCase()
-                              );
-                              if (!empSummary) return null;
-
-                              const potonganVal = Number(editFormData.potonganKasbon || 0);
-                              const allocationResult = simulateKasbonAllocation(empSummary, potonganVal, editFormData.linkedDebtId);
-                              const newRemaining = Math.max(0, empSummary.remaining - potonganVal);
-
-                              return (
-                                <div className="p-6 bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-amber-500/10 border-2 border-amber-300 rounded-[28px] space-y-4">
-                                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-amber-200">
-                                    <div className="flex items-center gap-3">
-                                      <div className="p-2.5 bg-amber-500 text-white rounded-2xl shadow-sm">
-                                        <Coins size={20} />
-                                      </div>
-                                      <div>
-                                        <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest block">
-                                          Simulasi Potongan Kasbon Pegawai
-                                        </span>
-                                        <h4 className="text-base font-black text-slate-900">
-                                          👤 {empSummary.name}
-                                        </h4>
-                                        {targetKasbonItem && (
-                                          <span className="text-[11px] font-bold text-amber-800 font-mono">
-                                            📌 Target Kasbon ID: [{targetKasbonItem.customId}] (Sisa: {formatCurrencyIDR(targetKasbonItem.remainingAmount)})
-                                          </span>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <div className="flex flex-wrap items-center gap-2">
-                                      {targetKasbonItem && targetKasbonItem.remainingAmount > 0 && (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            const targetDeduction = targetKasbonItem.remainingAmount;
-                                            const gross = Number(editFormData.totalGaji || 0);
-                                            const net = Math.max(0, gross - targetDeduction);
-                                            setEditFormData({
-                                              ...editFormData,
-                                              potonganKasbon: String(targetDeduction),
-                                              amount: String(net),
-                                            });
-                                          }}
-                                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-xs"
-                                        >
-                                          🎯 Potong ID Ini ({formatCurrencyIDR(targetKasbonItem.remainingAmount)})
-                                        </button>
-                                      )}
+                          return (
+                            <div className="p-6 bg-gradient-to-br from-amber-500/10 via-orange-500/5 to-amber-500/10 border-2 border-amber-300 rounded-[28px] space-y-4">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-amber-200">
+                                <div className="flex items-center gap-3">
+                                  <div className="p-2.5 bg-amber-500 text-white rounded-2xl shadow-sm">
+                                    <Coins size={20} />
+                                  </div>
+                                  <div>
+                                    <span className="text-[10px] font-black text-amber-700 uppercase tracking-widest block">
+                                      Simulasi Potongan Kasbon Pegawai
+                                    </span>
+                                    <h4 className="text-base font-black text-slate-900">
+                                      👤 {empSummary.name}
+                                    </h4>
+                                    <span className="text-xs font-bold text-amber-900">
+                                      Sisa Kasbon Saat Ini: <strong className="text-rose-700 font-mono text-sm">{formatCurrencyIDR(empSummary.remaining)}</strong>
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  {empSummary.remaining > 0 && (
+                                    <>
                                       <button
                                         type="button"
                                         onClick={() => {
@@ -24681,208 +24826,127 @@ const AdminFinanceScreen = ({
                                             amount: String(net),
                                           });
                                         }}
-                                        className="px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-xs"
+                                        className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm flex items-center gap-1.5 cursor-pointer"
                                       >
-                                        ⚡ Potong Penuh ({formatCurrencyIDR(empSummary.remaining)})
+                                        ⚡ Potong Lunas ({formatCurrencyIDR(empSummary.remaining)})
                                       </button>
-                                      {empSummary.remaining > 0 && (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            const halfDeduction = Math.round(empSummary.remaining / 2);
-                                            const gross = Number(editFormData.totalGaji || 0);
-                                            const net = Math.max(0, gross - halfDeduction);
-                                            setEditFormData({
-                                              ...editFormData,
-                                              potonganKasbon: String(halfDeduction),
-                                              amount: String(net),
-                                            });
-                                          }}
-                                          className="px-3 py-1.5 bg-white border border-amber-300 text-amber-800 hover:bg-amber-100/50 rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-xs"
-                                        >
-                                          Potong 50%
-                                        </button>
-                                      )}
-                                    </div>
-                                  </div>
-
-                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                    <div className="bg-white/80 p-3 rounded-2xl border border-amber-100">
-                                      <span className="text-[10px] font-bold text-slate-500 block uppercase">Total Pinjaman</span>
-                                      <span className="text-xs font-black text-slate-800">{formatCurrencyIDR(empSummary.totalBorrowed)}</span>
-                                    </div>
-                                    <div className="bg-white/80 p-3 rounded-2xl border border-amber-100">
-                                      <span className="text-[10px] font-bold text-slate-500 block uppercase">Sisa Kasbon</span>
-                                      <span className="text-xs font-black text-amber-700">{formatCurrencyIDR(empSummary.remaining)}</span>
-                                    </div>
-                                    <div className="bg-white/80 p-3 rounded-2xl border border-amber-100">
-                                      <span className="text-[10px] font-bold text-slate-500 block uppercase">Potongan Di Gaji</span>
-                                      <span className="text-xs font-black text-rose-600">
-                                        {potonganVal > 0 ? `-${formatCurrencyIDR(potonganVal)}` : "Rp 0"}
-                                      </span>
-                                    </div>
-                                    <div className="bg-white/80 p-3 rounded-2xl border border-amber-100">
-                                      <span className="text-[10px] font-bold text-slate-500 block uppercase">Sisa Akhir</span>
-                                      <span className={`text-xs font-black ${newRemaining === 0 ? "text-emerald-600" : "text-amber-800"}`}>
-                                        {formatCurrencyIDR(newRemaining)} {newRemaining === 0 && "(LUNAS 🎉)"}
-                                      </span>
-                                    </div>
-                                  </div>
-
-                                  {/* Breakdown Per ID Kasbon */}
-                                  <div className="space-y-2">
-                                    <div className="flex items-center justify-between text-[11px] font-black text-slate-700 uppercase tracking-wider">
-                                      <span>📋 Rincian Pemotongan Per ID Kasbon:</span>
-                                      <span className="text-amber-800 font-mono text-[10px]">
-                                        {allocationResult.allocatedItems.length} Transaksi Kasbon
-                                      </span>
-                                    </div>
-                                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
-                                      {allocationResult.allocatedItems.map((alloc, aIdx) => (
-                                        <div
-                                          key={alloc.customId || aIdx}
-                                          className="p-3 bg-white border border-amber-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
-                                        >
-                                          <div>
-                                            <div className="flex items-center gap-2">
-                                              <span className="font-mono font-black text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
-                                                {alloc.customId}
-                                              </span>
-                                              <span className="font-bold text-slate-800">{alloc.description}</span>
-                                            </div>
-                                            <div className="text-[11px] text-slate-500 mt-0.5">
-                                              Nominal: <strong className="text-slate-700">{formatCurrencyIDR(alloc.originalAmount)}</strong> | Sisa Awal: <strong className="text-amber-700">{formatCurrencyIDR(alloc.currentRemaining)}</strong>
-                                            </div>
-                                          </div>
-                                          <div className="flex items-center gap-2 self-end sm:self-center">
-                                            {alloc.deductedThisTime > 0 ? (
-                                              <span className="px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg font-black text-[11px]">
-                                                Terpotong: {formatCurrencyIDR(alloc.deductedThisTime)}
-                                              </span>
-                                            ) : (
-                                              <span className="px-2 py-1 bg-slate-50 text-slate-400 border border-slate-200 rounded-lg font-bold text-[10px]">
-                                                Tidak Terpotong
-                                              </span>
-                                            )}
-                                            <span className={`px-2 py-1 rounded-lg font-black text-[10px] ${alloc.newRemaining === 0 ? "bg-emerald-500 text-white" : "bg-amber-100 text-amber-900"}`}>
-                                              {alloc.newRemaining === 0 ? "LUNAS" : `Sisa ${formatCurrencyIDR(alloc.newRemaining)}`}
-                                            </span>
-                                          </div>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        ) : (
-                          <div className="space-y-6">
-                            {editFormData.type === "IN" && (
-                              <div className="space-y-3">
-                                <label className="text-xs md:text-sm font-black text-emerald-700 uppercase tracking-widest ml-1">
-                                  Ref Piutang (Koneksi Piutang Proyek / Client)
-                                </label>
-                                {useManualRefPiutangEdit ? (
-                                  <div className="space-y-2">
-                                    <input
-                                      type="text"
-                                      value={editFormData.refPiutang}
-                                      onChange={(e) => setEditFormData({ ...editFormData, refPiutang: e.target.value })}
-                                      className="w-full px-6 py-4 bg-white border border-slate-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
-                                      placeholder="Ketik manual nama client..."
-                                    />
-                                    <button
-                                      type="button"
-                                      onClick={() => {
-                                        setUseManualRefPiutangEdit(false);
-                                        setEditFormData({ ...editFormData, refPiutang: "" });
-                                      }}
-                                      className="text-xs font-black text-emerald-600 hover:underline ml-1"
-                                    >
-                                      ← Pilih dari Daftar Piutang
-                                    </button>
-                                  </div>
-                                ) : (
-                                  <div className="space-y-2">
-                                    <select
-                                      value={editFormData.refPiutang}
-                                      onChange={(e) => {
-                                        if (e.target.value === "__MANUAL__") {
-                                          setUseManualRefPiutangEdit(true);
-                                          setEditFormData({ ...editFormData, refPiutang: "" });
-                                        } else {
-                                          const titleStr = e.target.value;
-                                          const d = effectiveDebtRecords.find((doc) => doc.title === titleStr && doc.type === "PIUTANG");
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const halfDeduction = Math.round(empSummary.remaining / 2);
+                                          const gross = Number(editFormData.totalGaji || 0);
+                                          const net = Math.max(0, gross - halfDeduction);
                                           setEditFormData({
                                             ...editFormData,
-                                            refPiutang: titleStr,
-                                            linkedDebtId: d ? d.id : editFormData.linkedDebtId,
-                                            projectId: d?.projectId || editFormData.projectId,
+                                            potonganKasbon: String(halfDeduction),
+                                            amount: String(net),
                                           });
-                                        }
-                                      }}
-                                      className="w-full px-6 py-4 bg-white border border-slate-200 rounded-2xl text-xs md:text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none cursor-pointer transition-all text-emerald-800"
-                                    >
-                                      <option value="">-- Hubungkan Piutang --</option>
-                                      {effectiveDebtRecords
-                                        .filter((d) => d.type === "PIUTANG")
-                                        .map((debt) => {
-                                          const sched = getScheduleForRecord(debt, projects, financialRecords);
-                                          const left = Math.max(0, sched.contractValue - sched.totalPaid);
-                                          return (
-                                            <option key={debt.id} value={debt.title}>
-                                              [{debt.customId || "PROJ"}] {debt.title} - {debt.contactName} (Nilai: {formatCurrencyIDR(sched.contractValue)} | Sisa: {formatCurrencyIDR(left)}) {left === 0 ? "✅ LUNAS" : ""}
-                                            </option>
-                                          );
-                                        })}
-                                      <option value="__MANUAL__">+ Input Manual Custom...</option>
-                                    </select>
-                                  </div>
-                                )}
+                                        }}
+                                        className="px-3 py-2 bg-white border border-amber-300 text-amber-800 hover:bg-amber-100/50 rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-xs cursor-pointer"
+                                      >
+                                        Potong 50%
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
                               </div>
-                            )}
 
-                            {editFormData.type === "OUT" && (
-                              <DebtPaymentManager
-                                debts={effectiveDebtRecords}
-                                projects={projects}
-                                financialRecords={financialRecords}
-                                amount={editFormData.amount}
-                                onAmountChange={(newAmt) => setEditFormData((prev) => ({ ...prev, amount: newAmt }))}
-                                allocations={editDebtAllocations}
-                                onAllocationsChange={(newAllocs, refStr, firstDebtId) => {
-                                  setEditDebtAllocations(newAllocs);
-                                  setEditFormData((prev) => ({
-                                    ...prev,
-                                    refHutang: refStr,
-                                    linkedDebtId: firstDebtId || (newAllocs[0]?.debtId ?? prev.linkedDebtId),
-                                  }));
-                                }}
-                                refHutang={editFormData.refHutang || ""}
-                                onRefHutangChange={(val) => setEditFormData((prev) => ({ ...prev, refHutang: val }))}
-                                isEdit={true}
-                                editingTransaction={editingTransaction}
-                                getScheduleForRecord={getScheduleForRecord}
-                              />
-                            )}
-                          </div>
-                        )}
-                        {editFormData.linkedDebtId && (
-                          <div className="p-5 bg-emerald-50 border border-emerald-100 rounded-3xl flex items-start gap-4">
-                            <CheckCircle className="text-emerald-500 shrink-0 mt-1" size={20} />
-                            <div>
-                              <p className="text-xs md:text-sm font-black text-emerald-700 uppercase tracking-wider mb-1">
-                                TERKONEKSI OTOMATIS
-                              </p>
-                              <p className="text-xs text-emerald-600 font-medium leading-relaxed">
-                                {editFormData.category && editFormData.category.toLowerCase().includes("gaji")
-                                  ? "Transaksi ini akan otomatis mengurangi saldo kasbon secara real-time tanpa membuat nilai minus."
-                                  : "Transaksi ini akan otomatis mengurangi saldo piutang/hutang secara real-time."}
-                              </p>
+                              {/* KPI Quick Stats */}
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                <div className="bg-white/90 p-3 rounded-2xl border border-amber-100">
+                                  <span className="text-[10px] font-bold text-slate-500 block uppercase">Total Pinjaman</span>
+                                  <span className="text-xs font-black text-slate-800">{formatCurrencyIDR(empSummary.totalBorrowed)}</span>
+                                </div>
+                                <div className="bg-white/90 p-3 rounded-2xl border border-amber-100">
+                                  <span className="text-[10px] font-bold text-emerald-600 block uppercase">Sudah Dipotong</span>
+                                  <span className="text-xs font-black text-emerald-700">{formatCurrencyIDR(empSummary.totalRepaid)}</span>
+                                </div>
+                                <div className="bg-white/90 p-3 rounded-2xl border border-amber-100">
+                                  <span className="text-[10px] font-bold text-rose-600 block uppercase">Potong Di Gaji Ini</span>
+                                  <span className="text-xs font-black text-rose-600">
+                                    {potonganVal > 0 ? `-${formatCurrencyIDR(potonganVal)}` : "Rp 0"}
+                                  </span>
+                                </div>
+                                <div className="bg-white/90 p-3 rounded-2xl border border-amber-100">
+                                  <span className="text-[10px] font-bold text-slate-500 block uppercase">Sisa Kasbon Akhir</span>
+                                  <span className={`text-xs font-black ${newRemaining === 0 ? "text-emerald-600" : "text-amber-800"}`}>
+                                    {formatCurrencyIDR(newRemaining)} {newRemaining === 0 && "(LUNAS 🎉)"}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {/* Breakdown Per ID Kasbon */}
+                              {allocationResult.allocatedItems.length > 0 && (
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between text-[11px] font-black text-slate-700 uppercase tracking-wider">
+                                    <span>📋 Rincian Transaksi Kasbon Terkait:</span>
+                                    <span className="text-amber-800 font-mono text-[10px]">
+                                      {allocationResult.allocatedItems.length} Catatan Pinjaman
+                                    </span>
+                                  </div>
+                                  <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                                    {allocationResult.allocatedItems.map((alloc, aIdx) => (
+                                      <div
+                                        key={alloc.customId || aIdx}
+                                        className="p-3 bg-white border border-amber-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
+                                      >
+                                        <div>
+                                          <div className="flex items-center gap-2">
+                                            <span className="font-mono font-black text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
+                                              {alloc.customId}
+                                            </span>
+                                            <span className="font-bold text-slate-800">{alloc.description}</span>
+                                          </div>
+                                          <div className="text-[11px] text-slate-500 mt-0.5">
+                                            Pinjam: <strong className="text-slate-700">{formatCurrencyIDR(alloc.originalAmount)}</strong> | Sisa: <strong className="text-amber-700">{formatCurrencyIDR(alloc.currentRemaining)}</strong>
+                                          </div>
+                                        </div>
+                                        <div className="flex items-center gap-2 self-end sm:self-center">
+                                          {alloc.deductedThisTime > 0 ? (
+                                            <span className="px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg font-black text-[11px]">
+                                              Dipotong: {formatCurrencyIDR(alloc.deductedThisTime)}
+                                            </span>
+                                          ) : (
+                                            <span className="px-2 py-1 bg-slate-50 text-slate-400 border border-slate-200 rounded-lg font-bold text-[10px]">
+                                              Belum Dipotong
+                                            </span>
+                                          )}
+                                          <span className={`px-2 py-1 rounded-lg font-black text-[10px] ${alloc.newRemaining === 0 ? "bg-emerald-500 text-white" : "bg-amber-100 text-amber-900"}`}>
+                                            {alloc.newRemaining === 0 ? "LUNAS" : `Sisa ${formatCurrencyIDR(alloc.newRemaining)}`}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
+                        {editFormData.linkedDebtId && !editFormData.category?.toLowerCase().includes("gaji") && (() => {
+                          const linkedRec = effectiveDebtRecords.find((d) => d.id === editFormData.linkedDebtId);
+                          if (!linkedRec) return null;
+                          const sched = getScheduleForRecord(linkedRec, projects, financialRecords);
+                          const left = Math.max(0, sched.contractValue - sched.totalPaid);
+                          return (
+                            <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-3xl flex items-start gap-4">
+                              <CheckCircle className="text-emerald-600 shrink-0 mt-1" size={22} />
+                              <div className="space-y-1">
+                                <p className="text-xs md:text-sm font-black text-emerald-800 uppercase tracking-wider">
+                                  TERKONEKSI KE PIUTANG PROYEK: {linkedRec.title}
+                                </p>
+                                <div className="text-xs text-emerald-700 font-semibold flex flex-wrap gap-x-4 gap-y-1">
+                                  <span>Total Kontrak: <strong className="font-mono">{formatCurrencyIDR(sched.contractValue)}</strong></span>
+                                  <span>Sudah Masuk/DP: <strong className="font-mono text-emerald-800">{formatCurrencyIDR(sched.totalPaid)}</strong></span>
+                                  <span>Sisa Piutang: <strong className="font-mono text-amber-700">{formatCurrencyIDR(left)}</strong></span>
+                                </div>
+                                <p className="text-[11px] text-emerald-600 font-medium">
+                                  Pembayaran ini akan otomatis masuk ke Riwayat Realisasi Pembayaran &amp; Cicilan Piutang Proyek ini.
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })()}
                         {(editFormData.category === "Pembayaran Proyek" ||
                           editFormData.category === "Penerimaan Piutang" ||
                           editFormData.category === "Cicilan Pembayaran Proyek" ||
@@ -24952,7 +25016,7 @@ const AdminFinanceScreen = ({
                                         
                                         // Calculate previous paid for this specific term
                                         const prevPaidForTerm = (linkedRec?.payments || [])
-                                          .filter((p: any) => p.financialRecordId !== editingTransaction?.id && p.note && p.note.toLowerCase().includes(termNameStr.toLowerCase()))
+                                          .filter((p: any) => p.note && p.note.toLowerCase().includes(termNameStr.toLowerCase()))
                                           .reduce((sum: number, p: any) => sum + p.amount, 0);
 
                                         const sisaTermVal = Math.max(0, totalTermVal - prevPaidForTerm);
@@ -24983,7 +25047,7 @@ const AdminFinanceScreen = ({
                                       const termNameStr = t.name || `Termin ${idx + 1}`;
                                       const termAmount = t.amount || t.expectedAmount || 0;
                                       const prevPaid = (linkedRec?.payments || [])
-                                        .filter((p: any) => p.financialRecordId !== editingTransaction?.id && p.note && p.note.toLowerCase().includes(termNameStr.toLowerCase()))
+                                        .filter((p: any) => p.note && p.note.toLowerCase().includes(termNameStr.toLowerCase()))
                                         .reduce((sum: number, p: any) => sum + p.amount, 0);
                                       const sisa = Math.max(0, termAmount - prevPaid);
                                       const statusBadge = t.status || "BELUM BAYAR";
@@ -25067,38 +25131,16 @@ const AdminFinanceScreen = ({
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                              <div className="space-y-1.5">
-                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                                  Tgl Invoice
-                                </label>
-                                <input
-                                  type="date"
-                                  value={editFormData.terminInvoiceDate || ""}
-                                  onChange={(e) => setEditFormData({ ...editFormData, terminInvoiceDate: e.target.value })}
-                                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all text-slate-800"
-                                />
-                                {editFormData.linkedDebtId && (() => {
-                                  const prev = getPreviousTerminInfo(editFormData.linkedDebtId);
-                                  return prev && prev.terminInvoiceDate ? (
-                                    <p className="text-[10px] text-slate-500 font-medium ml-1 mt-1">
-                                      Tgl Sebelumnya: <span className="font-bold text-indigo-600 bg-indigo-50/50 px-1.5 py-0.5 rounded font-mono">{prev.terminInvoiceDate}</span> <span className="text-slate-400">({prev.terminName})</span>
-                                    </p>
-                                  ) : null;
-                                })()}
-                              </div>
-
-                              <div className="space-y-1.5">
-                                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                                  Tgl Terbayar
-                                </label>
-                                <input
-                                  type="date"
-                                  value={editFormData.terminPaymentDate || editFormData.date}
-                                  onChange={(e) => setEditFormData({ ...editFormData, terminPaymentDate: e.target.value })}
-                                  className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all text-slate-800"
-                                />
-                              </div>
+                            <div className="space-y-1.5">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
+                                Tanggal Bayar
+                              </label>
+                              <input
+                                type="date"
+                                value={editFormData.terminPaymentDate || editFormData.date}
+                                onChange={(e) => setEditFormData({ ...editFormData, terminPaymentDate: e.target.value })}
+                                className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all text-slate-800"
+                              />
                             </div>
 
                             <div className="space-y-1.5">
@@ -25118,252 +25160,398 @@ const AdminFinanceScreen = ({
                       </div>
                     )}
 
-                    {/* Specific conditional fields: OUT_PERSONAL_TRANSFER & OUT_PERSONAL_SPEND */}
-                    {(editFormData.flowType === "OUT_PERSONAL_TRANSFER" ||
-                      editFormData.flowType === "OUT_PERSONAL_SPEND" ||
-                      editFormData.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
-                      editFormData.sumberDana === "DANA PATTYCASH" ||
-                      (editFormData.sumberDana || "").toUpperCase().includes("PATTY")) && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 bg-purple-50/20 p-6 md:p-10 rounded-[36px] border border-purple-100/40">
+                    {/* Dynamic flowType selection for OUT type transactions */}
+                    {editFormData.type === "OUT" && (
+                      <div className="space-y-6 p-6 md:p-8 bg-slate-50 border border-slate-100 rounded-[36px] shadow-sm">
                         <div className="space-y-3">
-                          <label className="text-xs md:text-sm font-black text-purple-700 uppercase tracking-widest ml-1">
-                            Penanggung Jawab / Nama PIC
+                          <label className="text-xs md:text-sm font-black text-slate-600 uppercase tracking-widest ml-1">
+                            Aliran Dana Pengeluaran (Tipe Arus)
                           </label>
-                          {useManualPICEdit ? (
-                            <div className="space-y-2">
-                              <input
-                                type="text"
-                                value={editFormData.personalHolder}
-                                onChange={(e) => setEditFormData({ ...editFormData, personalHolder: e.target.value })}
-                                className="w-full px-6 py-4 bg-white border border-slate-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
-                                placeholder="Tulis nama penanggung jawab..."
-                              />
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setUseManualPICEdit(false);
-                                  setEditFormData({ ...editFormData, personalHolder: "Faisal Mustopa (Admin)" });
-                                }}
-                                className="text-xs font-black text-purple-600 hover:underline ml-1"
-                              >
-                                ← Pilih Staf Inti
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="space-y-2">
-                              <select
-                                value={editFormData.personalHolder}
-                                onChange={(e) => {
-                                  if (e.target.value === "__MANUAL__") {
-                                    setUseManualPICEdit(true);
-                                    setEditFormData({ ...editFormData, personalHolder: "" });
-                                  } else {
-                                    setEditFormData({ ...editFormData, personalHolder: e.target.value });
-                                  }
-                                }}
-                                className="w-full px-6 py-4 bg-white border border-slate-200 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none cursor-pointer transition-all text-purple-700"
-                              >
-                                <option value="Faisal Mustopa (Admin)">Faisal Mustopa (Admin)</option>
-                                <option value="Jidan">Jidan</option>
-                                <option value="Yasin">Yasin</option>
-                                <option value="__MANUAL__">+ Input Manual Custom...</option>
-                              </select>
-                            </div>
-                          )}
+                          <select
+                            value={editFormData.flowType}
+                            onChange={(e) => {
+                              const chosenFlow = e.target.value as any;
+                              setEditFormData((prev) => ({
+                                ...prev,
+                                flowType: chosenFlow,
+                                personalHolder: chosenFlow === "OUT_BANK_DIRECT" ? "" : (prev.personalHolder || "Faisal Mustopa (Admin)"),
+                                pemilikUangPribadi: chosenFlow === "PERSONAL_TALANGAN_REIMBURSE" ? (prev.pemilikUangPribadi || prev.personalHolder || "FAISAL MUSTOPA") : prev.pemilikUangPribadi,
+                                sumberDana: chosenFlow === "OUT_PERSONAL_SPEND"
+                                  ? "DANA PATTYCASH"
+                                  : chosenFlow === "PERSONAL_TALANGAN_REIMBURSE"
+                                  ? "REKENING PRIBADI"
+                                  : (chosenFlow === "OUT_BANK_DIRECT" || chosenFlow === "OUT_PERSONAL_TRANSFER" ? "REKENING PT" : prev.sumberDana),
+                              }));
+                            }}
+                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer"
+                          >
+                            <option value="OUT_BANK_DIRECT">1. Ke PT Supplier Langsung (Dari Rekening PT ke Supplier)</option>
+                            <option value="OUT_PERSONAL_TRANSFER">2. Dari Rekening PT ke Rekening Pribadi / PIC (Kasbon/Pegangan)</option>
+                            <option value="OUT_PERSONAL_SPEND">3. Dari Pribadi (PIC) ke Supplier dan Lainnya (Belanja/Realisasi)</option>
+                            <option value="PERSONAL_TALANGAN_REIMBURSE">4. Dari Pribadi (Peminjam) Untuk Kebutuhan Perusahaan (HUTANG PT)</option>
+                          </select>
                         </div>
 
-                        {/* ID Ref Bank for Breakdown linking */}
-                        {(editFormData.flowType === "OUT_PERSONAL_SPEND" ||
-                          editFormData.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
-                          editFormData.sumberDana === "DANA PATTYCASH" ||
-                          (editFormData.sumberDana || "").toUpperCase().includes("PATTY")) && (
-                          <div className="space-y-4 p-6 bg-purple-50/20 rounded-3xl border border-purple-100/50">
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                              <label className="text-xs md:text-sm font-black text-purple-700 uppercase tracking-widest ml-1">
-                                Ref ID Bank (Hubungkan ke Dana Talangan / Split Potongan)
-                              </label>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  handleAutoPecah(editBankAllocations, editFormData.amount, true);
-                                }}
-                                className="text-[10px] md:text-xs font-black bg-purple-100 text-purple-800 hover:bg-purple-200 px-4 py-2 rounded-xl tracking-wider uppercase transition-all"
-                              >
-                                ⚡ Auto-Pecah Sesuai Sisa Saldo
-                              </button>
-                            </div>
-
-                            <div className="space-y-3">
-                              {editBankAllocations.map((alloc, idx) => {
-                                return (
-                                  <div key={idx} className="space-y-2 p-3 bg-white/70 rounded-2xl border border-purple-100/70 shadow-2xs">
-                                    <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-                                      {/* Select Bank ID */}
-                                      <div className="w-full sm:flex-1">
-                                        <select
-                                          value={alloc.bankId}
-                                          onChange={(e) => {
-                                            const selectedBankId = e.target.value;
-                                            const updated = [...editBankAllocations];
-                                            updated[idx].bankId = selectedBankId;
-
-                                            // Auto-assign remaining transaction amount if not set or zero
-                                            if (selectedBankId && (!updated[idx].amount || updated[idx].amount <= 0)) {
-                                              const totalToAllocate = Number(editFormData.amount || 0);
-                                              const allocatedInOtherRows = updated
-                                                .filter((_, i) => i !== idx)
-                                                .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
-                                              const needed = Math.max(0, totalToAllocate - allocatedInOtherRows);
-                                              updated[idx].amount = needed;
-                                            }
-
-                                            setEditBankAllocations(updated);
-                                            const str = serializeAllocations(updated);
-                                            setEditFormData((prev) => ({ ...prev, refIdBank: str }));
-                                          }}
-                                          className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs md:text-sm font-mono font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer text-slate-700"
-                                        >
-                                          <option value="">-- Hubungkan ID Bank (BNK-) --</option>
-                                          {availablePattyCashTopups.map((bankRec, bIdx) => {
-                                            const available = getBankRemainingBalance(bankRec, true, editBankAllocations, idx);
-                                            const targetCid = (bankRec.customId || bankRec.id || "").trim().toUpperCase();
-                                            const targetId = (bankRec.id || "").trim().toUpperCase();
-                                            const currentAllocId = (alloc.bankId || "").trim().toUpperCase();
-                                            const isSelected = Boolean(currentAllocId) && (currentAllocId === targetCid || currentAllocId === targetId);
-                                            const allocAmt = Number(alloc.amount) || 0;
-                                            const left = isSelected ? Math.max(0, available - allocAmt) : available;
-                                            return (
-                                              <option key={`${bankRec.id || bankRec.customId || 'bnk'}-${bIdx}`} value={bankRec.customId || bankRec.id}>
-                                                {bankRec.customId || bankRec.id} - {bankRec.holder} ({bankRec.description.length > 28 ? bankRec.description.slice(0, 28) + "..." : bankRec.description}) [Sisa: Rp {left.toLocaleString("id-ID")}]
-                                              </option>
-                                            );
-                                          })}
-                                        </select>
-                                      </div>
-
-                                      {/* Amount */}
-                                      <div className="w-full sm:w-48 flex items-center gap-3">
-                                        <input
-                                          type="number"
-                                          value={alloc.amount || ""}
-                                          onChange={(e) => {
-                                            const updated = [...editBankAllocations];
-                                            updated[idx].amount = Number(e.target.value) || 0;
-                                            setEditBankAllocations(updated);
-                                            const str = serializeAllocations(updated);
-                                            setEditFormData((prev) => ({ ...prev, refIdBank: str }));
-                                          }}
-                                          className="w-full px-5 py-3 bg-white border border-slate-200 rounded-xl text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
-                                          placeholder="Nominal..."
-                                        />
-                                        
-                                        {/* Trash button */}
-                                        {editBankAllocations.length > 1 && (
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              const updated = editBankAllocations.filter((_, i) => i !== idx);
-                                              setEditBankAllocations(updated);
-                                              const str = serializeAllocations(updated);
-                                              setEditFormData((prev) => ({ ...prev, refIdBank: str }));
-                                            }}
-                                            className="p-3 bg-red-50 text-red-500 hover:bg-red-100 rounded-xl transition-all cursor-pointer text-lg"
-                                          >
-                                            🗑️
-                                          </button>
-                                        )}
-                                      </div>
-                                    </div>
-
-                                    {alloc.bankId && (() => {
-                                      const available = getBankRemainingBalance({ customId: alloc.bankId }, true, editBankAllocations, idx);
-                                      const allocatedAmt = Number(alloc.amount) || 0;
-                                      const sisaAfter = available - allocatedAmt;
-                                      return (
-                                        <div className="flex items-center justify-between flex-wrap gap-2 text-[11px] font-bold px-3.5 py-2 bg-purple-50/80 rounded-xl border border-purple-200/90 shadow-2xs">
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-purple-700 font-mono font-black">{alloc.bankId}</span>
-                                            <span className="text-slate-300">•</span>
-                                            <span className="text-slate-600">Saldo Awal / Tersedia: <strong className="font-mono text-slate-800">Rp {available.toLocaleString("id-ID")}</strong></span>
-                                          </div>
-                                          <div className="flex items-center gap-1.5">
-                                            <span className="text-purple-900 font-extrabold">Sisa Saldo Setelah Dipotong:</span>
-                                            <span className={`font-mono font-black text-xs px-2 py-0.5 rounded-lg ${sisaAfter < 0 ? "bg-rose-100 text-rose-700 font-bold" : sisaAfter === 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
-                                              Rp {Math.max(0, sisaAfter).toLocaleString("id-ID")}
-                                            </span>
-                                          </div>
-                                        </div>
-                                      );
-                                    })()}
-                                  </div>
-                                );
-                              })}
-                            </div>
-
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditBankAllocations([...editBankAllocations, { bankId: "", amount: 0 }]);
-                                }}
-                                className="text-xs font-black text-purple-700 hover:underline uppercase tracking-wider"
-                              >
-                                + Tambah Link Ref ID Bank Baru (Pecah)
-                              </button>
-                              
-                              {/* Visual balance summary */}
-                              <div className="text-xs font-black text-slate-500 uppercase tracking-widest">
-                                Total Teralokasi: <span className={Math.abs(editBankAllocations.reduce((s, a) => s + a.amount, 0) - Number(editFormData.amount || 0)) < 1 ? "text-green-600" : "text-amber-600"}>
-                                  Rp {editBankAllocations.reduce((s, a) => s + a.amount, 0).toLocaleString("id-ID")}
-                                </span> / Rp {Number(editFormData.amount || 0).toLocaleString("id-ID")}
+                        {/* Conditionally show Pegawai / Penanggung Jawab (PIC) */}
+                        {editFormData.flowType !== "OUT_BANK_DIRECT" && (
+                          <div className="space-y-3 pt-4 border-t border-slate-200/50">
+                            <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
+                              Pegawai / Penanggung Jawab (PIC)
+                            </label>
+                            {useManualPICEdit ? (
+                              <div className="space-y-3">
+                                <input
+                                  type="text"
+                                  required
+                                  placeholder="Ketik nama penanggung jawab / PIC baru..."
+                                  value={editFormData.personalHolder}
+                                  onChange={(e) => setEditFormData({ ...editFormData, personalHolder: e.target.value })}
+                                  className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
+                                />
+                                <button 
+                                  type="button"
+                                  onClick={() => {
+                                    setUseManualPICEdit(false);
+                                    setEditFormData({ ...editFormData, personalHolder: "Faisal Mustopa (Admin)" });
+                                  }}
+                                  className="text-xs font-black text-primary hover:underline ml-1"
+                                >
+                                  ← Pilih dari Daftar Nama Pegawai
+                                </button>
                               </div>
-                            </div>
+                            ) : (
+                              <div className="space-y-3">
+                                <select
+                                  value={editFormData.personalHolder}
+                                  onChange={(e) => {
+                                    if (e.target.value === "__MANUAL__") {
+                                      setUseManualPICEdit(true);
+                                      setEditFormData({ ...editFormData, personalHolder: "" });
+                                    } else {
+                                      setEditFormData({ ...editFormData, personalHolder: e.target.value });
+                                    }
+                                  }}
+                                  className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer"
+                                >
+                                  <option value="">-- Tanpa PIC / Umum --</option>
+                                  {personnelOptions.map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      {opt}
+                                    </option>
+                                  ))}
+                                  <option value="__MANUAL__">+ Ketik Nama PIC Manual...</option>
+                                </select>
+                                <button 
+                                  type="button"
+                                  onClick={() => {
+                                    setUseManualPICEdit(true);
+                                    setEditFormData({ ...editFormData, personalHolder: "" });
+                                  }}
+                                  className="text-xs font-black text-slate-500 hover:text-primary transition-all ml-1"
+                                >
+                                  + Ketik Nama Manual Baru
+                                </button>
+                              </div>
+                            )}
+                            <p className="text-[10px] text-slate-400 font-medium ml-1 mt-1 leading-relaxed">
+                              {editFormData.flowType === "OUT_PERSONAL_TRANSFER" && "Info: Dana akan didebet dari Bank PT dan dipegang as kasbon/ke dalam saldo di tangan PIC."}
+                              {editFormData.flowType === "OUT_PERSONAL_SPEND" && "Info: Transaksi rill spending memotong sisa saldo kasbon di tangan PIC."}
+                            </p>
                           </div>
                         )}
                       </div>
                     )}
 
-                    {/* Standard direct bank fields */}
-                    {editFormData.type === "OUT" && editFormData.flowType === "OUT_BANK_DIRECT" && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 bg-rose-50/20 p-6 md:p-10 rounded-[36px] border border-rose-100/40">
-                        <div className="space-y-3">
-                          <label className="text-xs md:text-sm font-black text-rose-700 uppercase tracking-widest ml-1">
-                            Sumber Dana
-                          </label>
-                          <input
-                            type="text"
-                            required
-                            placeholder="Contoh: REKENING PT"
-                            value={editFormData.sumberDana}
-                            onChange={(e) => setEditFormData({ ...editFormData, sumberDana: e.target.value })}
-                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm"
-                          />
-                        </div>
+                    {/* Buku Besar & Kolom Spreadsheet Custom */}
+                    <div className="p-6 md:p-8 bg-slate-50 rounded-[36px] border border-slate-100 space-y-6">
+                      <div className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest border-b border-slate-200/60 pb-3">
+                        Buku Besar & Kolom Spreadsheet Custom
+                      </div>
 
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                         <div className="space-y-3">
-                          <label className="text-xs md:text-sm font-black text-rose-700 uppercase tracking-widest ml-1">
-                            Rekening / Rek Penerima
+                          <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-wider ml-1">
+                            ID Transaksi (Spreadsheet ID)
                           </label>
                           <input
                             type="text"
-                            required
-                            placeholder="Contoh: CV Semen Jaya / Faisal Mustopa"
-                            value={editFormData.rekPenerima}
-                            onChange={(e) => setEditFormData({ ...editFormData, rekPenerima: e.target.value })}
-                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm"
+                            value={editFormData.customId}
+                            onChange={(e) => setEditFormData({ ...editFormData, customId: e.target.value.toUpperCase() })}
+                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-mono font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
+                            placeholder="INC- / BNK- / PRS-"
                           />
                         </div>
                       </div>
-                    )}
+
+                      {editFormData.type === "OUT" && (
+                        <div className="space-y-3">
+                          <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-wider ml-1">
+                            Format Penerima (Nama / No Rekening)
+                          </label>
+                          <input
+                            type="text"
+                            value={editFormData.rekPenerima}
+                            onChange={(e) => setEditFormData({ ...editFormData, rekPenerima: e.target.value })}
+                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
+                            placeholder="Contoh: MANDIRI 1420... a/n ANDRIY SE"
+                          />
+                        </div>
+                      )}
+
+                      {editFormData.type === "OUT" && editFormData.flowType === "OUT_PERSONAL_SPEND" && (
+                        <div className="space-y-4 p-6 bg-amber-50/20 rounded-[28px] border border-amber-100/50">
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                            <label className="text-xs md:text-sm font-black text-amber-600 uppercase tracking-wider ml-1">
+                              Hubungkan Ke Ref ID Bank (Link Kasbon Induk / Split Potongan)
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                handleAutoPecah(editBankAllocations, editFormData.amount, true);
+                              }}
+                              className="text-xs font-bold bg-amber-100 text-amber-800 hover:bg-amber-200 px-4 py-2 rounded-xl transition-all"
+                            >
+                              ⚡ Auto-Pecah Sesuai Sisa Saldo
+                            </button>
+                          </div>
+
+                          <div className="space-y-3">
+                            {editBankAllocations.map((alloc, idx) => {
+                              return (
+                                <div key={idx} className="space-y-2 p-3 bg-white/70 rounded-2xl border border-amber-100/70 shadow-2xs">
+                                  <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
+                                    {/* Select Bank ID */}
+                                    <div className="w-full sm:flex-1">
+                                      <select
+                                        value={alloc.bankId}
+                                        onChange={(e) => {
+                                          const selectedBankId = e.target.value;
+                                          const updated = [...editBankAllocations];
+                                          updated[idx].bankId = selectedBankId;
+
+                                          // Auto-assign remaining transaction amount if not set or zero
+                                          if (selectedBankId && (!updated[idx].amount || updated[idx].amount <= 0)) {
+                                            const totalToAllocate = Number(editFormData.amount || 0);
+                                            const allocatedInOtherRows = updated
+                                              .filter((_, i) => i !== idx)
+                                              .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+                                            const needed = Math.max(0, totalToAllocate - allocatedInOtherRows);
+                                            updated[idx].amount = needed;
+                                          }
+
+                                          setEditBankAllocations(updated);
+                                          const str = serializeAllocations(updated);
+                                          setEditFormData((prev) => ({ ...prev, refIdBank: str }));
+                                        }}
+                                        className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-xs md:text-sm font-mono font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all cursor-pointer text-slate-700"
+                                      >
+                                        <option value="">-- Pilih ID Unik Transfer Bank PT --</option>
+                                        {availablePattyCashTopups.map((r, rIdx) => {
+                                          const available = getBankRemainingBalance(r, true, editBankAllocations, idx);
+                                          const targetCid = (r.customId || r.id || "").trim().toUpperCase();
+                                          const targetId = (r.id || "").trim().toUpperCase();
+                                          const currentAllocId = (alloc.bankId || "").trim().toUpperCase();
+                                          const isSelected = Boolean(currentAllocId) && (currentAllocId === targetCid || currentAllocId === targetId);
+                                          const allocAmt = Number(alloc.amount) || 0;
+                                          const left = isSelected ? Math.max(0, available - allocAmt) : available;
+                                          return (
+                                            <option key={`${r.id || r.customId || 'topup'}-${rIdx}`} value={r.customId || r.id}>
+                                              {r.customId || "KSP"} - {r.holder} ({r.description.length > 28 ? r.description.slice(0, 28) + "..." : r.description}) [Sisa: Rp {left.toLocaleString("id-ID")}]
+                                            </option>
+                                          );
+                                        })}
+                                      </select>
+                                    </div>
+
+                                    {/* Amount */}
+                                    <div className="w-full sm:w-52 flex items-center gap-3">
+                                      <input
+                                        type="number"
+                                        value={alloc.amount || ""}
+                                        onChange={(e) => {
+                                          const updated = [...editBankAllocations];
+                                          updated[idx].amount = Number(e.target.value) || 0;
+                                          setEditBankAllocations(updated);
+                                          const str = serializeAllocations(updated);
+                                          setEditFormData((prev) => ({ ...prev, refIdBank: str }));
+                                        }}
+                                        className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-sm font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
+                                        placeholder="Nominal..."
+                                      />
+                                      
+                                      {/* Trash button */}
+                                      {editBankAllocations.length > 1 && (
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const updated = editBankAllocations.filter((_, i) => i !== idx);
+                                            setEditBankAllocations(updated);
+                                            const str = serializeAllocations(updated);
+                                            setEditFormData((prev) => ({ ...prev, refIdBank: str }));
+                                          }}
+                                          className="p-4 bg-red-50 text-red-500 hover:bg-red-100 rounded-2xl transition-all cursor-pointer text-base"
+                                        >
+                                          🗑️
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {alloc.bankId && (() => {
+                                    const available = getBankRemainingBalance({ customId: alloc.bankId }, true, editBankAllocations, idx);
+                                    const allocatedAmt = Number(alloc.amount) || 0;
+                                    const sisaAfter = available - allocatedAmt;
+                                    return (
+                                      <div className="flex items-center justify-between flex-wrap gap-2 text-[11px] font-bold px-3.5 py-2 bg-amber-50/80 rounded-xl border border-amber-200/90 shadow-2xs">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-amber-800 font-mono font-black">{alloc.bankId}</span>
+                                          <span className="text-slate-300">•</span>
+                                          <span className="text-slate-600">Saldo Awal / Tersedia: <strong className="font-mono text-slate-800">Rp {available.toLocaleString("id-ID")}</strong></span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                          <span className="text-amber-900 font-extrabold">Sisa Saldo Setelah Terpotong:</span>
+                                          <span className={`font-mono font-black text-xs px-2 py-0.5 rounded-lg ${sisaAfter < 0 ? "bg-rose-100 text-rose-700 font-bold" : sisaAfter === 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
+                                            Rp {Math.max(0, sisaAfter).toLocaleString("id-ID")}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 pt-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditBankAllocations([...editBankAllocations, { bankId: "", amount: 0 }]);
+                              }}
+                              className="text-xs font-bold text-amber-600 hover:underline"
+                            >
+                              + Tambah Link Ref ID Bank Baru (Pecah)
+                            </button>
+                            
+                            {/* Visual balance summary */}
+                            <div className="text-xs font-bold text-slate-500">
+                              Total Teralokasi: <span className={Math.abs(editBankAllocations.reduce((s, a) => s + a.amount, 0) - Number(editFormData.amount || 0)) < 1 ? "text-green-600" : "text-amber-600"}>
+                                Rp {editBankAllocations.reduce((s, a) => s + a.amount, 0).toLocaleString("id-ID")}
+                              </span> / Rp {Number(editFormData.amount || 0).toLocaleString("id-ID")}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {editFormData.type === "IN" && (
+                        <div className="space-y-3">
+                          <label className="text-xs md:text-sm font-black text-emerald-600 uppercase tracking-wider ml-1">
+                            Ref Piutang (Koneksi Piutang Proyek / Client)
+                          </label>
+                          {useManualRefPiutangEdit ? (
+                            <div className="space-y-2">
+                              <input
+                                type="text"
+                                value={editFormData.refPiutang}
+                                onChange={(e) => setEditFormData({ ...editFormData, refPiutang: e.target.value })}
+                                className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
+                                placeholder="Ketik manual atau ID Piutang..."
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setUseManualRefPiutangEdit(false);
+                                  setEditFormData({ ...editFormData, refPiutang: "" });
+                                }}
+                                className="text-xs font-black text-emerald-600 hover:underline ml-1"
+                              >
+                                ← Pilih dari Daftar Piutang
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <select
+                                value={editFormData.refPiutang}
+                                onChange={(e) => {
+                                  if (e.target.value === "__MANUAL__") {
+                                    setUseManualRefPiutangEdit(true);
+                                    setEditFormData({ ...editFormData, refPiutang: "" });
+                                  } else {
+                                    const titleStr = e.target.value;
+                                    const d = effectiveDebtRecords.find((doc) => doc.title === titleStr && doc.type === "PIUTANG");
+                                    const matchedProj = d?.projectId ? projects.find((p) => p.id === d.projectId) : undefined;
+                                    
+                                    const autoTermin = calculateTerminDetails(d ? d.id : titleStr, d?.projectId || editFormData.projectId, editFormData.amount, editingTransaction?.id, editFormData.date);
+
+                                    setEditFormData({
+                                      ...editFormData,
+                                      refPiutang: titleStr,
+                                      linkedDebtId: d ? d.id : editFormData.linkedDebtId,
+                                      projectId: d?.projectId || editFormData.projectId,
+                                      category: editFormData.category || "Pembayaran Proyek",
+                                      terminName: autoTermin.terminName || editFormData.terminName,
+                                      terminDescription: autoTermin.terminDescription || editFormData.terminDescription,
+                                      terminPercentage: autoTermin.terminPercentage || editFormData.terminPercentage,
+                                      terminStatus: autoTermin.terminStatus || editFormData.terminStatus,
+                                      terminNotes: autoTermin.terminNotes || editFormData.terminNotes,
+                                      terminPaymentDate: autoTermin.terminPaymentDate || editFormData.terminPaymentDate || editFormData.date,
+                                    });
+                                  }
+                                }}
+                                className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none cursor-pointer transition-all text-emerald-700"
+                              >
+                                <option value="">-- Hubungkan Piutang --</option>
+                                {effectiveDebtRecords
+                                  .filter((d) => d.type === "PIUTANG")
+                                  .map((debt) => {
+                                    const sched = getScheduleForRecord(debt, projects, financialRecords);
+                                    const left = Math.max(0, sched.contractValue - sched.totalPaid);
+                                    return (
+                                      <option key={debt.id} value={debt.title}>
+                                        [{debt.customId || "PROJ"}] {debt.title} - {debt.contactName} (Nilai: {formatCurrencyIDR(sched.contractValue)} | Sisa: {formatCurrencyIDR(left)}) {left === 0 ? "✅ LUNAS" : ""}
+                                      </option>
+                                    );
+                                  })}
+                                <option value="__MANUAL__">+ Input Manual Custom...</option>
+                              </select>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {editFormData.type === "OUT" && (
+                        <DebtPaymentManager
+                          debts={effectiveDebtRecords}
+                          projects={projects}
+                          financialRecords={financialRecords}
+                          amount={editFormData.amount}
+                          onAmountChange={(newAmt) => setEditFormData((prev) => ({ ...prev, amount: newAmt }))}
+                          allocations={editDebtAllocations}
+                          onAllocationsChange={(newAllocs, refStr, firstDebtId) => {
+                            setEditDebtAllocations(newAllocs);
+                            setEditFormData((prev) => ({
+                              ...prev,
+                              refHutang: refStr,
+                              linkedDebtId: firstDebtId || (newAllocs[0]?.debtId ?? prev.linkedDebtId),
+                            }));
+                          }}
+                          refHutang={editFormData.refHutang || ""}
+                          onRefHutangChange={(val) => setEditFormData((prev) => ({ ...prev, refHutang: val }))}
+                          isEdit={true}
+                          editingTransaction={editingTransaction}
+                          getScheduleForRecord={getScheduleForRecord}
+                        />
+                      )}
+                    </div>
 
                     <div className="space-y-3">
-                      <label className="text-xs md:text-sm font-black text-slate-500 uppercase tracking-widest ml-1">
+                      <label className="text-xs md:text-sm font-black text-slate-400 uppercase tracking-widest ml-1">
                         Deskripsi Transaksi
                       </label>
                       <textarea
-                        placeholder="Contoh: Pembelian semen Tiga Roda 50 sak..."
+                        placeholder="Contoh: Pembelian semen Tiga Roda 50 sak untuk proyek A..."
                         required
-                        rows={4}
+                        rows={3}
                         value={editFormData.description}
                         onChange={(e) =>
                           setEditFormData({
@@ -25371,22 +25559,22 @@ const AdminFinanceScreen = ({
                             description: e.target.value.toUpperCase(),
                           })
                         }
-                        className="w-full px-6 py-5 bg-white border border-slate-150 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all shadow-sm resize-none"
+                        className="w-full px-6 py-5 md:py-6 bg-slate-50 border border-slate-100 rounded-[28px] text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all resize-none shadow-sm"
                       />
                     </div>
                   </div>
 
-                  <div className="p-6 md:p-10 bg-slate-50 flex gap-6 shrink-0">
+                  <div className="p-6 md:p-10 bg-slate-50 flex gap-6 shrink-0 border-t border-slate-100">
                     <button
                       type="button"
                       onClick={() => setEditingTransaction(null)}
-                      className="flex-1 py-5 bg-white text-slate-500 border border-slate-200 rounded-2xl font-black text-xs md:text-sm uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm"
+                      className="flex-1 py-5 bg-white text-slate-400 border border-slate-200 rounded-3xl font-black text-xs md:text-sm uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm"
                     >
                       Batal
                     </button>
                     <button
                       type="submit"
-                      className="flex-1 py-5 bg-slate-900 text-white rounded-2xl font-black text-xs md:text-sm uppercase tracking-widest hover:bg-primary transition-all shadow-xl"
+                      className="flex-1 py-5 bg-slate-900 text-white rounded-3xl font-black text-xs md:text-sm uppercase tracking-widest hover:bg-primary transition-all shadow-xl"
                     >
                       Simpan Perubahan
                     </button>
