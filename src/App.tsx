@@ -7333,17 +7333,6 @@ const getScheduleForRecord = (
           (recCleanId && fRefHutang.includes(recCleanId))
         )) {
           matches = true;
-        } else if (
-          (recCustomId === "htg-003" || recIdLower === "htg-003" || (record.contactName && record.contactName.toUpperCase().includes("DODO"))) &&
-          (fCustomId === "bnk-290726-002" || fIdLower === "bnk-290726-002" || 
-           fCustomId === "bnk-070826-001" || fIdLower === "bnk-070826-001" ||
-           fCustomId === "bnk-260926-002" || fIdLower === "bnk-260926-002" ||
-           (f.refHutang && f.refHutang.toUpperCase().includes("HTG-003")) ||
-           (f.linkedDebtId && f.linkedDebtId.toUpperCase().includes("HTG-003")) ||
-           (f.rekPenerima && f.rekPenerima.toUpperCase().includes("DODO")) ||
-           ((f.description || "").toUpperCase().includes("DODO") && (f.category || "").toUpperCase().includes("HUTANG")))
-        ) {
-          matches = true;
         }
       }
     }
@@ -8252,25 +8241,11 @@ const AdminDebtScreen = ({
         );
         if (isPaymentMatch) return true;
 
-        // 4. Matched by recipient or refHutang containing contact name for Hutang category
-        const fRecipient = normalizeContactName(f.rekPenerima || "").toUpperCase();
-        if (fRecipient && fRecipient === targetKey && (f.category || "").toUpperCase().includes("HUTANG")) {
-          return true;
-        }
-        if (fRefHutang && fRefHutang.toUpperCase().includes(targetKey)) {
-          return true;
-        }
-        if (
-          targetKey.includes("DODO") &&
-          (f.customId === "BNK-290726-002" || f.id === "BNK-290726-002" || 
-           f.customId === "BNK-070826-001" || f.id === "BNK-070826-001" ||
-           f.customId === "BNK-260926-002" || f.id === "BNK-260926-002" ||
-           (f.refHutang && f.refHutang.toUpperCase().includes("HTG-003")) ||
-           (f.linkedDebtId && f.linkedDebtId.toUpperCase().includes("HTG-003")) ||
-           (f.rekPenerima && f.rekPenerima.toUpperCase().includes("DODO")) ||
-           ((f.description || "").toUpperCase().includes("DODO") && (f.category || "").toUpperCase().includes("HUTANG")))
-        ) {
-          return true;
+        // 4. refHutang mengandung ID rekam hutang kontak ini (misal "HTG-003", dsb.)
+        if (fRefHutang) {
+          const hasDebtId = Array.from(customIds).some((cid: string) => Boolean(cid) && fRefHutang.includes(cid)) ||
+                            Array.from(debtIds).some((did: string) => Boolean(did) && fRefHutang.includes(did));
+          if (hasDebtId) return true;
         }
 
         return false;
@@ -8356,9 +8331,7 @@ const AdminDebtScreen = ({
       (f.category || "").toUpperCase().includes("HUTANG")
     );
     const reimburseCategoryRecords = contactFinancialRecords.filter(
-      (f) =>
-        (f.category || "").toUpperCase().includes("REIMBURSE") ||
-        (f.description || "").toUpperCase().includes("REIMBURSE")
+      (f) => (f.category || "").toUpperCase().includes("REIMBURSE")
     );
     const hutangCategoryAmount = hutangCategoryRecords.reduce((sum, f) => sum + getMatchingAmount(f), 0);
     const reimburseCategoryAmount = reimburseCategoryRecords.reduce((sum, f) => sum + getMatchingAmount(f), 0);
@@ -10506,9 +10479,8 @@ const AdminDebtScreen = ({
           if (isOrigin) return;
 
           const catUpper = (f.category || "").toUpperCase();
-          const descUpper = (f.description || "").toUpperCase();
           const isDebtPay = catUpper.includes("HUTANG") || Boolean(f.linkedDebtId) || Boolean(f.refHutang);
-          const isReimburse = catUpper.includes("REIMBURSE") || descUpper.includes("REIMBURSE");
+          const isReimburse = catUpper.includes("REIMBURSE");
           if (!isDebtPay && !isReimburse) return;
 
           const matchingAlloc = f.debtAllocations?.find(
@@ -30197,8 +30169,7 @@ export default function App() {
           if (
             (k1 === "BNK-290726-002" || k2 === "BNK-290726-002" || 
              k1 === "BNK-070826-001" || k2 === "BNK-070826-001" ||
-             k1 === "BNK-260926-002" || k2 === "BNK-260926-002" ||
-             (r.description && r.description.toUpperCase().includes("DODO") && (r.category || "").toUpperCase().includes("HUTANG"))) &&
+             k1 === "BNK-260926-002" || k2 === "BNK-260926-002") &&
             (!r.refHutang || r.refHutang === "")
           ) {
             return {
