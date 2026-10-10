@@ -7334,8 +7334,14 @@ const getScheduleForRecord = (
         )) {
           matches = true;
         } else if (
-          (recCustomId === "htg-003" || recIdLower === "htg-003") &&
-          (fCustomId === "bnk-290726-002" || fIdLower === "bnk-290726-002" || fCustomId === "bnk-070826-001" || fIdLower === "bnk-070826-001")
+          (recCustomId === "htg-003" || recIdLower === "htg-003" || (record.contactName && record.contactName.toUpperCase().includes("DODO"))) &&
+          (fCustomId === "bnk-290726-002" || fIdLower === "bnk-290726-002" || 
+           fCustomId === "bnk-070826-001" || fIdLower === "bnk-070826-001" ||
+           fCustomId === "bnk-260926-002" || fIdLower === "bnk-260926-002" ||
+           (f.refHutang && f.refHutang.toUpperCase().includes("HTG-003")) ||
+           (f.linkedDebtId && f.linkedDebtId.toUpperCase().includes("HTG-003")) ||
+           (f.rekPenerima && f.rekPenerima.toUpperCase().includes("DODO")) ||
+           ((f.description || "").toUpperCase().includes("DODO") && (f.category || "").toUpperCase().includes("HUTANG")))
         ) {
           matches = true;
         }
@@ -8256,7 +8262,13 @@ const AdminDebtScreen = ({
         }
         if (
           targetKey.includes("DODO") &&
-          (f.customId === "BNK-290726-002" || f.id === "BNK-290726-002" || f.customId === "BNK-070826-001" || f.id === "BNK-070826-001")
+          (f.customId === "BNK-290726-002" || f.id === "BNK-290726-002" || 
+           f.customId === "BNK-070826-001" || f.id === "BNK-070826-001" ||
+           f.customId === "BNK-260926-002" || f.id === "BNK-260926-002" ||
+           (f.refHutang && f.refHutang.toUpperCase().includes("HTG-003")) ||
+           (f.linkedDebtId && f.linkedDebtId.toUpperCase().includes("HTG-003")) ||
+           (f.rekPenerima && f.rekPenerima.toUpperCase().includes("DODO")) ||
+           ((f.description || "").toUpperCase().includes("DODO") && (f.category || "").toUpperCase().includes("HUTANG")))
         ) {
           return true;
         }
@@ -30182,7 +30194,13 @@ export default function App() {
         records = records.map((r) => {
           const k1 = (r.customId || "").trim().toUpperCase();
           const k2 = (r.id || "").trim().toUpperCase();
-          if ((k1 === "BNK-290726-002" || k2 === "BNK-290726-002" || k1 === "BNK-070826-001" || k2 === "BNK-070826-001") && (!r.refHutang || r.refHutang === "")) {
+          if (
+            (k1 === "BNK-290726-002" || k2 === "BNK-290726-002" || 
+             k1 === "BNK-070826-001" || k2 === "BNK-070826-001" ||
+             k1 === "BNK-260926-002" || k2 === "BNK-260926-002" ||
+             (r.description && r.description.toUpperCase().includes("DODO") && (r.category || "").toUpperCase().includes("HUTANG"))) &&
+            (!r.refHutang || r.refHutang === "")
+          ) {
             return {
               ...r,
               refHutang: "HTG-003",
@@ -30204,10 +30222,10 @@ export default function App() {
       const cached = autoBackupService.getPersistentData();
       if (cached && Array.isArray(cached.debtRecords) && cached.debtRecords.length > 0) {
         return cached.debtRecords.map((d: any) => {
-          if ((d.customId === "HTG-003" || d.id === "HTG-003") && (!d.payments || d.payments.length === 0)) {
+          if (d.customId === "HTG-003" || d.id === "HTG-003") {
             const seedDodo = (seedDebtRecords || []).find((s) => s.customId === "HTG-003" || s.id === "HTG-003");
-            if (seedDodo?.payments && seedDodo.payments.length > 0) {
-              return { ...d, status: "PARTIAL", payments: seedDodo.payments };
+            if (!d.payments || d.payments.length < (seedDodo?.payments || []).length) {
+              return { ...d, status: "PARTIAL", payments: seedDodo?.payments || [] };
             }
           }
           return d;
@@ -30217,10 +30235,10 @@ export default function App() {
       for (const h of history) {
         if (Array.isArray(h.data?.debtRecords) && h.data.debtRecords.length > 0) {
           return h.data.debtRecords.map((d: any) => {
-            if ((d.customId === "HTG-003" || d.id === "HTG-003") && (!d.payments || d.payments.length === 0)) {
+            if (d.customId === "HTG-003" || d.id === "HTG-003") {
               const seedDodo = (seedDebtRecords || []).find((s) => s.customId === "HTG-003" || s.id === "HTG-003");
-              if (seedDodo?.payments && seedDodo.payments.length > 0) {
-                return { ...d, status: "PARTIAL", payments: seedDodo.payments };
+              if (!d.payments || d.payments.length < (seedDodo?.payments || []).length) {
+                return { ...d, status: "PARTIAL", payments: seedDodo?.payments || [] };
               }
             }
             return d;
@@ -35909,19 +35927,22 @@ export default function App() {
           const baseRecord = (source ? { ...seed, ...(fromDb || {}), ...(fromLocal || {}) } : seed) as DebtRecord;
           if (baseRecord.type === "HUTANG") {
             // Jika data belum pernah diedit user, data hutang & pembayaran awal mentok di 1 Juli 2026.
-            // Khusus Pak Dodo (HTG-003), pembayaran parsial 45 juta (29 Juli & 7 Agustus) tetap dipertahankan.
+            // Khusus Pak Dodo (HTG-003), pembayaran yang terekam tetap dipertahankan.
             // Jika user sudah mengedit/menambahkan pembayaran di local atau db, pertahankan hasil editan user.
             if (!fromLocal?.payments && !fromDb?.payments) {
               if (rawCustomId === "HTG-003" || rawId === "HTG-003") {
-                // Pertahankan 2 pembayaran awal Pak Dodo (40jt + 5jt = 45jt)
+                // Pertahankan pembayaran yang terekam untuk Pak Dodo
               } else {
                 baseRecord.payments = (baseRecord.payments || []).filter((p) => !p.date || p.date <= "2026-07-01");
               }
             }
           }
-          if ((rawCustomId === "HTG-003" || rawId === "HTG-003") && (!baseRecord.payments || baseRecord.payments.length === 0)) {
-            baseRecord.payments = [...(seed.payments || [])];
-            baseRecord.status = "PARTIAL";
+          if (rawCustomId === "HTG-003" || rawId === "HTG-003") {
+            if (!baseRecord.payments || baseRecord.payments.length < (seed.payments || []).length) {
+              baseRecord.payments = [...(seed.payments || [])];
+            }
+            const currentPaid = (baseRecord.payments || []).reduce((s, p) => s + (p.amount || 0), 0);
+            baseRecord.status = currentPaid >= (baseRecord.amount || 100000000) ? "PAID" : currentPaid > 0 ? "PARTIAL" : "UNPAID";
           }
           deduped.push(baseRecord);
         });

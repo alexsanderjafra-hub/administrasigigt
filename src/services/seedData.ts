@@ -8323,24 +8323,6 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     "recordedBy": "Faisal Mustopa (Admin)"
   },
   {
-    "id": "BNK-110926-001",
-    "customId": "BNK-110926-001",
-    "date": "2026-09-11",
-    "type": "OUT",
-    "flowType": "OUT_BANK_DIRECT",
-    "amount": 1000000,
-    "description": "PEMBAYARAN HUTANG PAK DODO",
-    "category": "HUTANG",
-    "sumberDana": "REKENING PT",
-    "paymentMethod": "TRANSFER",
-    "referenceId": "",
-    "projectId": "",
-    "personalHolder": "",
-    "penerimaKasbon": "",
-    "timestamp": 1789357599787,
-    "recordedBy": "Faisal Mustopa (Admin)"
-  },
-  {
     "id": "BNK-110926-002",
     "customId": "BNK-110926-002",
     "date": "2026-09-11",
@@ -10164,12 +10146,15 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     "date": "2026-09-26",
     "type": "OUT",
     "flowType": "OUT_BANK_DIRECT",
-    "amount": 9000000,
-    "description": "PELUNASAN HUTANG PAK DODO",
+    "amount": 10000000,
+    "description": "PEMBAYARAN HUTANG PAK DODO",
     "category": "HUTANG",
     "sumberDana": "REKENING PT",
     "paymentMethod": "TRANSFER",
     "referenceId": "",
+    "refHutang": "HTG-003",
+    "linkedDebtId": "HTG-003",
+    "rekPenerima": "PAK DODO INVESTOR",
     "projectId": "",
     "personalHolder": "",
     "penerimaKasbon": "",
@@ -10429,6 +10414,14 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
         "amount": 5000000,
         "date": "2026-08-07",
         "note": "PEMBAYARAN CICILAN HUTANG PAK DODO",
+        "recordedBy": "Faisal Mustopa (Admin)"
+      },
+      {
+        "id": "PAY-HTG-003-03",
+        "financialRecordId": "BNK-260926-002",
+        "amount": 10000000,
+        "date": "2026-09-26",
+        "note": "PEMBAYARAN HUTANG PAK DODO",
         "recordedBy": "Faisal Mustopa (Admin)"
       }
     ]
