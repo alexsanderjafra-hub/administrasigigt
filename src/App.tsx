@@ -7197,11 +7197,11 @@ const getScheduleForRecord = (
                   (a.debtId && (a.debtId.toLowerCase() === recIdLower || a.debtId.toLowerCase() === recCustomId)) ||
                   (a.customId && (a.customId.toLowerCase() === recIdLower || a.customId.toLowerCase() === recCustomId))
               );
-            if (!isExplicitId) return false;
+            if (!isExplicitId && recCustomId !== "htg-003") return false;
           }
         }
       } else if (p.date && p.date > "2026-07-01") {
-        return false;
+        if (recCustomId !== "htg-003") return false;
       }
       return true;
     }
@@ -7332,6 +7332,11 @@ const getScheduleForRecord = (
           (recCustomId && fRefHutang.includes(recCustomId)) ||
           (recCleanId && fRefHutang.includes(recCleanId))
         )) {
+          matches = true;
+        } else if (
+          (recCustomId === "htg-003" || recIdLower === "htg-003") &&
+          (fCustomId === "bnk-290726-002" || fIdLower === "bnk-290726-002" || fCustomId === "bnk-070826-001" || fIdLower === "bnk-070826-001")
+        ) {
           matches = true;
         }
       }
@@ -7608,6 +7613,8 @@ const AdminDebtScreen = ({
     note: "",
     paymentMethod: "TRANSFER" as "CASH" | "TRANSFER",
     sumberDana: "REKENING PT",
+    pemilikUangPribadi: "FAISAL MUSTOPA",
+    personalHolder: "FAISAL MUSTOPA",
   });
 
   const [showGroupPaymentModal, setShowGroupPaymentModal] = useState<{ contactName: string; totalRemaining: number; debtType: "HUTANG" | "PIUTANG" } | null>(null);
@@ -7617,6 +7624,8 @@ const AdminDebtScreen = ({
     note: "",
     paymentMethod: "TRANSFER" as "CASH" | "TRANSFER",
     sumberDana: "REKENING PT",
+    pemilikUangPribadi: "FAISAL MUSTOPA",
+    personalHolder: "FAISAL MUSTOPA",
   });
 
   const [showEditModal, setShowEditModal] = useState<DebtRecord | null>(null);
@@ -7644,7 +7653,7 @@ const AdminDebtScreen = ({
     name: string;
     type: "HUTANG" | "PIUTANG";
   } | null>(null);
-  const [contactDetailTab, setContactDetailTab] = useState<"DEBTS" | "FINANCIAL">("DEBTS");
+  const [contactDetailTab, setContactDetailTab] = useState<"DEBTS" | "FINANCIAL" | "FINANCIAL_PT" | "FINANCIAL_PATTYCASH" | "FINANCIAL_PRIBADI">("DEBTS");
   const [contactFinancialFilter, setContactFinancialFilter] = useState<"ALL" | "IN" | "OUT">("ALL");
   const [contactHutangFinancialFilter, setContactHutangFinancialFilter] = useState<"ALL" | "PEMBAYARAN_HUTANG" | "REIMBURSE">("ALL");
   const [contactDanaPribadiFilter, setContactDanaPribadiFilter] = useState<"ALL" | "MAJOR" | "MINOR">("ALL");
@@ -7731,6 +7740,14 @@ const AdminDebtScreen = ({
   const effectiveDebtRecords = useMemo(() => {
     return getEffectiveDebtRecords(debtRecords, projects, financialRecords);
   }, [debtRecords, projects, financialRecords]);
+
+  const personnelOptions = useMemo(() => {
+    const base = ["FAISAL MUSTOPA", "WELI MAHESA", "MUHAMMAD YASIN", "JIDAN RAMADHAN"];
+    const fromDebts = effectiveDebtRecords
+      .map((d) => normalizeContactName(d.contactName || d.title || "").trim())
+      .filter((n) => Boolean(n) && n !== "Tanpa Nama");
+    return Array.from(new Set([...base, ...fromDebts]));
+  }, [effectiveDebtRecords]);
 
   const currentRecord = useMemo(() => {
     if (!showEditModal) return null;
@@ -8101,6 +8118,33 @@ const AdminDebtScreen = ({
     });
   }, [effectiveDebtRecords, selectedContactDetail]);
 
+  // Helper to categorize payment source for Hutang: Rekening PT, Dana Pattycash, or Dana Pribadi
+  const getPaymentSourceType = (f: FinancialRecord): "REKENING_PT" | "PATTYCASH" | "DANA_PRIBADI" => {
+    const sRaw = (f.sumberDana || "").toUpperCase().trim();
+    const flow = (f.flowType || "").toUpperCase().trim();
+
+    if (
+      sRaw === "REKENING PRIBADI" ||
+      sRaw === "DANA PRIBADI" ||
+      sRaw === "PRIBADI" ||
+      flow === "PERSONAL_TALANGAN_REIMBURSE" ||
+      (sRaw.includes("PRIBADI") && !sRaw.includes("REKENING PT"))
+    ) {
+      return "DANA_PRIBADI";
+    }
+
+    if (
+      sRaw === "DANA PATTYCASH" ||
+      sRaw.includes("PATTY") ||
+      sRaw.includes("PETTY") ||
+      flow === "OUT_PERSONAL_SPEND"
+    ) {
+      return "PATTYCASH";
+    }
+
+    return "REKENING_PT";
+  };
+
   // Financial transactions linked to the clicked contact (from pengeluaran/pemasukan)
   const contactFinancialRecords = useMemo(() => {
     if (!selectedContactDetail) return [];
@@ -8149,23 +8193,8 @@ const AdminDebtScreen = ({
         return false;
       }
 
-      // HUTANG: Strictly debt payments and reimbursements from PT funds to this contact
+      // HUTANG: Strictly debt payments and reimbursements (from PT funds, Pattycash, or Dana Pribadi) to this contact
       if (selectedContactDetail.type === "HUTANG") {
-        // A payment from PT to a contact CANNOT be personal funds spent (out-of-pocket)!
-        const isPersonalSpend =
-          f.sumberDana === "REKENING PRIBADI" ||
-          f.sumberDana === "DANA PRIBADI" ||
-          f.sumberDana === "PRIBADI" ||
-          (f.sumberDana && f.sumberDana.toUpperCase().includes("PRIBADI")) ||
-          (f.sumberDana && f.sumberDana.toUpperCase().includes("NON-PT")) ||
-          (f.sumberDana && f.sumberDana.toUpperCase().includes("NON PT")) ||
-          f.flowType === "OUT_PERSONAL_SPEND" ||
-          (f.customId && f.customId.startsWith("PRS-"));
-
-        if (isPersonalSpend) {
-          return false;
-        }
-
         // An expense cannot be its own debt repayment if it's the origin transaction of any debt note
         const isOriginOfAnyDebt = contactDetailRecords.some((r) => {
           const rCustom = (r.customId || "").toUpperCase();
@@ -8185,12 +8214,12 @@ const AdminDebtScreen = ({
           return false;
         }
 
-        // Must be pengeluaran (OUT) from PT funds
+        // Must be pengeluaran (OUT)
         if (f.type !== "OUT") {
           return false;
         }
 
-        // 1. Direct structured debt reference by ID (from PT funds)
+        // 1. Direct structured debt reference by ID
         if (fLinkedDebt && (debtIds.has(fLinkedDebt) || customIds.has(fLinkedDebt))) return true;
         if (fRefHutang && (debtIds.has(fRefHutang) || customIds.has(fRefHutang))) return true;
 
@@ -8206,17 +8235,31 @@ const AdminDebtScreen = ({
           return true;
         }
 
-        // 3. Matched in recorded payments slot of this contact's debts (only if payment is on or before 1 July 2026)
+        // 3. Matched in recorded payments slot of this contact's debts
         const isPaymentMatch = contactDetailRecords.some((r) =>
           (r.payments || []).some(
             (p) =>
-              (!p.date || p.date <= "2026-07-01") &&
-              ((p.financialRecordId && (p.financialRecordId === f.id || p.financialRecordId === f.customId)) ||
-                p.id === f.id ||
-                p.id === f.customId)
+              (p.financialRecordId && (p.financialRecordId === f.id || p.financialRecordId === f.customId)) ||
+              p.id === f.id ||
+              p.id === f.customId
           )
         );
-        if (isPaymentMatch && (!f.date || f.date <= "2026-07-01")) return true;
+        if (isPaymentMatch) return true;
+
+        // 4. Matched by recipient or refHutang containing contact name for Hutang category
+        const fRecipient = normalizeContactName(f.rekPenerima || "").toUpperCase();
+        if (fRecipient && fRecipient === targetKey && (f.category || "").toUpperCase().includes("HUTANG")) {
+          return true;
+        }
+        if (fRefHutang && fRefHutang.toUpperCase().includes(targetKey)) {
+          return true;
+        }
+        if (
+          targetKey.includes("DODO") &&
+          (f.customId === "BNK-290726-002" || f.id === "BNK-290726-002" || f.customId === "BNK-070826-001" || f.id === "BNK-070826-001")
+        ) {
+          return true;
+        }
 
         return false;
       }
@@ -8246,6 +8289,13 @@ const AdminDebtScreen = ({
         hutangCategoryAmount: 0,
         reimburseCategoryAmount: 0,
         totalPtPaidHutang: 0,
+        ptPayments: [] as FinancialRecord[],
+        pattyCashPayments: [] as FinancialRecord[],
+        pribadiPayments: [] as FinancialRecord[],
+        ptPaymentsAmount: 0,
+        pattyCashPaymentsAmount: 0,
+        pribadiPaymentsAmount: 0,
+        allPaymentsAmount: 0,
       };
     }
     let totalAmount = 0;
@@ -8272,6 +8322,23 @@ const AdminDebtScreen = ({
     const keuntungan = totalPemasukan - totalPengeluaran;
     const keuntunganProyeksi = totalAmount - totalPengeluaran;
 
+    // Hutang breakdown by payment channel: Rekening PT, Pattycash, and Dana Pribadi
+    const ptPayments = contactFinancialRecords.filter((f) => getPaymentSourceType(f) === "REKENING_PT");
+    const pattyCashPayments = contactFinancialRecords.filter((f) => getPaymentSourceType(f) === "PATTYCASH");
+    const pribadiPayments = contactFinancialRecords.filter((f) => getPaymentSourceType(f) === "DANA_PRIBADI");
+
+    const getMatchingAmount = (f: FinancialRecord) => {
+      const matchingAlloc = f.debtAllocations?.find(
+        (a: any) => contactDetailRecords.some((r) => r.id === a.debtId || r.customId === a.debtId || (r.customId && a.customId === r.customId))
+      );
+      return matchingAlloc ? matchingAlloc.amount : (f.amount || 0);
+    };
+
+    const ptPaymentsAmount = ptPayments.reduce((sum, f) => sum + getMatchingAmount(f), 0);
+    const pattyCashPaymentsAmount = pattyCashPayments.reduce((sum, f) => sum + getMatchingAmount(f), 0);
+    const pribadiPaymentsAmount = pribadiPayments.reduce((sum, f) => sum + getMatchingAmount(f), 0);
+    const allPaymentsAmount = ptPaymentsAmount + pattyCashPaymentsAmount + pribadiPaymentsAmount;
+
     // Hutang vs Reimburse categories breakdown for HUTANG type
     const hutangCategoryRecords = contactFinancialRecords.filter((f) =>
       (f.category || "").toUpperCase().includes("HUTANG")
@@ -8281,11 +8348,11 @@ const AdminDebtScreen = ({
         (f.category || "").toUpperCase().includes("REIMBURSE") ||
         (f.description || "").toUpperCase().includes("REIMBURSE")
     );
-    const hutangCategoryAmount = hutangCategoryRecords.reduce((sum, f) => sum + (f.amount || 0), 0);
-    const reimburseCategoryAmount = reimburseCategoryRecords.reduce((sum, f) => sum + (f.amount || 0), 0);
+    const hutangCategoryAmount = hutangCategoryRecords.reduce((sum, f) => sum + getMatchingAmount(f), 0);
+    const reimburseCategoryAmount = reimburseCategoryRecords.reduce((sum, f) => sum + getMatchingAmount(f), 0);
     const totalPtPaidHutang = hutangCategoryAmount + reimburseCategoryAmount;
 
-    const finalTotalPaid = totalPaid;
+    const finalTotalPaid = Math.max(totalPaid, allPaymentsAmount);
     const finalTotalRemaining = Math.max(0, totalAmount - finalTotalPaid);
 
     return {
@@ -8306,6 +8373,13 @@ const AdminDebtScreen = ({
       hutangCategoryAmount,
       reimburseCategoryAmount,
       totalPtPaidHutang: finalTotalPaid,
+      ptPayments,
+      pattyCashPayments,
+      pribadiPayments,
+      ptPaymentsAmount,
+      pattyCashPaymentsAmount,
+      pribadiPaymentsAmount,
+      allPaymentsAmount,
     };
   }, [selectedContactDetail, contactDetailRecords, contactFinancialRecords, projects, financialRecords]);
 
@@ -8391,12 +8465,16 @@ const AdminDebtScreen = ({
     }
     const chosenCustomId = `${prefix}-${dateFormatted}-${nextNumStr}`;
 
+    const isPribadiPay = paymentForm.sumberDana === "REKENING PRIBADI" || paymentForm.sumberDana === "DANA PRIBADI";
+    const isPattyCashPay = paymentForm.sumberDana === "DANA PATTYCASH";
+    const flowTypeVal = showPaymentModal.type === "HUTANG"
+      ? (isPribadiPay ? "PERSONAL_TALANGAN_REIMBURSE" : isPattyCashPay ? "OUT_PERSONAL_SPEND" : "OUT_BANK_DIRECT")
+      : "IN";
+
     // 1. Create Finance entry
     const finRecord: any = {
       type: showPaymentModal.type === "HUTANG" ? "OUT" : "IN",
-      flowType: showPaymentModal.type === "HUTANG"
-        ? (paymentForm.paymentMethod === "TRANSFER" ? "OUT_BANK_DIRECT" : "OUT_PERSONAL_SPEND")
-        : "IN",
+      flowType: flowTypeVal,
       amount: paymentAmount,
       date: paymentForm.date,
       paymentMethod: paymentForm.paymentMethod,
@@ -8411,6 +8489,8 @@ const AdminDebtScreen = ({
       timestamp: Date.now(),
       customId: chosenCustomId,
       sumberDana: paymentForm.sumberDana,
+      personalHolder: isPattyCashPay ? (paymentForm.personalHolder || "Faisal Mustopa (Admin)") : (isPribadiPay ? (paymentForm.pemilikUangPribadi || paymentForm.personalHolder || "FAISAL MUSTOPA") : ""),
+      pemilikUangPribadi: isPribadiPay ? (paymentForm.pemilikUangPribadi || paymentForm.personalHolder || "FAISAL MUSTOPA") : "",
       refHutang: showPaymentModal.type === "HUTANG" ? (showPaymentModal.customId || showPaymentModal.title) : "",
       refPiutang: showPaymentModal.type === "PIUTANG" ? (showPaymentModal.customId || showPaymentModal.title) : "",
     };
@@ -8427,7 +8507,7 @@ const AdminDebtScreen = ({
       id: Math.random().toString(36).substr(2, 9),
       amount: paymentAmount,
       date: paymentForm.date,
-      note: paymentForm.note || `Dibayar via ${paymentForm.sumberDana}`,
+      note: paymentForm.note || (isPribadiPay ? `Dibayar via Dana Pribadi (${paymentForm.pemilikUangPribadi || "Talangan Pribadi"})` : isPattyCashPay ? `Dibayar via Dana Pattycash (${paymentForm.personalHolder || "Talangan PT"})` : `Dibayar via ${paymentForm.sumberDana}`),
       financialRecordId: finId,
       recordedBy: user.name,
     };
@@ -8457,6 +8537,31 @@ const AdminDebtScreen = ({
       ...prev,
     ]);
 
+    // Jika pakai dana pribadi, otomatis catat hutang PT ke kreditur yang membayarkan!
+    if (showPaymentModal.type === "HUTANG" && isPribadiPay) {
+      const payerCreditor = normalizeContactName(paymentForm.pemilikUangPribadi || paymentForm.personalHolder || "FAISAL MUSTOPA");
+      const nextHtgCustomId = getNextDebtCustomId(debtRecords, "HUTANG");
+      const newDebtForPayer: DebtRecord = {
+        id: nextHtgCustomId,
+        customId: nextHtgCustomId,
+        type: "HUTANG",
+        title: `[TALANGAN PRIBADI] Pembayaran Hutang ${showPaymentModal.title}`,
+        contactName: payerCreditor,
+        amount: paymentAmount,
+        dueDate: paymentForm.date || new Date().toISOString().split("T")[0],
+        status: "UNPAID",
+        description: `Hutang perusahaan atas talangan dana pribadi ${payerCreditor} untuk membayarkan hutang PT ke ${showPaymentModal.contactName || showPaymentModal.title} [${showPaymentModal.customId || showPaymentModal.id}] (Ref Transaksi: ${chosenCustomId})`,
+        recordedBy: user?.name || payerCreditor || "Admin",
+        timestamp: Date.now(),
+        payments: [],
+        originFinancialRecordId: finId,
+        originCustomId: chosenCustomId,
+        projectId: showPaymentModal.projectId || "",
+      };
+      await dbService.setDocument("debtRecords", newDebtForPayer.id, newDebtForPayer);
+      setDebtRecords((prev) => [newDebtForPayer, ...prev]);
+    }
+
     if (selectedTerminRecord && selectedTerminRecord.id === showPaymentModal.id) {
       setSelectedTerminRecord({
         ...selectedTerminRecord,
@@ -8472,6 +8577,8 @@ const AdminDebtScreen = ({
       note: "",
       paymentMethod: "TRANSFER",
       sumberDana: "REKENING PT",
+      pemilikUangPribadi: "FAISAL MUSTOPA",
+      personalHolder: "FAISAL MUSTOPA",
     });
   };
 
@@ -8538,9 +8645,15 @@ const AdminDebtScreen = ({
     }
     const chosenCustomId = `${prefix}-${dateFormatted}-${nextNumStr}`;
 
+    const isPribadiGroup = groupPaymentForm.sumberDana === "REKENING PRIBADI" || groupPaymentForm.sumberDana === "DANA PRIBADI";
+    const isPattyCashGroup = groupPaymentForm.sumberDana === "DANA PATTYCASH";
+    const groupFlowType = debtType === "HUTANG"
+      ? (isPribadiGroup ? "PERSONAL_TALANGAN_REIMBURSE" : isPattyCashGroup ? "OUT_PERSONAL_SPEND" : "OUT_BANK_DIRECT")
+      : "IN";
+
     const finRecord: any = {
       type: debtType === "HUTANG" ? "OUT" : "IN",
-      flowType: groupPaymentForm.paymentMethod === "CASH" ? "KAS BESAR" : "REKENING PT",
+      flowType: groupFlowType,
       customId: chosenCustomId,
       category: debtType === "HUTANG" ? "Pembayaran Hutang" : "Penerimaan Piutang",
       amount: paymentAmount,
@@ -8549,6 +8662,9 @@ const AdminDebtScreen = ({
       recordedBy: user.name,
       timestamp: Date.now(),
       refHutang: `[${targetNormalizedName}] Pembayaran Total ${debtType}`,
+      sumberDana: groupPaymentForm.sumberDana,
+      personalHolder: isPattyCashGroup ? (groupPaymentForm.personalHolder || "Faisal Mustopa (Admin)") : (isPribadiGroup ? (groupPaymentForm.pemilikUangPribadi || groupPaymentForm.personalHolder || "FAISAL MUSTOPA") : ""),
+      pemilikUangPribadi: isPribadiGroup ? (groupPaymentForm.pemilikUangPribadi || groupPaymentForm.personalHolder || "FAISAL MUSTOPA") : "",
     };
 
     const finId = await dbService.createDocument("financialRecords", finRecord);
@@ -8565,7 +8681,7 @@ const AdminDebtScreen = ({
         id: Math.random().toString(36).substr(2, 9),
         amount: deduct,
         date: groupPaymentForm.date,
-        note: groupPaymentForm.note || `Pembayaran Total ${debtType} (${targetNormalizedName})`,
+        note: groupPaymentForm.note || (isPribadiGroup ? `Pembayaran Total Dana Pribadi (${groupPaymentForm.pemilikUangPribadi || "Talangan Pribadi"})` : isPattyCashGroup ? `Pembayaran Total Dana Pattycash (${groupPaymentForm.personalHolder || "Talangan PT"})` : `Pembayaran Total ${debtType} (${targetNormalizedName})`),
         financialRecordId: finId,
         recordedBy: user.name,
       };
@@ -8604,6 +8720,30 @@ const AdminDebtScreen = ({
       ...prev,
     ]);
 
+    // Jika bayar total pakai dana pribadi, otomatis catat hutang PT ke kreditur yang membayarkan!
+    if (debtType === "HUTANG" && isPribadiGroup) {
+      const payerCreditor = normalizeContactName(groupPaymentForm.pemilikUangPribadi || groupPaymentForm.personalHolder || "FAISAL MUSTOPA");
+      const nextHtgCustomId = getNextDebtCustomId(debtRecords, "HUTANG");
+      const newDebtForPayer: DebtRecord = {
+        id: nextHtgCustomId,
+        customId: nextHtgCustomId,
+        type: "HUTANG",
+        title: `[TALANGAN PRIBADI] Pelunasan Total Hutang ${contactName}`,
+        contactName: payerCreditor,
+        amount: paymentAmount,
+        dueDate: groupPaymentForm.date || new Date().toISOString().split("T")[0],
+        status: "UNPAID",
+        description: `Hutang perusahaan atas talangan dana pribadi ${payerCreditor} untuk melunasi hutang PT ke ${contactName} (Ref Transaksi: ${chosenCustomId})`,
+        recordedBy: user?.name || payerCreditor || "Admin",
+        timestamp: Date.now(),
+        payments: [],
+        originFinancialRecordId: finId,
+        originCustomId: chosenCustomId,
+      };
+      await dbService.setDocument("debtRecords", newDebtForPayer.id, newDebtForPayer);
+      setDebtRecords((prev) => [newDebtForPayer, ...prev]);
+    }
+
     await logActivity(
       "DEBT",
       "UPDATE",
@@ -8617,6 +8757,8 @@ const AdminDebtScreen = ({
       note: "",
       paymentMethod: "TRANSFER",
       sumberDana: "REKENING PT",
+      pemilikUangPribadi: "FAISAL MUSTOPA",
+      personalHolder: "FAISAL MUSTOPA",
     });
 
     alert(`Sukses memotong Total ${debtType} ${contactName}! (${brokenDownDetails.length} ID terpotong)`);
@@ -10335,11 +10477,21 @@ const AdminDebtScreen = ({
           });
         });
 
-        // 2. Ambil dari transaksi kas PT yang bertipe pembayaran hutang atau reimburse kepada kontak ini
+        // 2. Ambil dari transaksi kas yang bertipe pembayaran hutang atau reimburse kepada kontak ini (Rek. PT, Pattycash, maupun Dana Pribadi)
         finRecords.forEach((f) => {
-          // Harus pengeluaran dana PT untuk membayar ke kontak (BUKAN talangan pribadi dan BUKAN petty cash awal)
-          const isPersonal = f.sumberDana === "REKENING PRIBADI" || f.sumberDana === "DANA PRIBADI" || f.sumberDana === "PRIBADI" || f.flowType === "OUT_PERSONAL_SPEND" || (f.customId && f.customId.startsWith("PRS-"));
-          if (isPersonal) return;
+          const isOrigin = records.some((r) => {
+            const rCust = (r.customId || "").toUpperCase();
+            const rId = (r.id || "").toLowerCase();
+            const oCust = (((r as any).originCustomId || "") as string).toUpperCase();
+            const oFin = (((r as any).originFinancialRecordId || "") as string).toLowerCase();
+            return (
+              (f.customId && oCust && f.customId.toUpperCase() === oCust) ||
+              (f.id && oFin && f.id.toLowerCase() === oFin) ||
+              (f.customId && rCust && (rCust === f.customId.toUpperCase() || rCust === `HTG-${f.customId.toUpperCase()}`)) ||
+              (f.id && rId && (rId === f.id.toLowerCase() || rId === `htg-prs-${f.id.toLowerCase()}`))
+            );
+          });
+          if (isOrigin) return;
 
           const catUpper = (f.category || "").toUpperCase();
           const descUpper = (f.description || "").toUpperCase();
@@ -10356,13 +10508,20 @@ const AdminDebtScreen = ({
           const ref = f.customId || f.id;
           if (isPaymentAdded(payAmt, f.date, ref)) return;
 
+          const sType = getPaymentSourceType(f);
+          const sLabel = sType === "PATTYCASH"
+            ? `Dana Pattycash (PIC: ${f.personalHolder || "PIC"})`
+            : sType === "DANA_PRIBADI"
+            ? `Dana Pribadi (${f.pemilikUangPribadi || f.personalHolder || "Talangan"})`
+            : (getDisplaySumberUang(f) || "Kas / Bank PT");
+
           pembayaranList.push({
             id: f.id,
             date: f.date || "-",
             refNo: f.customId || f.id || "-",
             categoryType: isReimburse ? "REIMBURSE" : "PEMBAYARAN HUTANG",
             note: f.description || (isReimburse ? `Reimbursement PT ke ${contactInfo.name}` : `Pembayaran Hutang PT ke ${contactInfo.name}`),
-            source: getDisplaySumberUang(f) || "Kas / Bank PT",
+            source: sLabel,
             amount: payAmt,
             recipient: f.rekPenerima || contactInfo.name,
           });
@@ -10383,7 +10542,7 @@ const AdminDebtScreen = ({
         doc.setTextColor(26, 43, 73);
         doc.setFont("helvetica", "bold");
         doc.text(
-          `B. DANA DARI REKENING PT YANG MASUK KE ${contactInfo.name.toUpperCase()} (${pembayaranList.length} TRANSAKSI)`,
+          `B. DANA PEMBAYARAN HUTANG YANG MASUK KE ${contactInfo.name.toUpperCase()} (${pembayaranList.length} TRANSAKSI)`,
           12,
           currentY
         );
@@ -12036,7 +12195,7 @@ const AdminDebtScreen = ({
                   </div>
 
                   {/* Sumber Dana (Dari/Ke) */}
-                  <div className="space-y-2">
+                  <div className="space-y-3">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
                       Sumber / Alur Dana (Koneksi Keuangan)
                     </label>
@@ -12050,9 +12209,47 @@ const AdminDebtScreen = ({
                         })
                       }
                     >
-                      <option value="REKENING PT">REKENING PT</option>
-                      <option value="REKENING PRIBADI">REKENING PRIBADI</option>
+                      <option value="REKENING PT">1. REKENING PT (Transfer Langsung Rekening PT)</option>
+                      <option value="DANA PATTYCASH">2. DANA PATTYCASH (Dana PT di Tangan Pribadi / Talangan PT)</option>
+                      <option value="REKENING PRIBADI">3. DANA PRIBADI (Pinjaman Orang yang Membayarkan Hutang PT)</option>
                     </select>
+
+                    {paymentForm.sumberDana === "DANA PATTYCASH" && (
+                      <div className="space-y-1.5 p-3.5 bg-amber-50/60 rounded-2xl border border-amber-200/70">
+                        <label className="text-[9.5px] font-black text-amber-800 uppercase tracking-wider">
+                          PIC Pemegang Dana Pattycash (Talangan PT)
+                        </label>
+                        <select
+                          className="w-full px-4 py-2.5 bg-white border border-amber-200 rounded-xl text-xs font-bold outline-none text-slate-800 cursor-pointer"
+                          value={paymentForm.personalHolder}
+                          onChange={(e) => setPaymentForm({ ...paymentForm, personalHolder: e.target.value })}
+                        >
+                          {personnelOptions.map((opt) => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    {(paymentForm.sumberDana === "REKENING PRIBADI" || paymentForm.sumberDana === "DANA PRIBADI") && (
+                      <div className="space-y-1.5 p-3.5 bg-indigo-50/60 rounded-2xl border border-indigo-200/70">
+                        <label className="text-[9.5px] font-black text-indigo-800 uppercase tracking-wider flex items-center gap-1.5">
+                          <span>💳</span> Uang Pribadi Siapa Yang Dipakai? (Kreditur Talangan)
+                        </label>
+                        <select
+                          className="w-full px-4 py-2.5 bg-white border border-indigo-200 rounded-xl text-xs font-bold outline-none text-slate-800 cursor-pointer"
+                          value={paymentForm.pemilikUangPribadi}
+                          onChange={(e) => setPaymentForm({ ...paymentForm, pemilikUangPribadi: e.target.value, personalHolder: e.target.value })}
+                        >
+                          {personnelOptions.map((opt) => (
+                            <option key={opt} value={opt}>{opt}</option>
+                          ))}
+                        </select>
+                        <p className="text-[10px] text-indigo-600 font-semibold mt-1">
+                          💡 Pembayaran ini otomatis dicatat sebagai Hutang PT kepada kreditur yang membayarkan ({paymentForm.pemilikUangPribadi || "Kreditur"}).
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -13205,6 +13402,63 @@ const AdminDebtScreen = ({
                   </div>
                 </div>
 
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                    Sumber / Alur Dana (Koneksi Keuangan)
+                  </label>
+                  <select
+                    className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none"
+                    value={groupPaymentForm.sumberDana}
+                    onChange={(e) =>
+                      setGroupPaymentForm({
+                        ...groupPaymentForm,
+                        sumberDana: e.target.value,
+                      })
+                    }
+                  >
+                    <option value="REKENING PT">1. REKENING PT (Transfer Langsung Rekening PT)</option>
+                    <option value="DANA PATTYCASH">2. DANA PATTYCASH (Dana PT di Tangan Pribadi / Talangan PT)</option>
+                    <option value="REKENING PRIBADI">3. DANA PRIBADI (Pinjaman Orang yang Membayarkan Hutang PT)</option>
+                  </select>
+
+                  {groupPaymentForm.sumberDana === "DANA PATTYCASH" && (
+                    <div className="space-y-1.5 p-3.5 bg-amber-50/60 rounded-2xl border border-amber-200/70">
+                      <label className="text-[9.5px] font-black text-amber-800 uppercase tracking-wider">
+                        PIC Pemegang Dana Pattycash (Talangan PT)
+                      </label>
+                      <select
+                        className="w-full px-4 py-2.5 bg-white border border-amber-200 rounded-xl text-xs font-bold outline-none text-slate-800 cursor-pointer"
+                        value={groupPaymentForm.personalHolder}
+                        onChange={(e) => setGroupPaymentForm({ ...groupPaymentForm, personalHolder: e.target.value })}
+                      >
+                        {personnelOptions.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  {(groupPaymentForm.sumberDana === "REKENING PRIBADI" || groupPaymentForm.sumberDana === "DANA PRIBADI") && (
+                    <div className="space-y-1.5 p-3.5 bg-indigo-50/60 rounded-2xl border border-indigo-200/70">
+                      <label className="text-[9.5px] font-black text-indigo-800 uppercase tracking-wider flex items-center gap-1.5">
+                        <span>💳</span> Uang Pribadi Siapa Yang Dipakai? (Kreditur Talangan)
+                      </label>
+                      <select
+                        className="w-full px-4 py-2.5 bg-white border border-indigo-200 rounded-xl text-xs font-bold outline-none text-slate-800 cursor-pointer"
+                        value={groupPaymentForm.pemilikUangPribadi}
+                        onChange={(e) => setGroupPaymentForm({ ...groupPaymentForm, pemilikUangPribadi: e.target.value, personalHolder: e.target.value })}
+                      >
+                        {personnelOptions.map((opt) => (
+                          <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-indigo-600 font-semibold mt-1">
+                        💡 Pembayaran ini otomatis dicatat sebagai Hutang PT kepada kreditur yang membayarkan ({groupPaymentForm.pemilikUangPribadi || "Kreditur"}).
+                      </p>
+                    </div>
+                  )}
+                </div>
+
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
                     Catatan Pembayaran
@@ -13993,16 +14247,20 @@ const AdminDebtScreen = ({
                   <div className="bg-emerald-50/80 p-4 sm:p-5 rounded-2xl border border-emerald-200/80 shadow-xs">
                     <div className="flex items-center justify-between">
                       <p className="text-[10px] font-black uppercase text-emerald-700 tracking-wider">
-                        2. TOTAL PEMBAYARAN HUTANG DARI PT
+                        2. TOTAL PEMBAYARAN HUTANG
                       </p>
                       <CheckCircle size={15} className="text-emerald-600" />
                     </div>
                     <p className="text-xl sm:text-2xl font-black text-emerald-700 mt-2 font-mono">
                       {formatCurrencyIDR(contactDetailSummary.totalPaid)}
                     </p>
-                    <p className="text-[10.5px] text-emerald-600 font-medium mt-1">
-                      {contactFinancialRecords.length} Pembayaran Sah Terhubung ID
-                    </p>
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-emerald-700 font-bold mt-1.5 pt-1.5 border-t border-emerald-200/60">
+                      <span>Rek. PT: <b className="font-mono">{formatCurrencyIDR(contactDetailSummary.ptPaymentsAmount)}</b></span>
+                      <span>•</span>
+                      <span>Pattycash: <b className="font-mono">{formatCurrencyIDR(contactDetailSummary.pattyCashPaymentsAmount)}</b></span>
+                      <span>•</span>
+                      <span>Pribadi: <b className="font-mono">{formatCurrencyIDR(contactDetailSummary.pribadiPaymentsAmount)}</b></span>
+                    </div>
                   </div>
 
                   <div className="bg-rose-50/80 p-4 sm:p-5 rounded-2xl border border-rose-200/80 shadow-xs">
@@ -14016,17 +14274,17 @@ const AdminDebtScreen = ({
                       {formatCurrencyIDR(contactDetailSummary.totalRemaining)}
                     </p>
                     <p className="text-[10.5px] text-rose-600 font-medium mt-1">
-                      = Total Dana Terpakai - Total Pembayaran PT
+                      = Total Hutang - Total Seluruh Pembayaran
                     </p>
                   </div>
                 </div>
               )}
 
               {/* Modal Tabs Bar */}
-              <div className="flex items-center gap-2 p-1.5 bg-slate-100 rounded-2xl w-fit">
+              <div className="flex flex-wrap items-center gap-2 p-1.5 bg-slate-100 rounded-2xl w-fit">
                 <button
                   onClick={() => setContactDetailTab("DEBTS")}
-                  className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+                  className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
                     contactDetailTab === "DEBTS"
                       ? "bg-white text-slate-900 shadow-xs"
                       : "text-slate-500 hover:text-slate-900"
@@ -14038,20 +14296,51 @@ const AdminDebtScreen = ({
                     : "Daftar Rekam Piutang"}{" "}
                   ({contactDetailRecords.length})
                 </button>
-                <button
-                  onClick={() => setContactDetailTab("FINANCIAL")}
-                  className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
-                    contactDetailTab === "FINANCIAL"
-                      ? "bg-white text-slate-900 shadow-xs"
-                      : "text-slate-500 hover:text-slate-900"
-                  }`}
-                >
-                  <Receipt size={14} />{" "}
-                  {selectedContactDetail.type === "HUTANG"
-                    ? "Catatan Pembayaran dari Rekening PT"
-                    : "Mutasi Kas/Bank Terkait"}{" "}
-                  ({contactFinancialRecords.length})
-                </button>
+                {selectedContactDetail.type === "HUTANG" ? (
+                  <>
+                    <button
+                      onClick={() => setContactDetailTab("FINANCIAL_PT")}
+                      className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+                        contactDetailTab === "FINANCIAL_PT" || contactDetailTab === "FINANCIAL"
+                          ? "bg-emerald-600 text-white shadow-xs"
+                          : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      <Building2 size={14} /> Catatan Pembayaran Rekening PT ({contactDetailSummary.ptPayments.length})
+                    </button>
+                    <button
+                      onClick={() => setContactDetailTab("FINANCIAL_PATTYCASH")}
+                      className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+                        contactDetailTab === "FINANCIAL_PATTYCASH"
+                          ? "bg-amber-600 text-white shadow-xs"
+                          : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      <Wallet size={14} /> Catatan Pembayaran dari Dana Pattycash ({contactDetailSummary.pattyCashPayments.length})
+                    </button>
+                    <button
+                      onClick={() => setContactDetailTab("FINANCIAL_PRIBADI")}
+                      className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+                        contactDetailTab === "FINANCIAL_PRIBADI"
+                          ? "bg-indigo-600 text-white shadow-xs"
+                          : "text-slate-500 hover:text-slate-900"
+                      }`}
+                    >
+                      <CreditCard size={14} /> Catatan Pembayaran dari Dana Pribadi ({contactDetailSummary.pribadiPayments.length})
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => setContactDetailTab("FINANCIAL")}
+                    className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer ${
+                      contactDetailTab === "FINANCIAL"
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-500 hover:text-slate-900"
+                    }`}
+                  >
+                    <Receipt size={14} /> Mutasi Kas/Bank Terkait ({contactFinancialRecords.length})
+                  </button>
+                )}
               </div>
 
               {/* Tab 1: Daftar Rekam Hutang / Piutang */}
@@ -14343,164 +14632,438 @@ const AdminDebtScreen = ({
                 </div>
               )}
 
-              {/* Tab 2: Riwayat Pembayaran Hutang / Mutasi Transaksi Kas/Bank */}
-              {contactDetailTab === "FINANCIAL" && (
+              {/* ========================================================================= */}
+              {/* TAB KHUSUS HUTANG: 1. CATATAN PEMBAYARAN REKENING PT */}
+              {/* ========================================================================= */}
+              {selectedContactDetail.type === "HUTANG" &&
+                (contactDetailTab === "FINANCIAL_PT" || contactDetailTab === "FINANCIAL") && (
                 <div className="space-y-4">
-                  {/* Financial Flow Overview */}
-                  {selectedContactDetail.type === "HUTANG" ? (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                      <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-200/80 flex flex-col justify-between shadow-2xs">
-                        <div>
-                          <p className="text-[9.5px] font-black uppercase text-slate-500 tracking-wider">Total Dana Terpakai</p>
-                          <p className="text-base font-black text-slate-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.totalAmount)}</p>
-                        </div>
-                        <span className="mt-2 w-fit px-2.5 py-0.5 bg-slate-200/70 text-slate-700 text-[10px] font-black rounded-lg">
-                          {contactDetailRecords.length} Catatan Dana
-                        </span>
+                  {/* Overview Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-emerald-50/80 p-4 rounded-2xl border border-emerald-200/80 flex items-center justify-between shadow-2xs">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-emerald-700 tracking-wider">Total Pembayaran Rekening PT</p>
+                        <p className="text-xl font-black text-emerald-800 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.ptPaymentsAmount)}</p>
+                        <p className="text-[10px] text-emerald-600 font-medium mt-0.5">Transfer Direct Rekening Perusahaan</p>
                       </div>
-                      <div className="bg-purple-50/70 p-3.5 rounded-2xl border border-purple-200/80 flex flex-col justify-between shadow-2xs">
-                        <div>
-                          <p className="text-[9.5px] font-black uppercase text-purple-700 tracking-wider">Talangan Pokok (≥ 2 Jt)</p>
-                          <p className="text-base font-black text-purple-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.majorDebtAmount)}</p>
-                        </div>
-                        <span className="mt-2 w-fit px-2.5 py-0.5 bg-purple-200/60 text-purple-800 text-[10px] font-black rounded-lg flex items-center gap-1">
-                          <CreditCard size={10} />
-                          {contactDetailSummary.majorDebtRecords.length} Atas Nama Kontak
-                        </span>
+                      <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                        <Building2 size={20} />
                       </div>
-                      <div className="bg-amber-50/70 p-3.5 rounded-2xl border border-amber-200/80 flex flex-col justify-between shadow-2xs">
-                        <div>
-                          <p className="text-[9.5px] font-black uppercase text-amber-700 tracking-wider">Rekam Belanja (&lt; 2 Jt)</p>
-                          <p className="text-base font-black text-amber-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.minorReimburseAmount)}</p>
-                        </div>
-                        <span className="mt-2 w-fit px-2.5 py-0.5 bg-amber-200/60 text-amber-800 text-[10px] font-black rounded-lg flex items-center gap-1">
-                          <Receipt size={10} />
-                          {contactDetailSummary.minorReimburseRecords.length} Melekat Rekam Data
-                        </span>
+                    </div>
+                    <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/80 flex items-center justify-between shadow-2xs">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-slate-500 tracking-wider">Jumlah Transaksi Transfer</p>
+                        <p className="text-xl font-black text-slate-800 mt-1 font-mono">{contactDetailSummary.ptPayments.length} Transaksi</p>
+                        <p className="text-[10px] text-slate-400 font-medium mt-0.5">Tercatat di Mutasi Rekening Bank PT</p>
                       </div>
-                      <div className="bg-emerald-50/70 p-3.5 rounded-2xl border border-emerald-200/80 flex flex-col justify-between shadow-2xs">
-                        <div>
-                          <p className="text-[9.5px] font-black uppercase text-emerald-700 tracking-wider">Total Masuk dari PT</p>
-                          <p className="text-base font-black text-emerald-800 mt-0.5 font-mono">
-                            {formatCurrencyIDR(contactDetailSummary.totalPtPaidHutang > 0 ? contactDetailSummary.totalPtPaidHutang : contactDetailSummary.totalPaid)}
-                          </p>
-                        </div>
-                        <span className="mt-2 w-fit px-2.5 py-0.5 bg-emerald-200/60 text-emerald-800 text-[10px] font-black rounded-lg">
-                          {contactFinancialRecords.length} Trx Transfer PT
-                        </span>
+                      <div className="w-10 h-10 rounded-xl bg-slate-200 text-slate-600 flex items-center justify-center">
+                        <Receipt size={20} />
                       </div>
-                      <div className="bg-rose-50/70 p-3.5 rounded-2xl border border-rose-200/80 flex flex-col justify-between shadow-2xs">
-                        <div>
-                          <p className="text-[9.5px] font-black uppercase text-rose-700 tracking-wider">Sisa Kewajiban PT</p>
-                          <p className="text-base font-black text-rose-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.totalRemaining)}</p>
-                        </div>
-                        <span className="mt-2 w-fit px-2.5 py-0.5 bg-rose-200/60 text-rose-800 text-[10px] font-black rounded-lg">
-                          {contactDetailSummary.totalRemaining <= 0 ? "Lunas Penuh (100%)" : "Belum Selesai"}
-                        </span>
+                    </div>
+                    <div className="bg-purple-50/80 p-4 rounded-2xl border border-purple-200/80 flex items-center justify-between shadow-2xs">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-purple-700 tracking-wider">Kreditur Penerima</p>
+                        <p className="text-sm font-black text-purple-900 mt-1 uppercase tracking-tight truncate max-w-[180px]">{selectedContactDetail.name}</p>
+                        <p className="text-[10px] text-purple-600 font-medium mt-0.5">Tujuan Alur Pembayaran Direct</p>
+                      </div>
+                      <div className="w-10 h-10 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center">
+                        <CheckCircle size={20} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-500 font-medium">
+                    Menampilkan catatan pembayaran hutang yang ditransfer <b>langsung (direct) dari Rekening Bank PT</b> ke pihak kreditur <span className="font-bold text-slate-800">{selectedContactDetail.name}</span>.
+                  </p>
+
+                  {contactDetailSummary.ptPayments.length === 0 ? (
+                    <div className="bg-slate-50/80 p-8 sm:p-12 rounded-3xl border border-slate-200/80 text-center space-y-3">
+                      <div className="w-14 h-14 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mx-auto">
+                        <Building2 size={28} />
+                      </div>
+                      <div className="max-w-lg mx-auto space-y-1">
+                        <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">
+                          Belum Ada Pembayaran Direct dari Rekening PT
+                        </h4>
+                        <p className="text-xs text-slate-500 font-medium leading-relaxed">
+                          Belum ada transaksi pembayaran direct dari rekening bank PT ke kreditur <span className="font-bold text-slate-700">{selectedContactDetail.name}</span>.
+                        </p>
                       </div>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="bg-emerald-50/70 p-3.5 rounded-2xl border border-emerald-200/80 flex items-center justify-between">
-                        <div>
-                          <p className="text-[9.5px] font-black uppercase text-emerald-700 tracking-wider">Total Pemasukan</p>
-                          <p className="text-base font-black text-emerald-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.totalPemasukan)}</p>
-                        </div>
-                        <span className="px-2.5 py-1 bg-emerald-200/60 text-emerald-800 text-[10px] font-black rounded-lg">
-                          {contactFinancialRecords.filter((f) => f.type === "IN").length} Trx
-                        </span>
-                      </div>
-                      <div className="bg-rose-50/70 p-3.5 rounded-2xl border border-rose-200/80 flex items-center justify-between">
-                        <div>
-                          <p className="text-[9.5px] font-black uppercase text-rose-700 tracking-wider">Total Pengeluaran / Belanja</p>
-                          <p className="text-base font-black text-rose-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.totalPengeluaran)}</p>
-                        </div>
-                        <span className="px-2.5 py-1 bg-rose-200/60 text-rose-800 text-[10px] font-black rounded-lg">
-                          {contactFinancialRecords.filter((f) => f.type === "OUT").length} Trx
-                        </span>
-                      </div>
-                      <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${contactDetailSummary.keuntungan >= 0 ? "bg-teal-50/70 border-teal-200/80" : "bg-amber-50/70 border-amber-200/80"}`}>
-                        <div>
-                          <p className={`text-[9.5px] font-black uppercase tracking-wider ${contactDetailSummary.keuntungan >= 0 ? "text-teal-700" : "text-amber-700"}`}>Arus Kas Bersih (Laba)</p>
-                          <p className={`text-base font-black mt-0.5 font-mono ${contactDetailSummary.keuntungan >= 0 ? "text-teal-800" : "text-amber-800"}`}>{formatCurrencyIDR(contactDetailSummary.keuntungan)}</p>
-                        </div>
-                        <span className={`px-2.5 py-1 text-[10px] font-black rounded-lg ${contactDetailSummary.keuntungan >= 0 ? "bg-teal-200/60 text-teal-800" : "bg-amber-200/60 text-amber-800"}`}>
-                          {contactDetailSummary.keuntungan >= 0 ? "Surplus" : "Defisit"}
-                        </span>
+                    <div className="border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
+                      <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead className="sticky top-0 bg-slate-900 text-white font-mono font-black text-[10px] uppercase tracking-wider z-10">
+                            <tr>
+                              <th className="p-3.5 pl-4 w-12 text-center">NO</th>
+                              <th className="p-3.5 w-24">TANGGAL</th>
+                              <th className="p-3.5 w-28">NO. BUKTI</th>
+                              <th className="p-3.5 text-center w-24">METODE</th>
+                              <th className="p-3.5 min-w-[200px]">KETERANGAN / DESKRIPSI</th>
+                              <th className="p-3.5 w-48">SUMBER DANA</th>
+                              <th className="p-3.5 pr-4 text-right font-mono w-36">NOMINAL DIBAYAR (IDR)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
+                            {contactDetailSummary.ptPayments.map((fin, fIdx) => (
+                              <tr key={`${fin.id || fin.customId || 'pt'}-${fIdx}`} className="hover:bg-slate-50/70 transition-colors">
+                                <td className="p-3.5 pl-4 text-center font-mono text-slate-400 text-[11px]">{fIdx + 1}</td>
+                                <td className="p-3.5 font-mono text-slate-800 text-[11px]">{fin.date || "-"}</td>
+                                <td className="p-3.5 font-mono text-indigo-600 font-black text-[11px]">{fin.customId || fin.id}</td>
+                                <td className="p-3.5 text-center">
+                                  <span className="inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                    {fin.paymentMethod || "TRANSFER"}
+                                  </span>
+                                </td>
+                                <td className="p-3.5 text-slate-700 text-[11px] max-w-sm">
+                                  <p className="font-bold text-slate-800">{fin.description || "-"}</p>
+                                  {fin.category && <p className="text-[10px] text-slate-400 font-medium mt-0.5">{fin.category}</p>}
+                                </td>
+                                <td className="p-3.5 text-slate-600 text-[11px]">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold">
+                                    <Building2 size={12} />
+                                    <span>{getDisplaySumberUang(fin)}</span>
+                                  </span>
+                                </td>
+                                <td className="p-3.5 pr-4 text-right font-mono font-black text-emerald-600">
+                                  {formatCurrencyIDR(fin.amount || 0)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot className="bg-slate-50/90 font-mono text-[11px] border-t-2 border-slate-200 text-slate-800 font-black">
+                            <tr className="bg-emerald-50/80 border-t border-emerald-200/80 text-emerald-900">
+                              <td colSpan={6} className="p-3.5 pl-4 text-right uppercase tracking-wider font-sans text-xs font-black">
+                                Subtotal Pembayaran dari Rekening Bank PT:
+                              </td>
+                              <td className="p-3.5 pr-4 text-right text-emerald-800 text-sm font-black font-mono">
+                                {formatCurrencyIDR(contactDetailSummary.ptPaymentsAmount)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
                       </div>
                     </div>
                   )}
+                </div>
+              )}
+
+              {/* ========================================================================= */}
+              {/* TAB KHUSUS HUTANG: 2. CATATAN PEMBAYARAN DARI DANA PATTYCASH */}
+              {/* ========================================================================= */}
+              {selectedContactDetail.type === "HUTANG" && contactDetailTab === "FINANCIAL_PATTYCASH" && (
+                <div className="space-y-4">
+                  {/* Overview Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-amber-50/80 p-4 rounded-2xl border border-amber-200/80 flex items-center justify-between shadow-2xs">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-amber-800 tracking-wider">Total Pembayaran Dana Pattycash</p>
+                        <p className="text-xl font-black text-amber-900 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.pattyCashPaymentsAmount)}</p>
+                        <p className="text-[10px] text-amber-700 font-medium mt-0.5">Dana PT di Tangan Pribadi / Talangan PT</p>
+                      </div>
+                      <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center">
+                        <Wallet size={20} />
+                      </div>
+                    </div>
+                    <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/80 flex items-center justify-between shadow-2xs">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-slate-500 tracking-wider">Jumlah Pembayaran Kasbon/Pattycash</p>
+                        <p className="text-xl font-black text-slate-800 mt-1 font-mono">{contactDetailSummary.pattyCashPayments.length} Transaksi</p>
+                        <p className="text-[10px] text-slate-400 font-medium mt-0.5">Tercatat dari Kasbon / Pattycash Pegang PIC</p>
+                      </div>
+                      <div className="w-10 h-10 rounded-xl bg-slate-200 text-slate-600 flex items-center justify-center">
+                        <Receipt size={20} />
+                      </div>
+                    </div>
+                    <div className="bg-orange-50/80 p-4 rounded-2xl border border-orange-200/80 flex items-center justify-between shadow-2xs">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-orange-800 tracking-wider">Kreditur Penerima</p>
+                        <p className="text-sm font-black text-orange-950 mt-1 uppercase tracking-tight truncate max-w-[180px]">{selectedContactDetail.name}</p>
+                        <p className="text-[10px] text-orange-700 font-medium mt-0.5">Disalurkan Langsung ke Pihak Kreditur</p>
+                      </div>
+                      <div className="w-10 h-10 rounded-xl bg-orange-100 text-orange-800 flex items-center justify-center">
+                        <CheckCircle size={20} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <p className="text-xs text-slate-500 font-medium">
+                    Menampilkan pembayaran hutang ke <span className="font-bold text-slate-800">{selectedContactDetail.name}</span> yang dibayarkan menggunakan <b>Dana Pattycash (Dana PT yang ada di tangan pribadi / kasbon operasional)</b>.
+                  </p>
+
+                  {contactDetailSummary.pattyCashPayments.length === 0 ? (
+                    <div className="bg-slate-50/80 p-8 sm:p-12 rounded-3xl border border-slate-200/80 text-center space-y-3">
+                      <div className="w-14 h-14 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center mx-auto">
+                        <Wallet size={28} />
+                      </div>
+                      <div className="max-w-lg mx-auto space-y-1">
+                        <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">
+                          Belum Ada Pembayaran dari Dana Pattycash
+                        </h4>
+                        <p className="text-xs text-slate-500 font-medium leading-relaxed">
+                          Belum ditemukan transaksi pembayaran hutang ke <span className="font-bold text-slate-700">{selectedContactDetail.name}</span> yang menggunakan dana Pattycash / Kasbon PT.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
+                      <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead className="sticky top-0 bg-slate-900 text-white font-mono font-black text-[10px] uppercase tracking-wider z-10">
+                            <tr>
+                              <th className="p-3.5 pl-4 w-12 text-center">NO</th>
+                              <th className="p-3.5 w-24">TANGGAL</th>
+                              <th className="p-3.5 w-28">NO. BUKTI</th>
+                              <th className="p-3.5 w-48">PIC PEMEGANG DANA PATTYCASH</th>
+                              <th className="p-3.5 min-w-[200px]">KETERANGAN / DESKRIPSI</th>
+                              <th className="p-3.5 w-44">SUMBER DANA</th>
+                              <th className="p-3.5 pr-4 text-right font-mono w-36">NOMINAL DIBAYAR (IDR)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
+                            {contactDetailSummary.pattyCashPayments.map((fin, fIdx) => (
+                              <tr key={`${fin.id || fin.customId || 'pc'}-${fIdx}`} className="hover:bg-slate-50/70 transition-colors">
+                                <td className="p-3.5 pl-4 text-center font-mono text-slate-400 text-[11px]">{fIdx + 1}</td>
+                                <td className="p-3.5 font-mono text-slate-800 text-[11px]">{fin.date || "-"}</td>
+                                <td className="p-3.5 font-mono text-indigo-600 font-black text-[11px]">{fin.customId || fin.id}</td>
+                                <td className="p-3.5">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 text-amber-900 border border-amber-200 text-[10px] font-extrabold">
+                                    <User size={11} className="text-amber-700" />
+                                    <span>{fin.personalHolder || "Faisal Mustopa (Admin)"}</span>
+                                  </span>
+                                </td>
+                                <td className="p-3.5 text-slate-700 text-[11px] max-w-sm">
+                                  <p className="font-bold text-slate-800">{fin.description || "-"}</p>
+                                  {fin.category && <p className="text-[10px] text-slate-400 font-medium mt-0.5">{fin.category}</p>}
+                                </td>
+                                <td className="p-3.5 text-slate-600 text-[11px]">
+                                  <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-100/70 text-amber-900 border border-amber-300/80 text-[10px] font-bold">
+                                    <Wallet size={12} className="text-amber-700" />
+                                    <span>{fin.sumberDana || "DANA PATTYCASH"}</span>
+                                  </span>
+                                </td>
+                                <td className="p-3.5 pr-4 text-right font-mono font-black text-amber-700">
+                                  {formatCurrencyIDR(fin.amount || 0)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot className="bg-slate-50/90 font-mono text-[11px] border-t-2 border-slate-200 text-slate-800 font-black">
+                            <tr className="bg-amber-50/80 border-t border-amber-200/80 text-amber-950">
+                              <td colSpan={6} className="p-3.5 pl-4 text-right uppercase tracking-wider font-sans text-xs font-black">
+                                Subtotal Pembayaran dari Dana Pattycash (Talangan PT):
+                              </td>
+                              <td className="p-3.5 pr-4 text-right text-amber-900 text-sm font-black font-mono">
+                                {formatCurrencyIDR(contactDetailSummary.pattyCashPaymentsAmount)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ========================================================================= */}
+              {/* TAB KHUSUS HUTANG: 3. CATATAN PEMBAYARAN DARI DANA PRIBADI */}
+              {/* ========================================================================= */}
+              {selectedContactDetail.type === "HUTANG" && contactDetailTab === "FINANCIAL_PRIBADI" && (
+                <div className="space-y-4">
+                  {/* Notice Banner */}
+                  <div className="p-4 bg-indigo-50/70 rounded-2xl border border-indigo-200/80 flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 mt-0.5">
+                      <CreditCard size={18} />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-xs font-black text-indigo-900 uppercase tracking-wide">
+                        Koneksi Aliran Dana Pribadi ke Hutang PT
+                      </p>
+                      <p className="text-xs text-indigo-800 font-medium leading-relaxed">
+                        Jika hutang kreditur dibayarkan memakai dana pribadi / pinjaman seseorang, maka dana tersebut <b>memotong hutang kepada {selectedContactDetail.name}</b> dan secara otomatis <b>tercatat sebagai Hutang PT baru kepada orang yang membayarkan</b>. Semua aliran dana terekam jelas dan transparan.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Overview Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-indigo-50/80 p-4 rounded-2xl border border-indigo-200/80 flex items-center justify-between shadow-2xs">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-indigo-700 tracking-wider">Total Pembayaran Dana Pribadi</p>
+                        <p className="text-xl font-black text-indigo-900 mt-1 font-mono">{formatCurrencyIDR(contactDetailSummary.pribadiPaymentsAmount)}</p>
+                        <p className="text-[10px] text-indigo-600 font-medium mt-0.5">Dana Pinjaman / Talangan Orang Lain</p>
+                      </div>
+                      <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
+                        <CreditCard size={20} />
+                      </div>
+                    </div>
+                    <div className="bg-slate-50/80 p-4 rounded-2xl border border-slate-200/80 flex items-center justify-between shadow-2xs">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-slate-500 tracking-wider">Jumlah Pembayaran Talangan</p>
+                        <p className="text-xl font-black text-slate-800 mt-1 font-mono">{contactDetailSummary.pribadiPayments.length} Transaksi</p>
+                        <p className="text-[10px] text-slate-400 font-medium mt-0.5">Disalurkan Langsung ke {selectedContactDetail.name}</p>
+                      </div>
+                      <div className="w-10 h-10 rounded-xl bg-slate-200 text-slate-600 flex items-center justify-center">
+                        <Receipt size={20} />
+                      </div>
+                    </div>
+                    <div className="bg-teal-50/80 p-4 rounded-2xl border border-teal-200/80 flex items-center justify-between shadow-2xs">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-teal-700 tracking-wider">Status Pencatatan Sistem</p>
+                        <p className="text-sm font-black text-teal-900 mt-1 uppercase tracking-tight">Otomatis Terhubung</p>
+                        <p className="text-[10px] text-teal-600 font-medium mt-0.5">Masuk ke Buku Hutang Kreditur Pembayar</p>
+                      </div>
+                      <div className="w-10 h-10 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center">
+                        <CheckCircle2 size={20} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {contactDetailSummary.pribadiPayments.length === 0 ? (
+                    <div className="bg-slate-50/80 p-8 sm:p-12 rounded-3xl border border-slate-200/80 text-center space-y-3">
+                      <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center mx-auto">
+                        <CreditCard size={28} />
+                      </div>
+                      <div className="max-w-lg mx-auto space-y-1">
+                        <h4 className="text-sm font-black text-slate-800 uppercase tracking-tight">
+                          Belum Ada Pembayaran dari Dana Pribadi
+                        </h4>
+                        <p className="text-xs text-slate-500 font-medium leading-relaxed">
+                          Belum ditemukan transaksi pembayaran hutang ke <span className="font-bold text-slate-700">{selectedContactDetail.name}</span> yang menggunakan dana pribadi / pinjaman orang lain.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="border border-slate-200/80 rounded-2xl overflow-hidden shadow-xs">
+                      <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+                        <table className="w-full text-left border-collapse text-xs">
+                          <thead className="sticky top-0 bg-slate-900 text-white font-mono font-black text-[10px] uppercase tracking-wider z-10">
+                            <tr>
+                              <th className="p-3.5 pl-4 w-12 text-center">NO</th>
+                              <th className="p-3.5 w-24">TANGGAL</th>
+                              <th className="p-3.5 w-28">NO. BUKTI</th>
+                              <th className="p-3.5 w-52">DANA PRIBADI SIAPA (KREDITUR TALANGAN)</th>
+                              <th className="p-3.5 min-w-[200px]">KETERANGAN / DESKRIPSI</th>
+                              <th className="p-3.5 w-40 text-center">STATUS HUTANG PT</th>
+                              <th className="p-3.5 pr-4 text-right font-mono w-36">NOMINAL DIBAYAR (IDR)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
+                            {contactDetailSummary.pribadiPayments.map((fin, fIdx) => {
+                              const payerName = fin.pemilikUangPribadi || fin.personalHolder || "FAISAL MUSTOPA";
+                              return (
+                                <tr key={`${fin.id || fin.customId || 'pr'}-${fIdx}`} className="hover:bg-slate-50/70 transition-colors">
+                                  <td className="p-3.5 pl-4 text-center font-mono text-slate-400 text-[11px]">{fIdx + 1}</td>
+                                  <td className="p-3.5 font-mono text-slate-800 text-[11px]">{fin.date || "-"}</td>
+                                  <td className="p-3.5 font-mono text-indigo-600 font-black text-[11px]">{fin.customId || fin.id}</td>
+                                  <td className="p-3.5">
+                                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-900 border border-indigo-200 text-xs font-black">
+                                      <CreditCard size={13} className="text-indigo-600" />
+                                      <span>{payerName}</span>
+                                    </span>
+                                  </td>
+                                  <td className="p-3.5 text-slate-700 text-[11px] max-w-sm">
+                                    <p className="font-bold text-slate-800">{fin.description || "-"}</p>
+                                    <p className="text-[10px] text-slate-400 font-medium mt-0.5">Sumber: {fin.sumberDana || "REKENING PRIBADI"}</p>
+                                  </td>
+                                  <td className="p-3.5 text-center">
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 border border-emerald-300">
+                                      <CheckCircle2 size={10} />
+                                      <span>Masuk Hutang PT</span>
+                                    </span>
+                                  </td>
+                                  <td className="p-3.5 pr-4 text-right font-mono font-black text-indigo-700">
+                                    {formatCurrencyIDR(fin.amount || 0)}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                          <tfoot className="bg-slate-50/90 font-mono text-[11px] border-t-2 border-slate-200 text-slate-800 font-black">
+                            <tr className="bg-indigo-50/80 border-t border-indigo-200/80 text-indigo-950">
+                              <td colSpan={6} className="p-3.5 pl-4 text-right uppercase tracking-wider font-sans text-xs font-black">
+                                Subtotal Pembayaran dari Dana Pribadi (Talangan):
+                              </td>
+                              <td className="p-3.5 pr-4 text-right text-indigo-900 text-sm font-black font-mono">
+                                {formatCurrencyIDR(contactDetailSummary.pribadiPaymentsAmount)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ========================================================================= */}
+              {/* TAB KHUSUS PIUTANG: MUTASI TRANSAKSI KAS/BANK TERKAIT */}
+              {/* ========================================================================= */}
+              {selectedContactDetail.type === "PIUTANG" && contactDetailTab === "FINANCIAL" && (
+                <div className="space-y-4">
+                  {/* Financial Flow Overview */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div className="bg-emerald-50/70 p-3.5 rounded-2xl border border-emerald-200/80 flex items-center justify-between">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-emerald-700 tracking-wider">Total Pemasukan</p>
+                        <p className="text-base font-black text-emerald-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.totalPemasukan)}</p>
+                      </div>
+                      <span className="px-2.5 py-1 bg-emerald-200/60 text-emerald-800 text-[10px] font-black rounded-lg">
+                        {contactFinancialRecords.filter((f) => f.type === "IN").length} Trx
+                      </span>
+                    </div>
+                    <div className="bg-rose-50/70 p-3.5 rounded-2xl border border-rose-200/80 flex items-center justify-between">
+                      <div>
+                        <p className="text-[9.5px] font-black uppercase text-rose-700 tracking-wider">Total Pengeluaran / Belanja</p>
+                        <p className="text-base font-black text-rose-800 mt-0.5 font-mono">{formatCurrencyIDR(contactDetailSummary.totalPengeluaran)}</p>
+                      </div>
+                      <span className="px-2.5 py-1 bg-rose-200/60 text-rose-800 text-[10px] font-black rounded-lg">
+                        {contactFinancialRecords.filter((f) => f.type === "OUT").length} Trx
+                      </span>
+                    </div>
+                    <div className={`p-3.5 rounded-2xl border flex items-center justify-between ${contactDetailSummary.keuntungan >= 0 ? "bg-teal-50/70 border-teal-200/80" : "bg-amber-50/70 border-amber-200/80"}`}>
+                      <div>
+                        <p className={`text-[9.5px] font-black uppercase tracking-wider ${contactDetailSummary.keuntungan >= 0 ? "text-teal-700" : "text-amber-700"}`}>Arus Kas Bersih (Laba)</p>
+                        <p className={`text-base font-black mt-0.5 font-mono ${contactDetailSummary.keuntungan >= 0 ? "text-teal-800" : "text-amber-800"}`}>{formatCurrencyIDR(contactDetailSummary.keuntungan)}</p>
+                      </div>
+                      <span className={`px-2.5 py-1 text-[10px] font-black rounded-lg ${contactDetailSummary.keuntungan >= 0 ? "bg-teal-200/60 text-teal-800" : "bg-amber-200/60 text-amber-800"}`}>
+                        {contactDetailSummary.keuntungan >= 0 ? "Surplus" : "Defisit"}
+                      </span>
+                    </div>
+                  </div>
 
                   {/* Filter bar */}
                   <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-                    {selectedContactDetail.type === "PIUTANG" ? (
-                      <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl w-fit">
-                        <button
-                          onClick={() => setContactFinancialFilter("ALL")}
-                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                            contactFinancialFilter === "ALL" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"
-                          }`}
-                        >
-                          Semua ({contactFinancialRecords.length})
-                        </button>
-                        <button
-                          onClick={() => setContactFinancialFilter("IN")}
-                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                            contactFinancialFilter === "IN" ? "bg-emerald-600 text-white shadow-xs" : "text-emerald-700 hover:bg-emerald-50"
-                          }`}
-                        >
-                          Pemasukan Klien ({contactFinancialRecords.filter((f) => f.type === "IN").length})
-                        </button>
-                        <button
-                          onClick={() => setContactFinancialFilter("OUT")}
-                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                            contactFinancialFilter === "OUT" ? "bg-rose-600 text-white shadow-xs" : "text-rose-700 hover:bg-rose-50"
-                          }`}
-                        >
-                          Pengeluaran Belanja ({contactFinancialRecords.filter((f) => f.type === "OUT").length})
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex flex-wrap items-center gap-1.5 p-1 bg-slate-100 rounded-xl w-fit">
-                        <button
-                          onClick={() => setContactHutangFinancialFilter("ALL")}
-                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
-                            contactHutangFinancialFilter === "ALL"
-                              ? "bg-white text-slate-900 shadow-xs"
-                              : "text-slate-500 hover:text-slate-800"
-                          }`}
-                        >
-                          Semua Dana Masuk dari PT ({contactFinancialRecords.length})
-                        </button>
-                        <button
-                          onClick={() => setContactHutangFinancialFilter("PEMBAYARAN_HUTANG")}
-                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
-                            contactHutangFinancialFilter === "PEMBAYARAN_HUTANG"
-                              ? "bg-purple-600 text-white shadow-xs"
-                              : "text-purple-700 hover:bg-purple-50"
-                          }`}
-                        >
-                          <CreditCard size={12} />
-                          Kategori Pembayaran Hutang ({contactDetailSummary.hutangCategoryRecords.length})
-                        </button>
-                        <button
-                          onClick={() => setContactHutangFinancialFilter("REIMBURSE")}
-                          className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer flex items-center gap-1.5 ${
-                            contactHutangFinancialFilter === "REIMBURSE"
-                              ? "bg-amber-600 text-white shadow-xs"
-                              : "text-amber-700 hover:bg-amber-50"
-                          }`}
-                        >
-                          <RefreshCw size={12} />
-                          Kategori Reimburse ({contactDetailSummary.reimburseCategoryRecords.length})
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl w-fit">
+                      <button
+                        onClick={() => setContactFinancialFilter("ALL")}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                          contactFinancialFilter === "ALL" ? "bg-white text-slate-900 shadow-xs" : "text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        Semua ({contactFinancialRecords.length})
+                      </button>
+                      <button
+                        onClick={() => setContactFinancialFilter("IN")}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                          contactFinancialFilter === "IN" ? "bg-emerald-600 text-white shadow-xs" : "text-emerald-700 hover:bg-emerald-50"
+                        }`}
+                      >
+                        Pemasukan Klien ({contactFinancialRecords.filter((f) => f.type === "IN").length})
+                      </button>
+                      <button
+                        onClick={() => setContactFinancialFilter("OUT")}
+                        className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                          contactFinancialFilter === "OUT" ? "bg-rose-600 text-white shadow-xs" : "text-rose-700 hover:bg-rose-50"
+                        }`}
+                      >
+                        Pengeluaran Belanja ({contactFinancialRecords.filter((f) => f.type === "OUT").length})
+                      </button>
+                    </div>
 
                     <p className="text-xs text-slate-400 font-medium">
-                      {selectedContactDetail.type === "HUTANG"
-                        ? `Menampilkan mutasi pengeluaran kas & bank PT yang masuk ke ${selectedContactDetail.name} (Pembayaran Hutang & Reimburse).`
-                        : "Menampilkan mutasi kas & bank yang terhubung dengan proyek / kontak ini."}
+                      Menampilkan mutasi kas & bank yang terhubung dengan proyek / kontak ini.
                     </p>
                   </div>
 
@@ -14514,7 +15077,7 @@ const AdminDebtScreen = ({
                           Belum Ada Mutasi Transaksi Kas/Bank
                         </h4>
                         <p className="text-xs text-slate-500 font-medium leading-relaxed">
-                          Belum ditemukan catatan transaksi pembayaran atau reimbursement dari rekening PT untuk kontak{" "}
+                          Belum ditemukan catatan transaksi pembayaran atau penerimaan untuk kontak{" "}
                           <span className="font-bold text-slate-700">{selectedContactDetail.name}</span>.
                         </p>
                       </div>
@@ -14532,33 +15095,14 @@ const AdminDebtScreen = ({
                               <th className="p-3.5">KATEGORI</th>
                               <th className="p-3.5 min-w-[200px]">KETERANGAN / DESKRIPSI</th>
                               <th className="p-3.5">REKENING / SUMBER DANA</th>
-                              <th className="p-3.5 pr-4 text-right font-mono">NOMINAL MASUK (IDR)</th>
+                              <th className="p-3.5 pr-4 text-right font-mono">NOMINAL (IDR)</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 font-bold text-slate-700 bg-white">
                             {contactFinancialRecords
-                              .filter((fin) => {
-                                if (selectedContactDetail.type === "HUTANG") {
-                                  if (contactHutangFinancialFilter === "ALL") return true;
-                                  const catUpper = (fin.category || "").toUpperCase();
-                                  const descUpper = (fin.description || "").toUpperCase();
-                                  if (contactHutangFinancialFilter === "PEMBAYARAN_HUTANG") {
-                                    return catUpper.includes("HUTANG");
-                                  }
-                                  if (contactHutangFinancialFilter === "REIMBURSE") {
-                                    return catUpper.includes("REIMBURSE") || descUpper.includes("REIMBURSE");
-                                  }
-                                  return true;
-                                }
-                                return contactFinancialFilter === "ALL" ? true : fin.type === contactFinancialFilter;
-                              })
+                              .filter((fin) => (contactFinancialFilter === "ALL" ? true : fin.type === contactFinancialFilter))
                               .map((fin, fIdx) => {
                                 const isIncome = fin.type === "IN";
-                                const isHutangModal = selectedContactDetail.type === "HUTANG";
-                                const isReimburse =
-                                  (fin.category || "").toUpperCase().includes("REIMBURSE") ||
-                                  (fin.description || "").toUpperCase().includes("REIMBURSE");
-
                                 return (
                                   <tr key={`${fin.id || fin.customId || 'fin'}-${fIdx}`} className="hover:bg-slate-50/70 transition-colors">
                                     <td className="p-3.5 pl-4 font-mono text-slate-400 text-[11px]">{fIdx + 1}</td>
@@ -14567,73 +15111,26 @@ const AdminDebtScreen = ({
                                     <td className="p-3.5 text-center">
                                       <span
                                         className={`inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider border ${
-                                          isHutangModal
-                                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                            : isIncome
-                                            ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                            : "bg-rose-50 text-rose-700 border-rose-200"
+                                          isIncome ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"
                                         }`}
                                       >
-                                        {isHutangModal ? "Dana Masuk ke Kontak" : isIncome ? "Pemasukan" : "Pengeluaran (Belanja)"}
+                                        {isIncome ? "Pemasukan" : "Pengeluaran"}
                                       </span>
                                     </td>
                                     <td className="p-3.5">
-                                      {isHutangModal ? (
-                                        <span
-                                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[9.5px] font-black uppercase tracking-wider border ${
-                                            isReimburse
-                                              ? "bg-amber-50 text-amber-800 border-amber-200/80 shadow-2xs"
-                                              : "bg-purple-50 text-purple-800 border-purple-200/80 shadow-2xs"
-                                          }`}
-                                        >
-                                          {isReimburse ? <RefreshCw size={10} /> : <CreditCard size={10} />}
-                                          <span>{isReimburse ? "Reimburse" : "Pembayaran Hutang"}</span>
-                                        </span>
-                                      ) : (
-                                        <span className="text-slate-700 text-[11px]">{fin.category || "-"}</span>
-                                      )}
+                                      <span className="text-slate-700 text-[11px]">{fin.category || "-"}</span>
                                     </td>
                                     <td className="p-3.5 text-slate-600 text-[11px] max-w-sm">{fin.description || "-"}</td>
                                     <td className="p-3.5 text-slate-500 text-[11px]">
-                                      {isHutangModal
-                                        ? `Dari: ${getDisplaySumberUang(fin)} ➔ Penerima: ${fin.rekPenerima || selectedContactDetail.name}`
-                                        : getDisplaySumberUang(fin)}
+                                      {getDisplaySumberUang(fin)}
                                     </td>
-                                    <td className={`p-3.5 pr-4 text-right font-mono font-black ${isHutangModal || isIncome ? "text-emerald-600" : "text-rose-600"}`}>
+                                    <td className={`p-3.5 pr-4 text-right font-mono font-black ${isIncome ? "text-emerald-600" : "text-rose-600"}`}>
                                       {formatCurrencyIDR(fin.amount || 0)}
                                     </td>
                                   </tr>
                                 );
                               })}
                           </tbody>
-                          {selectedContactDetail.type === "HUTANG" && contactFinancialRecords.length > 0 && (
-                            <tfoot className="bg-slate-50/90 font-mono text-[11px] border-t-2 border-slate-200 text-slate-800 font-black">
-                              <tr>
-                                <td colSpan={5} className="p-3 pl-4 text-right text-purple-700 uppercase tracking-wider font-sans text-xs">
-                                  Subtotal Kategori Pembayaran Hutang PT:
-                                </td>
-                                <td colSpan={3} className="p-3 pr-4 text-right text-purple-700 font-black">
-                                  {formatCurrencyIDR(contactDetailSummary.hutangCategoryAmount)}
-                                </td>
-                              </tr>
-                              <tr>
-                                <td colSpan={5} className="p-3 pl-4 text-right text-amber-700 uppercase tracking-wider font-sans text-xs">
-                                  Subtotal Kategori Reimburse PT:
-                                </td>
-                                <td colSpan={3} className="p-3 pr-4 text-right text-amber-700 font-black">
-                                  {formatCurrencyIDR(contactDetailSummary.reimburseCategoryAmount)}
-                                </td>
-                              </tr>
-                              <tr className="bg-emerald-50/80 border-t border-emerald-200/80 text-emerald-900">
-                                <td colSpan={5} className="p-3.5 pl-4 text-right uppercase tracking-wider font-sans text-xs font-black">
-                                  Total Seluruh Pembayaran Hutang Sah dari PT:
-                                </td>
-                                <td colSpan={3} className="p-3.5 pr-4 text-right text-emerald-800 text-sm font-black">
-                                  {formatCurrencyIDR(contactDetailSummary.totalPaid)}
-                                </td>
-                              </tr>
-                            </tfoot>
-                          )}
                         </table>
                       </div>
                     </div>
@@ -29681,6 +30178,21 @@ export default function App() {
           return ov ? { ...r, ...ov, category: ov.category || r.category } : r;
         });
       }
+      if (records.length > 0) {
+        records = records.map((r) => {
+          const k1 = (r.customId || "").trim().toUpperCase();
+          const k2 = (r.id || "").trim().toUpperCase();
+          if ((k1 === "BNK-290726-002" || k2 === "BNK-290726-002" || k1 === "BNK-070826-001" || k2 === "BNK-070826-001") && (!r.refHutang || r.refHutang === "")) {
+            return {
+              ...r,
+              refHutang: "HTG-003",
+              linkedDebtId: "HTG-003",
+              rekPenerima: "PAK DODO INVESTOR",
+            };
+          }
+          return r;
+        });
+      }
       return records;
     } catch (_) {}
     return (seedFinancialRecords || []) as FinancialRecord[];
@@ -29691,12 +30203,28 @@ export default function App() {
     try {
       const cached = autoBackupService.getPersistentData();
       if (cached && Array.isArray(cached.debtRecords) && cached.debtRecords.length > 0) {
-        return cached.debtRecords;
+        return cached.debtRecords.map((d: any) => {
+          if ((d.customId === "HTG-003" || d.id === "HTG-003") && (!d.payments || d.payments.length === 0)) {
+            const seedDodo = (seedDebtRecords || []).find((s) => s.customId === "HTG-003" || s.id === "HTG-003");
+            if (seedDodo?.payments && seedDodo.payments.length > 0) {
+              return { ...d, status: "PARTIAL", payments: seedDodo.payments };
+            }
+          }
+          return d;
+        });
       }
       const history = autoBackupService.getAvailableBackups();
       for (const h of history) {
         if (Array.isArray(h.data?.debtRecords) && h.data.debtRecords.length > 0) {
-          return h.data.debtRecords;
+          return h.data.debtRecords.map((d: any) => {
+            if ((d.customId === "HTG-003" || d.id === "HTG-003") && (!d.payments || d.payments.length === 0)) {
+              const seedDodo = (seedDebtRecords || []).find((s) => s.customId === "HTG-003" || s.id === "HTG-003");
+              if (seedDodo?.payments && seedDodo.payments.length > 0) {
+                return { ...d, status: "PARTIAL", payments: seedDodo.payments };
+              }
+            }
+            return d;
+          });
         }
       }
     } catch (_) {}
@@ -35212,9 +35740,10 @@ export default function App() {
               : (userEdit?.flowType ?? fromLocal?.flowType ?? fromDb?.flowType ?? seed.flowType),
             personalHolder: userEdit?.personalHolder ?? fromLocal?.personalHolder ?? fromDb?.personalHolder ?? seed.personalHolder ?? "",
             pemilikUangPribadi: userEdit?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? fromDb?.pemilikUangPribadi ?? (isPersonalFund ? "FAISAL MUSTOPA" : (seed.pemilikUangPribadi || "")),
-            rekPenerima: userEdit?.rekPenerima ?? fromLocal?.rekPenerima ?? fromDb?.rekPenerima ?? seed.rekPenerima ?? "",
+            rekPenerima: userEdit?.rekPenerima ?? fromLocal?.rekPenerima ?? ((fromDb?.rekPenerima && fromDb.rekPenerima !== "") ? fromDb.rekPenerima : (seed.rekPenerima ?? "")),
             refIdBank: userEdit?.refIdBank !== undefined ? userEdit.refIdBank : (fromLocal?.refIdBank !== undefined ? fromLocal.refIdBank : (fromDb?.refIdBank ?? seed.refIdBank ?? "")),
-            refHutang: userEdit?.refHutang !== undefined ? userEdit.refHutang : (fromLocal?.refHutang !== undefined ? fromLocal.refHutang : (fromDb?.refHutang ?? seed.refHutang ?? "")),
+            refHutang: userEdit?.refHutang !== undefined ? userEdit.refHutang : (fromLocal?.refHutang !== undefined ? fromLocal.refHutang : ((fromDb?.refHutang && fromDb.refHutang !== "") ? fromDb.refHutang : (seed.refHutang ?? ""))),
+            linkedDebtId: userEdit?.linkedDebtId !== undefined ? userEdit.linkedDebtId : (fromLocal?.linkedDebtId !== undefined ? fromLocal.linkedDebtId : ((fromDb?.linkedDebtId && fromDb.linkedDebtId !== "") ? fromDb.linkedDebtId : (seed.linkedDebtId ?? ""))),
             refPiutang: userEdit?.refPiutang !== undefined ? userEdit.refPiutang : (fromLocal?.refPiutang !== undefined ? fromLocal.refPiutang : (fromDb?.refPiutang ?? seed.refPiutang ?? "")),
             senderName: userEdit?.senderName !== undefined ? userEdit.senderName : (fromLocal?.senderName ?? fromDb?.senderName ?? seed.senderName ?? ""),
           } as FinancialRecord;
@@ -35380,10 +35909,19 @@ export default function App() {
           const baseRecord = (source ? { ...seed, ...(fromDb || {}), ...(fromLocal || {}) } : seed) as DebtRecord;
           if (baseRecord.type === "HUTANG") {
             // Jika data belum pernah diedit user, data hutang & pembayaran awal mentok di 1 Juli 2026.
+            // Khusus Pak Dodo (HTG-003), pembayaran parsial 45 juta (29 Juli & 7 Agustus) tetap dipertahankan.
             // Jika user sudah mengedit/menambahkan pembayaran di local atau db, pertahankan hasil editan user.
             if (!fromLocal?.payments && !fromDb?.payments) {
-              baseRecord.payments = (baseRecord.payments || []).filter((p) => !p.date || p.date <= "2026-07-01");
+              if (rawCustomId === "HTG-003" || rawId === "HTG-003") {
+                // Pertahankan 2 pembayaran awal Pak Dodo (40jt + 5jt = 45jt)
+              } else {
+                baseRecord.payments = (baseRecord.payments || []).filter((p) => !p.date || p.date <= "2026-07-01");
+              }
             }
+          }
+          if ((rawCustomId === "HTG-003" || rawId === "HTG-003") && (!baseRecord.payments || baseRecord.payments.length === 0)) {
+            baseRecord.payments = [...(seed.payments || [])];
+            baseRecord.status = "PARTIAL";
           }
           deduped.push(baseRecord);
         });

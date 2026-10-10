@@ -4152,6 +4152,9 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     "sumberDana": "REKENING PT",
     "paymentMethod": "TRANSFER",
     "referenceId": "",
+    "refHutang": "HTG-003",
+    "linkedDebtId": "HTG-003",
+    "rekPenerima": "PAK DODO INVESTOR",
     "projectId": "",
     "personalHolder": "",
     "penerimaKasbon": "",
@@ -4800,6 +4803,9 @@ export const seedFinancialRecords: Partial<FinancialRecord>[] = [
     "sumberDana": "REKENING PT",
     "paymentMethod": "TRANSFER",
     "referenceId": "",
+    "refHutang": "HTG-003",
+    "linkedDebtId": "HTG-003",
+    "rekPenerima": "PAK DODO INVESTOR",
     "projectId": "",
     "personalHolder": "",
     "penerimaKasbon": "",
@@ -10405,10 +10411,27 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     "contactName": "PAK DODO INVESTOR",
     "amount": 100000000,
     "dueDate": "2026-12-31",
-    "status": "UNPAID",
+    "status": "PARTIAL",
     "description": "Dana investasi masuk perusahaan",
     "recordedBy": "admin",
-    "payments": []
+    "payments": [
+      {
+        "id": "PAY-HTG-003-01",
+        "financialRecordId": "BNK-290726-002",
+        "amount": 40000000,
+        "date": "2026-07-29",
+        "note": "PEMBAYARAN HUTANG PAK DODO PARSIAL 1",
+        "recordedBy": "Faisal Mustopa (Admin)"
+      },
+      {
+        "id": "PAY-HTG-003-02",
+        "financialRecordId": "BNK-070826-001",
+        "amount": 5000000,
+        "date": "2026-08-07",
+        "note": "PEMBAYARAN CICILAN HUTANG PAK DODO",
+        "recordedBy": "Faisal Mustopa (Admin)"
+      }
+    ]
   },
   {
     "id": "HTG-004",
