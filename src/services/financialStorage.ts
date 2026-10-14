@@ -1,11 +1,13 @@
-import { FinancialRecord } from "../types";
+import { FinancialRecord, DebtRecord } from "../types";
 import { idbStorage } from "./indexedDbStorage";
 
 const FINANCIAL_OVERRIDES_KEY = "workflow_pro_financial_overrides";
 const DELETED_FINANCIAL_IDS_KEY = "workflow_pro_deleted_financial_ids";
+const DEBT_OVERRIDES_KEY = "workflow_pro_debt_overrides";
 
 // In-memory cache for instant synchronous retrieval
 let inMemoryOverrides: Record<string, Partial<FinancialRecord>> = {};
+let inMemoryDebtOverrides: Record<string, Partial<DebtRecord>> = {};
 let isInitializedFromDisk = false;
 
 /**
@@ -51,7 +53,7 @@ function safeSetLocalStorage(key: string, value: string): void {
 }
 
 /**
- * Initialize financial storage from localStorage and IndexedDB.
+ * Initialize financial & debt storage from localStorage and IndexedDB.
  * Call on application mount to ensure 100% persistence across reloads and tab closures.
  */
 export const initFinancialStorage = async (): Promise<Record<string, Partial<FinancialRecord>>> => {
@@ -71,6 +73,20 @@ export const initFinancialStorage = async (): Promise<Record<string, Partial<Fin
           });
         }
       }
+
+      const rawDebts = localStorage.getItem(DEBT_OVERRIDES_KEY);
+      if (rawDebts) {
+        const parsedDebts = JSON.parse(rawDebts);
+        if (parsedDebts && typeof parsedDebts === "object") {
+          Object.entries(parsedDebts).forEach(([k, v]) => {
+            if (k && v) {
+              const uKey = k.trim().toUpperCase();
+              inMemoryDebtOverrides[k] = v as any;
+              inMemoryDebtOverrides[uKey] = v as any;
+            }
+          });
+        }
+      }
     }
   } catch (_) {}
 
@@ -80,13 +96,19 @@ export const initFinancialStorage = async (): Promise<Record<string, Partial<Fin
     if (idbData && Object.keys(idbData).length > 0) {
       Object.entries(idbData).forEach(([k, v]) => {
         if (k && v && !k.startsWith("DELETED_")) {
-          const uKey = k.trim().toUpperCase();
-          inMemoryOverrides[k] = { ...(inMemoryOverrides[k] || {}), ...v };
-          inMemoryOverrides[uKey] = { ...(inMemoryOverrides[uKey] || {}), ...v };
+          if (k.startsWith("DEBT_")) {
+            const cleanKey = k.replace(/^DEBT_/, "").trim().toUpperCase();
+            inMemoryDebtOverrides[cleanKey] = { ...(inMemoryDebtOverrides[cleanKey] || {}), ...(v as any) };
+          } else {
+            const uKey = k.trim().toUpperCase();
+            inMemoryOverrides[k] = { ...(inMemoryOverrides[k] || {}), ...v };
+            inMemoryOverrides[uKey] = { ...(inMemoryOverrides[uKey] || {}), ...v };
+          }
         }
       });
       // Sync back to localStorage if space allows
       safeSetLocalStorage(FINANCIAL_OVERRIDES_KEY, JSON.stringify(inMemoryOverrides));
+      safeSetLocalStorage(DEBT_OVERRIDES_KEY, JSON.stringify(inMemoryDebtOverrides));
     }
   } catch (e) {
     console.warn("[FinancialStorage] IndexedDB read warning:", e);
@@ -128,11 +150,11 @@ export const getFinancialOverrides = (): Record<string, Partial<FinancialRecord>
  * Keyed by uppercase ID and customId to ensure rapid and unambiguous retrieval.
  * Synchronously writes to in-memory & localStorage, asynchronously writes to IndexedDB.
  */
-export const saveFinancialOverride = (record: Partial<FinancialRecord>): void => {
+export const saveFinancialOverride = (record: Partial<FinancialRecord>, aliasKey?: string): void => {
   try {
     const idKey = (record.id || "").trim().toUpperCase();
     const customIdKey = (record.customId || "").trim().toUpperCase();
-    if (!idKey && !customIdKey) return;
+    if (!idKey && !customIdKey && !aliasKey) return;
 
     const payload: Partial<FinancialRecord> & {
       updatedAt?: string;
@@ -151,6 +173,11 @@ export const saveFinancialOverride = (record: Partial<FinancialRecord>): void =>
     }
     if (customIdKey) {
       inMemoryOverrides[customIdKey] = { ...(inMemoryOverrides[customIdKey] || {}), ...payload };
+    }
+    if (aliasKey) {
+      const aKey = aliasKey.trim().toUpperCase();
+      inMemoryOverrides[aKey] = { ...(inMemoryOverrides[aKey] || {}), ...payload };
+      idbStorage.set("overrides", aKey, payload).catch(() => {});
     }
 
     // 2. Persist to localStorage with quota protection
@@ -215,5 +242,95 @@ export const markFinancialRecordDeleted = (idOrCustomId: string): void => {
     idbStorage.set("overrides", `DELETED_${key}`, { isDeleted: true }).catch(() => {});
   } catch (err) {
     console.warn("[FinancialStorage] Failed to mark deleted:", err);
+  }
+};
+
+/**
+ * Retrieve user-edited modifications for debt records (Hutang / Piutang).
+ * Stored persistently in localStorage & IndexedDB so changing due date or details
+ * NEVER loses data upon browser refresh.
+ */
+export const getDebtOverrides = (): Record<string, Partial<DebtRecord>> => {
+  try {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(DEBT_OVERRIDES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          Object.entries(parsed).forEach(([k, v]) => {
+            if (k && v) {
+              const uKey = k.trim().toUpperCase();
+              inMemoryDebtOverrides[k] = v as any;
+              inMemoryDebtOverrides[uKey] = v as any;
+            }
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("[FinancialStorage] Failed to read debt overrides from localStorage:", err);
+  }
+  return inMemoryDebtOverrides;
+};
+
+/**
+ * Persistently save a user's edit or modification to a debt record (dueDate, amount, contactName, etc.).
+ */
+export const saveDebtOverride = (record: Partial<DebtRecord>, aliasKey?: string): void => {
+  try {
+    const idKey = (record.id || "").trim().toUpperCase();
+    const customIdKey = (record.customId || "").trim().toUpperCase();
+    if (!idKey && !customIdKey && !aliasKey) return;
+
+    const payload: Partial<DebtRecord> & {
+      updatedAt?: string;
+      timestamp?: number;
+      isUserEdited?: boolean;
+    } = {
+      ...record,
+      updatedAt: new Date().toISOString(),
+      timestamp: Date.now(),
+      isUserEdited: true,
+    };
+
+    if (idKey) {
+      inMemoryDebtOverrides[idKey] = { ...(inMemoryDebtOverrides[idKey] || {}), ...payload };
+    }
+    if (customIdKey) {
+      inMemoryDebtOverrides[customIdKey] = { ...(inMemoryDebtOverrides[customIdKey] || {}), ...payload };
+    }
+    if (aliasKey) {
+      const aKey = aliasKey.trim().toUpperCase();
+      inMemoryDebtOverrides[aKey] = { ...(inMemoryDebtOverrides[aKey] || {}), ...payload };
+      idbStorage.set("overrides", `DEBT_${aKey}`, payload).catch(() => {});
+    }
+
+    safeSetLocalStorage(DEBT_OVERRIDES_KEY, JSON.stringify(inMemoryDebtOverrides));
+    if (idKey) {
+      idbStorage.set("overrides", `DEBT_${idKey}`, payload).catch(() => {});
+    }
+    if (customIdKey && customIdKey !== idKey) {
+      idbStorage.set("overrides", `DEBT_${customIdKey}`, payload).catch(() => {});
+    }
+  } catch (err) {
+    console.warn("[FinancialStorage] Failed to save debt override:", err);
+  }
+};
+
+/**
+ * Remove a debt override if permanently deleted.
+ */
+export const removeDebtOverride = (idOrCustomId: string): void => {
+  try {
+    const key = (idOrCustomId || "").trim().toUpperCase();
+    if (!key) return;
+
+    delete inMemoryDebtOverrides[key];
+    delete inMemoryDebtOverrides[idOrCustomId];
+
+    safeSetLocalStorage(DEBT_OVERRIDES_KEY, JSON.stringify(inMemoryDebtOverrides));
+    idbStorage.delete("overrides", `DEBT_${key}`).catch(() => {});
+  } catch (err) {
+    console.warn("[FinancialStorage] Failed to remove debt override:", err);
   }
 };

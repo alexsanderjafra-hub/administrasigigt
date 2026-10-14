@@ -233,6 +233,9 @@ import {
   removeFinancialOverride,
   getDeletedFinancialIds,
   markFinancialRecordDeleted,
+  getDebtOverrides,
+  saveDebtOverride,
+  removeDebtOverride,
 } from "./services/financialStorage";
 
 export const isReimbursementOrDebtRepayment = (r: any) => {
@@ -6787,7 +6790,9 @@ const getEffectiveDebtRecords = (
         const fCust = (f.customId || "").toUpperCase();
         return (
           (originFinId && (fId === originFinId || fCust === originFinId.toUpperCase())) ||
-          (originCustom && (fCust === originCustom.toUpperCase() || fId === originCustom.toLowerCase()))
+          (originCustom && (fCust === originCustom.toUpperCase() || fId === originCustom.toLowerCase())) ||
+          (f.linkedDebtId && (f.linkedDebtId.toLowerCase() === rIdLower || (rCustomUpper && f.linkedDebtId.toUpperCase() === rCustomUpper))) ||
+          (f.refHutang && (f.refHutang.toLowerCase() === rIdLower || (rCustomUpper && f.refHutang.toUpperCase().includes(rCustomUpper))))
         );
       });
       if (!existsInFin) {
@@ -6798,6 +6803,16 @@ const getEffectiveDebtRecords = (
     const rTitle = (r.title || "").toLowerCase();
     const rDesc = (r.description || "").toLowerCase();
     const rCat = ((r as any).category || "").toLowerCase();
+
+    if (rDesc.includes("ref transaksi:")) {
+      const matchTrx = rDesc.match(/ref transaksi:\s*([a-z0-9_-]+)/i);
+      if (matchTrx && matchTrx[1]) {
+        const trxCode = matchTrx[1].trim().toLowerCase();
+        if (deletedFinIds.has(trxCode.toUpperCase()) || deletedOrigins.has(trxCode)) {
+          return false;
+        }
+      }
+    }
     
     // Exclude falsely created debt records for operational meal/dining expenses
     if (
@@ -6836,16 +6851,25 @@ const getEffectiveDebtRecords = (
 
     // Sesuai instruksi resmi: Data hutang awal maksimal mentok di 1 Juli 2026 (HTG-001 s/d HTG-010).
     // Transaksi/hutang setelah 1 Juli tidak dimasukkan default, biar user yang edit/tambah sendiri nanti saat berjalan.
-    if (r.type === "HUTANG" && !((r as any).originFinancialRecordId) && !((r as any).originCustomId) && !isPersonalFundDebt) {
-      const customUpper = (r.customId || r.id || "").toUpperCase();
+    // Jika data sudah diedit oleh user (isUserEdited), ada override, atau memiliki origin, JANGAN PERNAH difilter keluar!
+    const customUpper = (r.customId || r.id || "").toUpperCase();
+    const rIdUpper = (r.id || "").toUpperCase();
+    const debtOv = getDebtOverrides();
+    const hasUserOverride = Boolean(debtOv[customUpper] || debtOv[rIdUpper]);
+
+    if (
+      r.type === "HUTANG" &&
+      !((r as any).isUserEdited) &&
+      !hasUserOverride &&
+      !((r as any).originFinancialRecordId) &&
+      !((r as any).originCustomId) &&
+      !isPersonalFundDebt
+    ) {
       if (customUpper.startsWith("HTG-")) {
         const numPart = parseInt(customUpper.replace("HTG-", ""), 10);
         if (!isNaN(numPart) && numPart > 10) {
           return false;
         }
-      }
-      if (r.dueDate && r.dueDate > "2026-07-01" && customUpper !== "HTG-003") {
-        return false;
       }
     }
 
@@ -7077,20 +7101,18 @@ const getOriginFinanceQueryAndRecord = (
   });
   if (linkedNonPay) return { originRecord: linkedNonPay, query: linkedNonPay.customId || linkedNonPay.id };
 
-  // 5. Description containing customId (non-payment, hanya jika r bukan piutang umum)
-  if (r.type !== "PIUTANG") {
-    const textMatch = finList.find((f) => {
-      const catLower = (f.category || "").toLowerCase();
-      const isPayment = catLower.includes("pembayaran");
-      if (isPayment) return false;
-      const fDesc = (f.description || "").toLowerCase();
-      return (
-        (cleanId && fDesc.includes(cleanId.toLowerCase())) ||
-        (r.customId && fDesc.includes(r.customId.toLowerCase()))
-      );
-    });
-    if (textMatch) return { originRecord: textMatch, query: textMatch.customId || textMatch.id };
-  }
+  // 5. Explicit refHutang or refPiutang match
+  const refIdMatch = finList.find((f) => {
+    const fRefH = (f.refHutang || "").toUpperCase();
+    const fRefP = (f.refPiutang || "").toUpperCase();
+    const rCust = (r.customId || "").toUpperCase();
+    const rId = (r.id || "").toUpperCase();
+    return (
+      (rCust && (fRefH === rCust || fRefH.includes(rCust) || fRefP === rCust || fRefP.includes(rCust))) ||
+      (rId && (fRefH === rId || fRefP === rId))
+    );
+  });
+  if (refIdMatch) return { originRecord: refIdMatch, query: refIdMatch.customId || refIdMatch.id };
 
   return { originRecord: null, query: cleanId || r.customId || r.title || "" };
 };
@@ -7226,7 +7248,9 @@ const getScheduleForRecord = (
           }
         }
       } else if (p.date && p.date > "2026-07-01") {
-        if (recCustomId !== "htg-003") return false;
+        const debtOv = getDebtOverrides();
+        const hasOv = Boolean(debtOv[recCustomId.toUpperCase()] || debtOv[recIdLower.toUpperCase()]);
+        if (recCustomId !== "htg-003" && !((record as any).isUserEdited) && !hasOv) return false;
       }
       return true;
     }
@@ -8191,13 +8215,6 @@ const AdminDebtScreen = ({
         // 2. Structured Project reference for Piutang
         if (fProjId && projectIds.has(fProjId)) return true;
         if (fRefId && projectIds.has(fRefId)) return true;
-        if (projectTitles.some((pTitle) => {
-          if (!pTitle || !f.description) return false;
-          const isSumpitTitle = pTitle.toLowerCase().includes("sumpit");
-          const fDescHasSumpit = f.description.toLowerCase().includes("sumpit");
-          if (isSumpitTitle !== fDescHasSumpit) return false;
-          return f.description.toLowerCase().includes(pTitle);
-        })) return true;
 
         // 3. Matched in recorded payments slot of this contact's debts
         const isPaymentMatch = contactDetailRecords.some((r) =>
@@ -8800,7 +8817,7 @@ const AdminDebtScreen = ({
         }
       : {};
 
-    const updatedMainDebt = {
+    const updatedMainDebt: DebtRecord = {
       ...currentRecord,
       title: editForm.title,
       contactName: editForm.contactName,
@@ -8810,11 +8827,60 @@ const AdminDebtScreen = ({
       projectId: editForm.projectId,
       status: newStatus,
       type: editForm.type,
+      isUserEdited: true,
+      updatedAt: new Date().toISOString(),
+      timestamp: currentRecord.timestamp || Date.now(),
       ...customIdUpdate
     };
 
+    saveDebtOverride(updatedMainDebt);
+    if (currentRecord.customId && currentRecord.customId !== currentRecord.id) {
+      saveDebtOverride({ ...updatedMainDebt, customId: currentRecord.customId });
+    }
+
     await dbService.setDocument("debtRecords", currentRecord.id, updatedMainDebt);
-    setDebtRecords((prev) => prev.map((d) => d.id === currentRecord.id ? updatedMainDebt : d));
+    if (currentRecord.customId && currentRecord.customId !== currentRecord.id) {
+      await dbService.setDocument("debtRecords", currentRecord.customId, updatedMainDebt).catch(() => {});
+    }
+
+    // If this debt was generated from a personal fund or financial transaction, sync the date to the transaction
+    const origFinId = (currentRecord as any).originFinancialRecordId;
+    const origCustId = (currentRecord as any).originCustomId;
+    let nextFinList = financialRecords;
+    if (origFinId || origCustId) {
+      const targetFin = financialRecords.find(
+        (f) => (origFinId && f.id === origFinId) || (origCustId && f.customId === origCustId)
+      );
+      if (targetFin) {
+        const updatedFin: FinancialRecord = {
+          ...targetFin,
+          date: editForm.dueDate || targetFin.date,
+          amount: mainAmount,
+          description: editForm.description || targetFin.description,
+          isUserEdited: true,
+          updatedAt: new Date().toISOString(),
+        };
+        saveFinancialOverride(updatedFin);
+        await dbService.setDocument("financialRecords", targetFin.id, updatedFin).catch(() => {});
+        if (targetFin.customId && targetFin.customId !== targetFin.id) {
+          await dbService.setDocument("financialRecords", targetFin.customId, updatedFin).catch(() => {});
+        }
+        nextFinList = financialRecords.map((f) => f.id === targetFin.id ? updatedFin : f);
+        setFinancialRecords(nextFinList);
+      }
+    }
+
+    let nextDebts: DebtRecord[] = [];
+    setDebtRecords((prev) => {
+      nextDebts = prev.map((d) => (d.id === currentRecord.id ? updatedMainDebt : d));
+      autoBackupService.saveInstantDataSnapshot(
+        nextFinList,
+        nextDebts,
+        projects,
+        `Update Detail ${updatedMainDebt.type} [${updatedMainDebt.customId || updatedMainDebt.id}]`
+      );
+      return nextDebts;
+    });
 
     await logActivity(
       "DEBT",
@@ -9019,6 +9085,8 @@ const AdminDebtScreen = ({
       const originFinId = (targetRec as any)?.originFinancialRecordId;
       const originCustId = (targetRec as any)?.originCustomId;
       addDeletedDebtOriginId(id, customId, originFinId, originCustId);
+      removeDebtOverride(id);
+      if (customId) removeDebtOverride(customId);
 
       await dbService.deleteDocument("debtRecords", id).catch(() => {});
       if (customId && customId !== id) {
@@ -9056,9 +9124,21 @@ const AdminDebtScreen = ({
         if (f.linkedDebtId && (f.linkedDebtId.toLowerCase() === cleanId || f.linkedDebtId.toUpperCase() === cleanCust)) return true;
         if (f.refHutang && (f.refHutang.toLowerCase() === cleanId || f.refHutang.toUpperCase() === cleanCust || f.refHutang.toUpperCase().includes(cleanCust))) return true;
         if (f.refPiutang && (f.refPiutang.toLowerCase() === cleanId || f.refPiutang.toUpperCase() === cleanCust)) return true;
-        if (cleanCust && f.description && f.description.toUpperCase().includes(cleanCust)) return true;
-        if (oCust && f.description && f.description.toUpperCase().includes(oCust)) return true;
         if (targetRec?.payments && targetRec.payments.some((p) => p.financialRecordId === f.id || p.financialRecordId === f.customId)) return true;
+
+        // Also match spawned personal fund or suntikan modal transactions with identical amount and date
+        if (
+          targetRec &&
+          f.amount === targetRec.amount &&
+          (f.date === targetRec.dueDate || (targetRec as any).date === f.date) &&
+          (
+            (f.personalHolder && targetRec.contactName && f.personalHolder.toLowerCase().includes(targetRec.contactName.toLowerCase())) ||
+            (f.pemilikUangPribadi && targetRec.contactName && f.pemilikUangPribadi.toLowerCase().includes(targetRec.contactName.toLowerCase())) ||
+            (f.senderName && targetRec.contactName && f.senderName.toLowerCase().includes(targetRec.contactName.toLowerCase()))
+          )
+        ) {
+          return true;
+        }
 
         return false;
       });
@@ -9096,6 +9176,9 @@ const AdminDebtScreen = ({
         "DELETE",
         `Menghapus catatan ${type === "HUTANG" ? "Hutang" : "Piutang"} [${displayId}] beserta ${matchingFins.length} transaksi terkait dari Catatan Transaksi`
       );
+
+      setShowEditModal(null);
+      alert(`Berhasil menghapus rekam ${type === "HUTANG" ? "Hutang" : "Piutang"} [${displayId}]${matchingFins.length > 0 ? ` beserta ${matchingFins.length} transaksi terkait di Catatan Transaksi` : ""}!`);
     } catch (err) {
       console.error("Failed to delete debt record:", err);
       alert("Gagal menghapus data: " + err);
@@ -13683,10 +13766,20 @@ const AdminDebtScreen = ({
                     />
                   </div>
 
-                  <div className="flex justify-end pt-2">
+                  <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleDeleteDebt(currentRecord.id, currentRecord.customId, currentRecord.type);
+                      }}
+                      className="w-full sm:w-auto px-5 py-3 bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white border border-rose-200 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-xs"
+                      title="Hapus Rekam Data Hutang Ini (Otomatis Hapus Transaksi Terkait di Catatan Transaksi)"
+                    >
+                      <Trash2 size={14} /> Hapus Rekam Data {currentRecord.type === "HUTANG" ? "Hutang" : "Piutang"} Ini
+                    </button>
                     <button
                       type="submit"
-                      className="px-5 py-3 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-md shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center gap-1.5 cursor-pointer"
+                      className="w-full sm:w-auto px-5 py-3 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest shadow-md shadow-indigo-100 hover:bg-indigo-700 transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                     >
                       <Check size={14} /> Simpan Perubahan Detail
                     </button>
@@ -14511,6 +14604,14 @@ const AdminDebtScreen = ({
                                               title="Lihat Rincian Termin / Cicilan"
                                             >
                                               <Eye size={12} />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeleteDebt(rec.id, rec.customId, rec.type)}
+                                              className="p-1.5 bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-600 rounded-lg transition-all cursor-pointer shadow-xs"
+                                              title="Hapus Rekam Data Hutang (Otomatis Hapus Transaksi Terkait)"
+                                            >
+                                              <Trash2 size={12} />
                                             </button>
                                           </div>
                                         </td>
@@ -18210,6 +18311,7 @@ const AdminFinanceScreen = ({
             originCustomId: eachCustomId,
             projectId: eachRecord.referenceId || formData.projectId || "",
           };
+          saveDebtOverride(newDebt);
           await dbService.setDocument("debtRecords", newDebt.id, newDebt);
           if (setDebtRecords) {
             setDebtRecords((prev) => [newDebt, ...prev]);
@@ -18219,6 +18321,53 @@ const AdminFinanceScreen = ({
             [newDebt, ...debtRecords],
             projects,
             `Catat Pengeluaran Talangan Pribadi ${eachCustomId}`
+          );
+        }
+
+        // Auto-create/sync Debt (Hutang PT) for Suntikan Modal (Modal Investor/Kreditur = Hutang Perusahaan)
+        const isSuntikanModalAdd = eachRecord.type === "IN" && (
+          formData.category === "Suntikan Modal" ||
+          (formData.category || "").toLowerCase().includes("suntikan modal") ||
+          (formData.category || "").toLowerCase().includes("modal")
+        );
+        if (isSuntikanModalAdd) {
+          const creditorName = normalizeContactName(formData.senderName || formData.refHutang || "Investor / Pemberi Modal");
+          const nextHtgCustomId = getNextDebtCustomId(debtRecords, "HUTANG");
+          const targetExistingDebt = targetDebtId ? debtRecords.find((d) => d.id === targetDebtId || d.customId === targetDebtId) : null;
+          const modalDebtId = targetExistingDebt ? targetExistingDebt.id : nextHtgCustomId;
+          const modalDebtCustomId = targetExistingDebt ? (targetExistingDebt.customId || targetExistingDebt.id) : nextHtgCustomId;
+
+          const newDebt: DebtRecord = {
+            id: modalDebtId,
+            customId: modalDebtCustomId,
+            type: "HUTANG",
+            title: `[SUNTIKAN MODAL] ${eachRecord.description || eachRecord.category || "Suntikan Modal Perusahaan"}`,
+            contactName: creditorName,
+            amount: targetExistingDebt ? (targetExistingDebt.amount || 0) + eachRecord.amount : eachRecord.amount,
+            dueDate: eachRecord.date || new Date().toISOString().split("T")[0],
+            status: "UNPAID",
+            description: `Hutang perusahaan atas suntikan modal dari ${creditorName} (Ref Transaksi: ${eachCustomId})`,
+            recordedBy: user?.name || creditorName || "Admin",
+            timestamp: Date.now(),
+            payments: targetExistingDebt ? (targetExistingDebt.payments || []) : [],
+            originFinancialRecordId: finId,
+            originCustomId: eachCustomId,
+            projectId: eachRecord.referenceId || formData.projectId || "",
+            isUserEdited: true,
+          };
+          saveDebtOverride(newDebt);
+          await dbService.setDocument("debtRecords", newDebt.id, newDebt);
+          if (newDebt.customId && newDebt.customId !== newDebt.id) {
+            await dbService.setDocument("debtRecords", newDebt.customId, newDebt).catch(() => {});
+          }
+          if (setDebtRecords) {
+            setDebtRecords((prev) => [newDebt, ...prev.filter((d) => d.id !== newDebt.id)]);
+          }
+          autoBackupService.saveInstantDataSnapshot(
+            currentRecordsList,
+            [newDebt, ...debtRecords.filter((d) => d.id !== newDebt.id)],
+            projects,
+            `Catat Suntikan Modal Hutang PT ${eachCustomId}`
           );
         }
 
@@ -18764,15 +18913,9 @@ const AdminFinanceScreen = ({
     } as FinancialRecord;
 
     // Immediately persist user override to localStorage before any async background work
-    saveFinancialOverride(fullSavedRecord);
-    if (originalCustomId && originalCustomId !== finalCustomId) {
-      saveFinancialOverride({ ...fullSavedRecord, customId: originalCustomId });
-    }
-    if (editingTransaction.id) {
-      saveFinancialOverride({ ...fullSavedRecord, id: editingTransaction.id });
-    }
-    if (editingTransaction.customId) {
-      saveFinancialOverride({ ...fullSavedRecord, customId: editingTransaction.customId });
+    saveFinancialOverride(fullSavedRecord, originalCustomId);
+    if (editingTransaction.id && editingTransaction.id !== fullSavedRecord.id) {
+      saveFinancialOverride(fullSavedRecord, editingTransaction.id);
     }
 
     // Update in-memory state and snapshot cache immediately
@@ -18872,11 +19015,7 @@ const AdminFinanceScreen = ({
         }).catch(() => {});
       }
       if (originalCustomId && originalCustomId !== docId && originalCustomId !== finalCustomId) {
-        await dbService.setDocument("financialRecords", originalCustomId, {
-          ...editingTransaction,
-          ...updatedRecord,
-          id: docId,
-        }).catch(() => {});
+        await dbService.deleteDocument("financialRecords", originalCustomId).catch(() => {});
       }
       setFinancialRecords((prev) =>
         prev.map((r) =>
@@ -19157,6 +19296,7 @@ const AdminFinanceScreen = ({
             originCustomId: finalCustomId,
             timestamp: existingPersonalDebt.timestamp || Date.now(),
           };
+          saveDebtOverride(updatedDebt);
           await dbService.setDocument("debtRecords", existingPersonalDebt.id, updatedDebt);
           if (existingPersonalDebt.customId && existingPersonalDebt.customId !== existingPersonalDebt.id) {
             await dbService.setDocument("debtRecords", existingPersonalDebt.customId, updatedDebt).catch(() => {});
@@ -19185,7 +19325,9 @@ const AdminFinanceScreen = ({
               originFinancialRecordId: docId,
               originCustomId: finalCustomId,
               projectId: updatedRecord.referenceId || editFormData.projectId || "",
+              isUserEdited: true,
             };
+            saveDebtOverride(newDebt);
             await dbService.setDocument("debtRecords", newDebt.id, newDebt);
             finalDebtList = [newDebt, ...finalDebtList.filter((d) => d.id !== newDebt.id)];
             if (setDebtRecords) {
@@ -19199,9 +19341,79 @@ const AdminFinanceScreen = ({
         if (existingPersonalDebt.customId) {
           await dbService.deleteDocument("debtRecords", existingPersonalDebt.customId).catch(() => {});
         }
+        removeDebtOverride(existingPersonalDebt.id);
+        if (existingPersonalDebt.customId) removeDebtOverride(existingPersonalDebt.customId);
         finalDebtList = finalDebtList.filter((d) => d.id !== existingPersonalDebt.id);
         if (setDebtRecords) {
           setDebtRecords(finalDebtList);
+        }
+      }
+
+      // Auto-sync Suntikan Modal (Pemasukan Modal Investor = Hutang PT)
+      const isSuntikanModalEdit = updatedRecord.type === "IN" && (
+        editFormData.category === "Suntikan Modal" ||
+        (editFormData.category || "").toLowerCase().includes("suntikan modal") ||
+        (editFormData.category || "").toLowerCase().includes("modal")
+      );
+
+      if (isSuntikanModalEdit) {
+        const creditorName = normalizeContactName(editFormData.senderName || editFormData.refHutang || "Investor / Pemberi Modal");
+        const existingModalDebt = debtRecords.find(
+          (d) =>
+            d.type === "HUTANG" &&
+            (((d as any).originFinancialRecordId && ((d as any).originFinancialRecordId === docId || (d as any).originFinancialRecordId === editingTransaction.id)) ||
+             ((d as any).originCustomId && ((d as any).originCustomId === finalCustomId || (d as any).originCustomId === originalCustomId)) ||
+             (editFormData.linkedDebtId && (d.id === editFormData.linkedDebtId || d.customId === editFormData.linkedDebtId)))
+        );
+
+        if (existingModalDebt) {
+          const updatedDebt: DebtRecord = {
+            ...existingModalDebt,
+            amount: updatedRecord.amount,
+            title: `[SUNTIKAN MODAL] ${updatedRecord.description || "Suntikan Modal Perusahaan"}`,
+            contactName: creditorName,
+            dueDate: updatedRecord.date || existingModalDebt.dueDate,
+            description: `Hutang perusahaan atas suntikan modal dari ${creditorName} (Ref Transaksi: ${finalCustomId})`,
+            originFinancialRecordId: docId,
+            originCustomId: finalCustomId,
+            isUserEdited: true,
+            timestamp: existingModalDebt.timestamp || Date.now(),
+          };
+          saveDebtOverride(updatedDebt);
+          await dbService.setDocument("debtRecords", existingModalDebt.id, updatedDebt);
+          if (existingModalDebt.customId && existingModalDebt.customId !== existingModalDebt.id) {
+            await dbService.setDocument("debtRecords", existingModalDebt.customId, updatedDebt).catch(() => {});
+          }
+          finalDebtList = finalDebtList.map((d) => (d.id === existingModalDebt.id ? updatedDebt : d));
+          if (setDebtRecords) {
+            setDebtRecords(finalDebtList);
+          }
+        } else {
+          const nextHtgCustomId = getNextDebtCustomId(debtRecords, "HUTANG");
+          const newDebt: DebtRecord = {
+            id: nextHtgCustomId,
+            customId: nextHtgCustomId,
+            type: "HUTANG",
+            title: `[SUNTIKAN MODAL] ${updatedRecord.description || "Suntikan Modal Perusahaan"}`,
+            contactName: creditorName,
+            amount: updatedRecord.amount,
+            dueDate: updatedRecord.date || new Date().toISOString().split("T")[0],
+            status: "UNPAID",
+            description: `Hutang perusahaan atas suntikan modal dari ${creditorName} (Ref Transaksi: ${finalCustomId})`,
+            recordedBy: user?.name || creditorName || "Admin",
+            timestamp: Date.now(),
+            payments: [],
+            originFinancialRecordId: docId,
+            originCustomId: finalCustomId,
+            projectId: updatedRecord.referenceId || editFormData.projectId || "",
+            isUserEdited: true,
+          };
+          saveDebtOverride(newDebt);
+          await dbService.setDocument("debtRecords", newDebt.id, newDebt);
+          finalDebtList = [newDebt, ...finalDebtList.filter((d) => d.id !== newDebt.id)];
+          if (setDebtRecords) {
+            setDebtRecords(finalDebtList);
+          }
         }
       }
 
@@ -19220,15 +19432,9 @@ const AdminFinanceScreen = ({
         isUserEdited: true,
       } as FinancialRecord;
 
-      saveFinancialOverride(fullSavedRecord);
-      if (originalCustomId && originalCustomId !== finalCustomId) {
-        saveFinancialOverride({ ...fullSavedRecord, customId: originalCustomId });
-      }
-      if (editingTransaction.id) {
-        saveFinancialOverride({ ...fullSavedRecord, id: editingTransaction.id });
-      }
-      if (editingTransaction.customId) {
-        saveFinancialOverride({ ...fullSavedRecord, customId: editingTransaction.customId });
+      saveFinancialOverride(fullSavedRecord, originalCustomId);
+      if (editingTransaction.id && editingTransaction.id !== fullSavedRecord.id) {
+        saveFinancialOverride(fullSavedRecord, editingTransaction.id);
       }
 
       setFinancialRecords((prev) => {
@@ -19364,25 +19570,47 @@ const AdminFinanceScreen = ({
 
       // Automatically delete any debt records that originated from this financial transaction
       const targetCustomId = targetFin?.customId;
-      const spawnedDebts = debtRecords.filter((d) => {
+      const allCandidateDebts = [...debtRecords, ...(effectiveDebtRecords || [])];
+      const spawnedDebts = allCandidateDebts.filter((d) => {
         const dOriginFin = (((d as any).originFinancialRecordId || "") as string).toLowerCase();
         const dOriginCust = (((d as any).originCustomId || "") as string).toUpperCase();
         const dCustom = (d.customId || "").toUpperCase();
         const dId = (d.id || "").toLowerCase();
+        const dDesc = (d.description || "").toUpperCase();
 
-        return (
+        const isExplicitOrigin =
           (dOriginFin && (dOriginFin === id.toLowerCase() || (targetCustomId && dOriginFin === targetCustomId.toLowerCase()))) ||
           (dOriginCust && targetCustomId && dOriginCust === targetCustomId.toUpperCase()) ||
-          (targetCustomId && d.description && d.description.includes(targetCustomId)) ||
           dId === id.toLowerCase() ||
-          (targetCustomId && dCustom === targetCustomId.toUpperCase()) ||
-          (targetCustomId && dCustom === `HTG-${targetCustomId.toUpperCase()}`) ||
-          dId === `htg-prs-${id.toLowerCase()}`
-        );
+          (targetCustomId && (dCustom === targetCustomId.toUpperCase() || dCustom === `HTG-${targetCustomId.toUpperCase()}`)) ||
+          dId === `htg-prs-${id.toLowerCase()}` ||
+          (dDesc && ((targetCustomId && dDesc.includes(targetCustomId.toUpperCase())) || dDesc.includes(id.toUpperCase())));
+
+        const isDirectLinked =
+          (targetFin?.linkedDebtId && (dId === targetFin.linkedDebtId.toLowerCase() || dCustom === targetFin.linkedDebtId.toUpperCase())) ||
+          (targetFin?.refHutang && (dCustom === targetFin.refHutang.toUpperCase() || dId === targetFin.refHutang.toLowerCase() || (dCustom && targetFin.refHutang.toUpperCase().includes(dCustom))));
+
+        const isExactDuplicateSpawn =
+          Boolean(targetFin) &&
+          d.type === "HUTANG" &&
+          d.amount === targetFin?.amount &&
+          (d.dueDate === targetFin?.date || (d as any).date === targetFin?.date) &&
+          (
+            isExplicitOrigin ||
+            isDirectLinked ||
+            (targetFin?.personalHolder && d.contactName && targetFin.personalHolder.toLowerCase().includes(d.contactName.toLowerCase())) ||
+            (targetFin?.pemilikUangPribadi && d.contactName && targetFin.pemilikUangPribadi.toLowerCase().includes(d.contactName.toLowerCase())) ||
+            (targetFin?.senderName && d.contactName && targetFin.senderName.toLowerCase().includes(d.contactName.toLowerCase())) ||
+            (targetFin?.description && d.title && (targetFin.description.toUpperCase().includes(d.title.toUpperCase()) || d.title.toUpperCase().includes(targetFin.description.toUpperCase())))
+          );
+
+        return isExplicitOrigin || (isDirectLinked && d.type === "HUTANG" && (targetFin?.type === "IN" || (targetFin?.sumberDana || "").includes("PRIBADI"))) || isExactDuplicateSpawn;
       });
 
       for (const d of spawnedDebts) {
         addDeletedDebtOriginId(d.id, d.customId, id, targetCustomId);
+        removeDebtOverride(d.id);
+        if (d.customId) removeDebtOverride(d.customId);
         await dbService.deleteDocument("debtRecords", d.id).catch(() => {});
         if (d.customId && d.customId !== d.id) {
           await dbService.deleteDocument("debtRecords", d.customId).catch(() => {});
@@ -19496,29 +19724,53 @@ const AdminFinanceScreen = ({
       }
 
       // Clean up any debts spawned from the selected transactions
-      const spawnedDebts = debtRecords.filter((d) => {
+      const allCandidateDebts = [...debtRecords, ...(effectiveDebtRecords || [])];
+      const spawnedDebts = allCandidateDebts.filter((d) => {
         const dOriginFin = (((d as any).originFinancialRecordId || "") as string).toLowerCase();
         const dOriginCust = (((d as any).originCustomId || "") as string).toUpperCase();
         const dCustom = (d.customId || "").toUpperCase();
         const dId = (d.id || "").toLowerCase();
+        const dDesc = (d.description || "").toUpperCase();
 
         return selectedIds.some((sId) => {
           const sFin = financialRecords.find((f) => f.id === sId);
           const sCustom = sFin?.customId?.toUpperCase();
-          return (
+
+          const isExplicitOrigin =
             (dOriginFin && (dOriginFin === sId.toLowerCase() || (sCustom && dOriginFin === sCustom.toLowerCase()))) ||
             (dOriginCust && sCustom && dOriginCust === sCustom) ||
-            (sCustom && d.description && d.description.includes(sCustom)) ||
+            (sCustom && dDesc.includes(sCustom)) ||
+            (dDesc && dDesc.includes(sId.toUpperCase())) ||
             dId === sId.toLowerCase() ||
-            (sCustom && dCustom === sCustom) ||
-            (sCustom && dCustom === `HTG-${sCustom}`) ||
-            dId === `htg-prs-${sId.toLowerCase()}`
-          );
+            (sCustom && (dCustom === sCustom || dCustom === `HTG-${sCustom}`)) ||
+            dId === `htg-prs-${sId.toLowerCase()}`;
+
+          const isDirectLinked =
+            (sFin?.linkedDebtId && (dId === sFin.linkedDebtId.toLowerCase() || dCustom === sFin.linkedDebtId.toUpperCase())) ||
+            (sFin?.refHutang && (dCustom === sFin.refHutang.toUpperCase() || dId === sFin.refHutang.toLowerCase() || (dCustom && sFin.refHutang.toUpperCase().includes(dCustom))));
+
+          const isExactDuplicateSpawn =
+            Boolean(sFin) &&
+            d.type === "HUTANG" &&
+            d.amount === sFin?.amount &&
+            (d.dueDate === sFin?.date || (d as any).date === sFin?.date) &&
+            (
+              isExplicitOrigin ||
+              isDirectLinked ||
+              (sFin?.personalHolder && d.contactName && sFin.personalHolder.toLowerCase().includes(d.contactName.toLowerCase())) ||
+              (sFin?.pemilikUangPribadi && d.contactName && sFin.pemilikUangPribadi.toLowerCase().includes(d.contactName.toLowerCase())) ||
+              (sFin?.senderName && d.contactName && sFin.senderName.toLowerCase().includes(d.contactName.toLowerCase())) ||
+              (sFin?.description && d.title && (sFin.description.toUpperCase().includes(d.title.toUpperCase()) || d.title.toUpperCase().includes(sFin.description.toUpperCase())))
+            );
+
+          return isExplicitOrigin || (isDirectLinked && d.type === "HUTANG" && (sFin?.type === "IN" || (sFin?.sumberDana || "").includes("PRIBADI"))) || isExactDuplicateSpawn;
         });
       });
 
       for (const d of spawnedDebts) {
         addDeletedDebtOriginId(d.id, d.customId);
+        removeDebtOverride(d.id);
+        if (d.customId) removeDebtOverride(d.customId);
         await dbService.deleteDocument("debtRecords", d.id).catch(() => {});
         if (d.customId && d.customId !== d.id) {
           await dbService.deleteDocument("debtRecords", d.customId).catch(() => {});
@@ -24682,79 +24934,174 @@ const AdminFinanceScreen = ({
                       )}
 
                       {formData.type === "IN" && (
-                        <div className="space-y-3">
-                          <label className="text-xs md:text-sm font-black text-emerald-600 uppercase tracking-wider ml-1">
-                            Ref Piutang (Koneksi Piutang Proyek / Client)
-                          </label>
-                          {useManualRefPiutang ? (
-                            <div className="space-y-2">
-                              <input
-                                type="text"
-                                value={formData.refPiutang}
-                                onChange={(e) => setFormData({ ...formData, refPiutang: e.target.value })}
-                                className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
-                                placeholder="Ketik manual atau ID Piutang..."
-                              />
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setUseManualRefPiutang(false);
-                                  setFormData({ ...formData, refPiutang: "" });
-                                }}
-                                className="text-xs font-black text-emerald-600 hover:underline ml-1"
-                              >
-                                ← Pilih dari Daftar Piutang
-                              </button>
+                        (formData.category === "Suntikan Modal" ||
+                         (formData.category || "").toLowerCase().includes("suntikan modal") ||
+                         (formData.category || "").toLowerCase().includes("modal")) ? (
+                          <div className="space-y-3 bg-amber-50/70 p-6 md:p-8 rounded-[32px] border-2 border-amber-300 shadow-sm">
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
+                              <label className="text-xs md:text-sm font-black text-amber-900 uppercase tracking-wider ml-1 flex items-center gap-2">
+                                <span>🤝</span> Ref Kreditur / Investor (Suntikan Modal Menjadi Hutang Perusahaan)
+                              </label>
+                              <span className="text-[10px] font-bold text-amber-800 bg-amber-200/80 px-3 py-1 rounded-full uppercase tracking-wider">
+                                Otomatis Tercatat Sebagai Hutang PT
+                              </span>
                             </div>
-                          ) : (
-                            <div className="space-y-2">
-                              <select
-                                value={formData.refPiutang}
-                                onChange={(e) => {
-                                  if (e.target.value === "__MANUAL__") {
-                                    setUseManualRefPiutang(true);
-                                    setFormData({ ...formData, refPiutang: "" });
-                                  } else {
-                                    const titleStr = e.target.value;
-                                    const d = effectiveDebtRecords.find((doc) => doc.title === titleStr && doc.type === "PIUTANG");
-                                    const matchedProj = d?.projectId ? projects.find((p) => p.id === d.projectId) : undefined;
-                                    
-                                    const autoTermin = calculateTerminDetails(d ? d.id : titleStr, d?.projectId || formData.projectId, formData.amount, undefined, formData.date);
 
-                                    setFormData({
-                                      ...formData,
-                                      refPiutang: titleStr,
-                                      linkedDebtId: d ? d.id : formData.linkedDebtId,
-                                      projectId: d?.projectId || formData.projectId,
-                                      category: formData.category || "Pembayaran Proyek",
-                                      terminName: autoTermin.terminName || formData.terminName,
-                                      terminDescription: autoTermin.terminDescription || formData.terminDescription,
-                                      terminPercentage: autoTermin.terminPercentage || formData.terminPercentage,
-                                      terminStatus: autoTermin.terminStatus || formData.terminStatus,
-                                      terminNotes: autoTermin.terminNotes || formData.terminNotes,
-                                      terminPaymentDate: autoTermin.terminPaymentDate || formData.terminPaymentDate || formData.date,
-                                    });
-                                  }
-                                }}
-                                className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none cursor-pointer transition-all text-emerald-700"
-                              >
-                                <option value="">-- Hubungkan Piutang --</option>
-                                {effectiveDebtRecords
-                                  .filter((d) => d.type === "PIUTANG")
-                                  .map((debt) => {
-                                    const sched = getScheduleForRecord(debt, projects, financialRecords);
-                                    const left = Math.max(0, sched.contractValue - sched.totalPaid);
-                                    return (
-                                      <option key={debt.id} value={debt.title}>
-                                        [{debt.customId || "PROJ"}] {debt.title} - {debt.contactName} (Nilai: {formatCurrencyIDR(sched.contractValue)} | Sisa: {formatCurrencyIDR(left)}) {left === 0 ? "✅ LUNAS" : ""}
+                            {useManualRefHutang ? (
+                              <div className="space-y-3">
+                                <input
+                                  type="text"
+                                  value={formData.refHutang}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setFormData((prev) => ({
+                                      ...prev,
+                                      refHutang: val,
+                                      senderName: val,
+                                    }));
+                                  }}
+                                  className="w-full px-6 py-5 md:py-6 bg-white border border-amber-300 rounded-3xl text-sm md:text-base font-bold text-slate-800 outline-none focus:ring-4 focus:ring-amber-500/10 shadow-sm"
+                                  placeholder="Ketik nama kreditur / investor pemberi suntikan modal..."
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setUseManualRefHutang(false);
+                                    setFormData((prev) => ({ ...prev, refHutang: "", linkedDebtId: "", senderName: "" }));
+                                  }}
+                                  className="text-xs font-black text-amber-800 hover:underline ml-1"
+                                >
+                                  ← Pilih dari Daftar Kreditur Terdaftar
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="space-y-3">
+                                <select
+                                  value={formData.linkedDebtId || (formData.refHutang ? "__CUSTOM__" : "")}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === "__MANUAL__") {
+                                      setUseManualRefHutang(true);
+                                      setFormData((prev) => ({ ...prev, refHutang: "", linkedDebtId: "", senderName: "" }));
+                                    } else if (val) {
+                                      const matchedDebt = effectiveDebtRecords.find((d) => d.id === val || d.customId === val);
+                                      const creditorName = matchedDebt ? matchedDebt.contactName : val;
+                                      const refTitle = matchedDebt ? `${matchedDebt.customId || matchedDebt.id} - ${matchedDebt.contactName} (${matchedDebt.title})` : val;
+                                      setFormData((prev) => ({
+                                        ...prev,
+                                        linkedDebtId: matchedDebt ? matchedDebt.id : "",
+                                        refHutang: refTitle,
+                                        senderName: creditorName,
+                                      }));
+                                    } else {
+                                      setFormData((prev) => ({ ...prev, linkedDebtId: "", refHutang: "", senderName: "" }));
+                                    }
+                                  }}
+                                  className="w-full px-6 py-5 md:py-6 bg-white border border-amber-300 rounded-3xl text-sm md:text-base font-bold text-slate-800 outline-none focus:ring-4 focus:ring-amber-500/10 cursor-pointer shadow-sm"
+                                >
+                                  <option value="">-- Hubungkan Kreditur / Investor Terdaftar --</option>
+                                  {effectiveDebtRecords
+                                    .filter((d) => d.type === "HUTANG")
+                                    .map((debt) => (
+                                      <option key={debt.id} value={debt.id}>
+                                        [{debt.customId || "HTG"}] {debt.contactName} — {debt.title} (Rp {debt.amount.toLocaleString("id-ID")})
                                       </option>
-                                    );
-                                  })}
-                                <option value="__MANUAL__">+ Input Manual Custom...</option>
-                              </select>
-                            </div>
-                          )}
-                        </div>
+                                    ))}
+                                  <option value="__MANUAL__">+ Ketik Nama Kreditur / Investor Baru...</option>
+                                </select>
+                                <div className="flex items-center justify-between">
+                                  <p className="text-[11px] font-semibold text-amber-800 ml-1">
+                                    {formData.senderName ? `Pemberi Modal: ${formData.senderName}` : "Pilih kreditur atau ketik nama baru untuk otomatis mencatat hutang PT atas modal yang disuntikkan."}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setUseManualRefHutang(true);
+                                      setFormData((prev) => ({ ...prev, refHutang: "", linkedDebtId: "", senderName: "" }));
+                                    }}
+                                    className="text-xs font-black text-amber-800 hover:text-amber-950 transition-all cursor-pointer"
+                                  >
+                                    + Ketik Nama Baru
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <label className="text-xs md:text-sm font-black text-emerald-600 uppercase tracking-wider ml-1">
+                              Ref Piutang (Koneksi Piutang Proyek / Client)
+                            </label>
+                            {useManualRefPiutang ? (
+                              <div className="space-y-2">
+                                <input
+                                  type="text"
+                                  value={formData.refPiutang}
+                                  onChange={(e) => setFormData({ ...formData, refPiutang: e.target.value })}
+                                  className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
+                                  placeholder="Ketik manual atau ID Piutang..."
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setUseManualRefPiutang(false);
+                                    setFormData({ ...formData, refPiutang: "" });
+                                  }}
+                                  className="text-xs font-black text-emerald-600 hover:underline ml-1"
+                                >
+                                  ← Pilih dari Daftar Piutang
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <select
+                                  value={formData.refPiutang}
+                                  onChange={(e) => {
+                                    if (e.target.value === "__MANUAL__") {
+                                      setUseManualRefPiutang(true);
+                                      setFormData({ ...formData, refPiutang: "" });
+                                    } else {
+                                      const titleStr = e.target.value;
+                                      const d = effectiveDebtRecords.find((doc) => doc.title === titleStr && doc.type === "PIUTANG");
+                                      const matchedProj = d?.projectId ? projects.find((p) => p.id === d.projectId) : undefined;
+                                      
+                                      const autoTermin = calculateTerminDetails(d ? d.id : titleStr, d?.projectId || formData.projectId, formData.amount, undefined, formData.date);
+
+                                      setFormData({
+                                        ...formData,
+                                        refPiutang: titleStr,
+                                        linkedDebtId: d ? d.id : formData.linkedDebtId,
+                                        projectId: d?.projectId || formData.projectId,
+                                        category: formData.category || "Pembayaran Proyek",
+                                        terminName: autoTermin.terminName || formData.terminName,
+                                        terminDescription: autoTermin.terminDescription || formData.terminDescription,
+                                        terminPercentage: autoTermin.terminPercentage || formData.terminPercentage,
+                                        terminStatus: autoTermin.terminStatus || formData.terminStatus,
+                                        terminNotes: autoTermin.terminNotes || formData.terminNotes,
+                                        terminPaymentDate: autoTermin.terminPaymentDate || formData.terminPaymentDate || formData.date,
+                                      });
+                                    }
+                                  }}
+                                  className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none cursor-pointer transition-all text-emerald-700"
+                                >
+                                  <option value="">-- Hubungkan Piutang --</option>
+                                  {effectiveDebtRecords
+                                    .filter((d) => d.type === "PIUTANG")
+                                    .map((debt) => {
+                                      const sched = getScheduleForRecord(debt, projects, financialRecords);
+                                      const left = Math.max(0, sched.contractValue - sched.totalPaid);
+                                      return (
+                                        <option key={debt.id} value={debt.title}>
+                                          [{debt.customId || "PROJ"}] {debt.title} - {debt.contactName} (Nilai: {formatCurrencyIDR(sched.contractValue)} | Sisa: {formatCurrencyIDR(left)}) {left === 0 ? "✅ LUNAS" : ""}
+                                        </option>
+                                      );
+                                    })}
+                                  <option value="__MANUAL__">+ Input Manual Custom...</option>
+                                </select>
+                              </div>
+                            )}
+                          </div>
+                        )
                       )}
 
                       {formData.type === "OUT" && (
@@ -25151,6 +25498,92 @@ const AdminFinanceScreen = ({
                             * Nama pihak, klien, atau instansi yang mentransfer / menyetorkan dana pemasukan ini.
                           </p>
                         </div>
+                      )}
+
+                      {/* Input Ref Kreditur / Investor untuk Suntikan Modal Pemasukan */}
+                      {editFormData.type === "IN" && (
+                        (editFormData.category === "Suntikan Modal" ||
+                         (editFormData.category || "").toLowerCase().includes("suntikan modal") ||
+                         (editFormData.category || "").toLowerCase().includes("modal")) && (
+                          <div className="col-span-1 md:col-span-2 space-y-3 bg-amber-50/70 p-6 md:p-8 rounded-[32px] border-2 border-amber-300 shadow-sm">
+                            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 border-b border-amber-200/60 pb-3">
+                              <label className="text-xs md:text-sm font-black text-amber-900 uppercase tracking-wider ml-1 flex items-center gap-2">
+                                <span>🤝</span> Ref Kreditur / Investor (Suntikan Modal Menjadi Hutang Perusahaan)
+                              </label>
+                              <span className="text-[10px] font-bold text-amber-800 bg-amber-200/80 px-3 py-1 rounded-full uppercase tracking-wider">
+                                Otomatis Tercatat Sebagai Hutang PT
+                              </span>
+                            </div>
+
+                            {useManualRefHutangEdit ? (
+                              <div className="space-y-3">
+                                <input
+                                  type="text"
+                                  value={editFormData.refHutang}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setEditFormData((prev) => ({
+                                      ...prev,
+                                      refHutang: val,
+                                      senderName: val,
+                                    }));
+                                  }}
+                                  className="w-full px-6 py-5 md:py-6 bg-white border border-amber-300 rounded-3xl text-sm md:text-base font-bold text-slate-800 outline-none focus:ring-4 focus:ring-amber-500/10 shadow-sm"
+                                  placeholder="Ketik nama kreditur / investor pemberi suntikan modal..."
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setUseManualRefHutangEdit(false);
+                                    setEditFormData((prev) => ({ ...prev, refHutang: "", linkedDebtId: "", senderName: "" }));
+                                  }}
+                                  className="text-xs font-black text-amber-800 hover:underline ml-1"
+                                >
+                                  ← Pilih dari Daftar Kreditur Terdaftar
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="space-y-3">
+                                <select
+                                  value={editFormData.linkedDebtId || (editFormData.refHutang ? "__CUSTOM__" : "")}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    if (val === "__MANUAL__") {
+                                      setUseManualRefHutangEdit(true);
+                                      setEditFormData((prev) => ({ ...prev, refHutang: "", linkedDebtId: "", senderName: "" }));
+                                    } else if (val) {
+                                      const matchedDebt = effectiveDebtRecords.find((d) => d.id === val || d.customId === val);
+                                      const creditorName = matchedDebt ? matchedDebt.contactName : val;
+                                      const refTitle = matchedDebt ? `${matchedDebt.customId || matchedDebt.id} - ${matchedDebt.contactName} (${matchedDebt.title})` : val;
+                                      setEditFormData((prev) => ({
+                                        ...prev,
+                                        linkedDebtId: matchedDebt ? matchedDebt.id : "",
+                                        refHutang: refTitle,
+                                        senderName: creditorName,
+                                      }));
+                                    } else {
+                                      setEditFormData((prev) => ({ ...prev, linkedDebtId: "", refHutang: "", senderName: "" }));
+                                    }
+                                  }}
+                                  className="w-full px-6 py-5 md:py-6 bg-white border border-amber-300 rounded-3xl text-sm md:text-base font-bold text-slate-800 outline-none focus:ring-4 focus:ring-amber-500/10 cursor-pointer shadow-sm"
+                                >
+                                  <option value="">-- Pilih Kreditur / Investor Terdaftar --</option>
+                                  {effectiveDebtRecords
+                                    .filter((d) => d.type === "HUTANG")
+                                    .map((d) => (
+                                      <option key={d.id} value={d.id}>
+                                        {d.customId || d.id} - {d.contactName} ({d.title}) - Sisa: Rp {(d.amount - ((d.payments || []).reduce((s, p) => s + p.amount, 0))).toLocaleString("id-ID")}
+                                      </option>
+                                    ))}
+                                  <option value="__MANUAL__">+ Ketik Nama Kreditur / Investor Baru...</option>
+                                </select>
+                              </div>
+                            )}
+                            <p className="text-[11px] font-semibold text-amber-800/90 ml-2">
+                              * Pemasukan berupa suntikan modal secara otomatis menambah / membentuk kewajiban Hutang PT terhadap kreditur/investor di menu Hutang Piutang.
+                            </p>
+                          </div>
+                        )
                       )}
 
                       {/* Dynamic Kasbon fields */}
@@ -26105,7 +26538,11 @@ const AdminFinanceScreen = ({
                         </div>
                       )}
 
-                      {editFormData.type === "IN" && (
+                      {editFormData.type === "IN" && !(
+                        editFormData.category === "Suntikan Modal" ||
+                        (editFormData.category || "").toLowerCase().includes("suntikan modal") ||
+                        (editFormData.category || "").toLowerCase().includes("modal")
+                      ) && (
                         <div className="space-y-3">
                           <label className="text-xs md:text-sm font-black text-emerald-600 uppercase tracking-wider ml-1">
                             Ref Piutang (Koneksi Piutang Proyek / Client)
@@ -30340,7 +30777,7 @@ export default function App() {
           const k1 = (r.customId || "").trim().toUpperCase();
           const k2 = (r.id || "").trim().toUpperCase();
           const ov = overrides[k1] || overrides[k2];
-          return ov ? { ...r, ...ov, category: ov.category || r.category } : r;
+          return ov ? { ...r, ...ov, category: ov.category || r.category, date: ov.date || r.date } : r;
         });
       }
       if (records.length > 0) {
@@ -30377,9 +30814,42 @@ export default function App() {
   const [hasAutoSeeded, setHasAutoSeeded] = useState(false);
   const [debtRecords, setDebtRecords] = useState<DebtRecord[]>(() => {
     try {
+      const debtOv = getDebtOverrides();
       const cached = autoBackupService.getPersistentData();
+      let records: DebtRecord[] = [];
       if (cached && Array.isArray(cached.debtRecords) && cached.debtRecords.length > 0) {
-        return cached.debtRecords.map((d: any) => {
+        records = cached.debtRecords;
+      } else {
+        const history = autoBackupService.getAvailableBackups();
+        for (const h of history) {
+          if (Array.isArray(h.data?.debtRecords) && h.data.debtRecords.length > 0) {
+            records = h.data.debtRecords;
+            break;
+          }
+        }
+        if (records.length === 0 && Array.isArray(seedDebtRecords)) {
+          records = [...seedDebtRecords] as DebtRecord[];
+        }
+      }
+
+      // Merge user debt overrides immediately so refresh never loses user edits (e.g. date changes)
+      if (records.length > 0 && Object.keys(debtOv).length > 0) {
+        records = records.map((d: any) => {
+          const k1 = (d.customId || "").trim().toUpperCase();
+          const k2 = (d.id || "").trim().toUpperCase();
+          const ov = debtOv[k1] || debtOv[k2];
+          return ov ? { ...d, ...ov, dueDate: ov.dueDate || d.dueDate, isUserEdited: true } : d;
+        });
+      }
+
+      const deletedOrigins = getDeletedDebtOriginIds();
+      return records
+        .filter((d) => {
+          const k1 = (d.customId || "").trim().toLowerCase();
+          const k2 = (d.id || "").trim().toLowerCase();
+          return !deletedOrigins.has(k1) && !deletedOrigins.has(k2);
+        })
+        .map((d: any) => {
           if (d.customId === "HTG-003" || d.id === "HTG-003") {
             const seedDodo = (seedDebtRecords || []).find((s) => s.customId === "HTG-003" || s.id === "HTG-003");
             if (!d.payments || d.payments.length < (seedDodo?.payments || []).length) {
@@ -30388,23 +30858,8 @@ export default function App() {
           }
           return d;
         });
-      }
-      const history = autoBackupService.getAvailableBackups();
-      for (const h of history) {
-        if (Array.isArray(h.data?.debtRecords) && h.data.debtRecords.length > 0) {
-          return h.data.debtRecords.map((d: any) => {
-            if (d.customId === "HTG-003" || d.id === "HTG-003") {
-              const seedDodo = (seedDebtRecords || []).find((s) => s.customId === "HTG-003" || s.id === "HTG-003");
-              if (!d.payments || d.payments.length < (seedDodo?.payments || []).length) {
-                return { ...d, status: "PARTIAL", payments: seedDodo?.payments || [] };
-              }
-            }
-            return d;
-          });
-        }
-      }
     } catch (_) {}
-    return [];
+    return (seedDebtRecords || []) as DebtRecord[];
   });
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
@@ -35451,13 +35906,18 @@ export default function App() {
               const k1 = (r.customId || "").trim().toUpperCase();
               const k2 = (r.id || "").trim().toUpperCase();
               const ov = loadedOverrides[k1] || loadedOverrides[k2];
-              if (ov && ov.category && ov.category !== r.category) {
+              if (ov) {
                 hasChanges = true;
-                return { ...r, ...ov, category: ov.category, isUserEdited: true };
-              }
-              if (ov && (ov.projectId !== undefined || ov.amount !== undefined)) {
-                hasChanges = true;
-                return { ...r, ...ov, isUserEdited: true };
+                return {
+                  ...r,
+                  ...ov,
+                  id: ov.id || r.id,
+                  customId: ov.customId || r.customId,
+                  date: ov.date || r.date,
+                  category: ov.category || r.category,
+                  amount: ov.amount !== undefined ? ov.amount : r.amount,
+                  isUserEdited: true,
+                };
               }
               return r;
             });
@@ -35466,10 +35926,36 @@ export default function App() {
                 updated,
                 debtRecords,
                 projects,
-                "Sinkronisasi override kategori dari penyimpanan permanen"
+                "Sinkronisasi override dari penyimpanan permanen"
               );
             }
             return hasChanges ? updated : prev;
+          });
+        }
+
+        const debtOv = getDebtOverrides();
+        if (debtOv && Object.keys(debtOv).length > 0) {
+          setDebtRecords((prev) => {
+            let debtChanged = false;
+            const nextDebts = prev.map((d) => {
+              const k1 = (d.customId || "").trim().toUpperCase();
+              const k2 = (d.id || "").trim().toUpperCase();
+              const ov = debtOv[k1] || debtOv[k2];
+              if (ov) {
+                debtChanged = true;
+                return {
+                  ...d,
+                  ...ov,
+                  dueDate: ov.dueDate || d.dueDate,
+                  amount: ov.amount !== undefined ? ov.amount : d.amount,
+                  title: ov.title || d.title,
+                  contactName: ov.contactName || d.contactName,
+                  isUserEdited: true,
+                };
+              }
+              return d;
+            });
+            return debtChanged ? nextDebts : prev;
           });
         }
       })
@@ -35582,6 +36068,7 @@ export default function App() {
         }
         if (Array.isArray(cloudData.debtRecords) && cloudData.debtRecords.length > 0) {
           const deletedDebtIds = getDeletedDebtOriginIds();
+          const debtOv = getDebtOverrides();
           setDebtRecords((prev) => {
             const dMap = new Map<string, DebtRecord>();
             prev.forEach((d) => {
@@ -35592,7 +36079,13 @@ export default function App() {
               const k = (cd.customId || cd.id || "").toUpperCase();
               if (k && !deletedDebtIds.has(k.toLowerCase())) {
                 const ex = dMap.get(k);
-                dMap.set(k, ex ? { ...ex, ...cd } : cd);
+                const ov = debtOv[k] || (cd.id ? debtOv[cd.id.toUpperCase()] : undefined);
+                const merged = ex ? { ...cd, ...ex, ...(ov || {}) } : { ...cd, ...(ov || {}) };
+                if (ov || (ex && (ex as any).isUserEdited)) {
+                  merged.isUserEdited = true;
+                  if (ov?.dueDate || ex?.dueDate) merged.dueDate = ov?.dueDate || ex?.dueDate;
+                }
+                dMap.set(k, merged);
               }
             });
             return Array.from(dMap.values());
@@ -35634,6 +36127,8 @@ export default function App() {
                   ...cf,
                   ...deduped[exIdx],
                   ...(userEdit || {}),
+                  date: userEdit?.date || deduped[exIdx].date || cf.date,
+                  customId: userEdit?.customId || deduped[exIdx].customId || cf.customId,
                   category: userEdit?.category || deduped[exIdx].category || cf.category,
                   projectId: userEdit?.projectId !== undefined ? userEdit.projectId : (deduped[exIdx].projectId || cf.projectId || ""),
                   referenceId: userEdit?.referenceId !== undefined ? userEdit.referenceId : (deduped[exIdx].referenceId || cf.referenceId || ""),
@@ -35645,7 +36140,7 @@ export default function App() {
               } else if (!((cfId && seenIds.has(cfId)) || (cfCust && seenCustomIds.has(cfCust)))) {
                 if (cfId) seenIds.add(cfId);
                 if (cfCust) seenCustomIds.add(cfCust);
-                deduped.push(userEdit ? { ...cf, ...userEdit, category: userEdit.category || cf.category, isUserEdited: true } : cf);
+                deduped.push(userEdit ? { ...cf, ...userEdit, date: userEdit.date || cf.date, customId: userEdit.customId || cf.customId, category: userEdit.category || cf.category, isUserEdited: true } : cf);
               }
             });
             return deduped;
@@ -35888,6 +36383,7 @@ export default function App() {
             ...(userEdit || {}),
             id: finalId,
             customId: finalCustomId,
+            date: userEdit?.date || fromLocal?.date || fromDb?.date || seed.date || "",
             category: resolvedCategory,
             isUserEdited: Boolean(userEdit?.isUserEdited || fromLocal?.isUserEdited || (resolvedCategory !== seed.category)),
             projectId: userEdit?.projectId !== undefined
@@ -36018,6 +36514,7 @@ export default function App() {
                 ...(p && p.isUserEdited ? p : {}),
                 ...(ov || {}),
                 category: category || item.category,
+                date: ov?.date || (p && p.isUserEdited ? p.date : undefined) || item.date,
                 isUserEdited: !!isUserEdited,
               };
             }
@@ -36048,6 +36545,8 @@ export default function App() {
             if (k2) localDebtMap.set(k2, item);
           });
         }
+
+        const debtOverrides = getDebtOverrides();
 
         // 1. Data resmi hutang dan piutang akhir Juli dari berkas ZIP (24 catatan)
         (seedDebtRecords || []).forEach((seed) => {
@@ -36081,14 +36580,24 @@ export default function App() {
             return (rawId && iId === rawId) || (rawCustomId && iCustom === rawCustomId) || (fallbackKey && (iId === fallbackKey || iCustom === fallbackKey));
           });
           const fromLocal = localDebtMap.get(rawCustomId) || localDebtMap.get(rawId) || localDebtMap.get(fallbackKey);
+          const userEdit = debtOverrides[rawCustomId] || debtOverrides[rawId] || debtOverrides[fallbackKey];
           const source = fromDb || fromLocal;
-          // Local edits take precedence over stale DB
-          const baseRecord = (source ? { ...seed, ...(fromDb || {}), ...(fromLocal || {}) } : seed) as DebtRecord;
+          // User explicit edits have absolute precedence
+          const baseRecord = (source ? { ...seed, ...(fromDb || {}), ...(fromLocal || {}), ...(userEdit || {}) } : { ...seed, ...(userEdit || {}) }) as DebtRecord;
+          if (userEdit) {
+            baseRecord.isUserEdited = true;
+            if (userEdit.dueDate) baseRecord.dueDate = userEdit.dueDate;
+            if (userEdit.amount) baseRecord.amount = userEdit.amount;
+            if (userEdit.title) baseRecord.title = userEdit.title;
+            if (userEdit.contactName) baseRecord.contactName = userEdit.contactName;
+            if (userEdit.description) baseRecord.description = userEdit.description;
+            if (userEdit.type) baseRecord.type = userEdit.type;
+          }
           if (baseRecord.type === "HUTANG") {
             // Jika data belum pernah diedit user, data hutang & pembayaran awal mentok di 1 Juli 2026.
             // Khusus Pak Dodo (HTG-003), pembayaran yang terekam tetap dipertahankan.
             // Jika user sudah mengedit/menambahkan pembayaran di local atau db, pertahankan hasil editan user.
-            if (!fromLocal?.payments && !fromDb?.payments) {
+            if (!fromLocal?.payments && !fromDb?.payments && !userEdit?.payments) {
               if (rawCustomId === "HTG-003" || rawId === "HTG-003") {
                 // Pertahankan pembayaran yang terekam untuk Pak Dodo
               } else {
@@ -36155,16 +36664,20 @@ export default function App() {
           }
 
           const localMatch = localDebtMapByKey.get(rawCustomId) || localDebtMapByKey.get(rawId) || localDebtMapByKey.get(fallbackKey);
-          const mergedDebt: DebtRecord = localMatch ? {
+          const userEdit = debtOverrides[rawCustomId] || debtOverrides[rawId] || debtOverrides[fallbackKey];
+          const mergedDebt: DebtRecord = {
             ...item,
-            ...localMatch,
-            originFinancialRecordId: item.originFinancialRecordId || localMatch.originFinancialRecordId || (localMatch as any).originFinancialRecordId,
-            originCustomId: item.originCustomId || localMatch.originCustomId || (localMatch as any).originCustomId,
-            amount: (localMatch.amount && localMatch.amount > 0) ? localMatch.amount : item.amount,
-            contactName: localMatch.contactName || item.contactName,
-            title: localMatch.title || item.title,
-            description: localMatch.description || item.description,
-          } : item;
+            ...(localMatch || {}),
+            ...(userEdit || {}),
+            isUserEdited: Boolean(userEdit?.isUserEdited || localMatch?.isUserEdited || item.isUserEdited),
+            originFinancialRecordId: item.originFinancialRecordId || localMatch?.originFinancialRecordId || (localMatch as any)?.originFinancialRecordId,
+            originCustomId: item.originCustomId || localMatch?.originCustomId || (localMatch as any)?.originCustomId,
+            amount: userEdit?.amount !== undefined ? userEdit.amount : ((localMatch?.amount && localMatch.amount > 0) ? localMatch.amount : item.amount),
+            contactName: userEdit?.contactName || localMatch?.contactName || item.contactName,
+            title: userEdit?.title || localMatch?.title || item.title,
+            description: userEdit?.description || localMatch?.description || item.description,
+            dueDate: userEdit?.dueDate || localMatch?.dueDate || item.dueDate,
+          };
           deduped.push(mergedDebt);
         });
 
@@ -36192,10 +36705,37 @@ export default function App() {
             seenIds.add(fallbackKey);
             seenCustomIds.add(fallbackKey);
           }
-          deduped.push(ld);
+          const userEdit = debtOverrides[rawCustomId] || debtOverrides[rawId] || debtOverrides[fallbackKey];
+          const finalLd = userEdit ? { ...ld, ...userEdit, isUserEdited: true } : ld;
+          deduped.push(finalLd);
         });
 
-        setDebtRecords(deduped);
+        setDebtRecords((prev) => {
+          const prevMap = new Map<string, DebtRecord>();
+          (prev || []).forEach((d) => {
+            const k1 = (d.customId || "").trim().toUpperCase();
+            const k2 = (d.id || "").trim().toUpperCase();
+            if (k1) prevMap.set(k1, d);
+            if (k2) prevMap.set(k2, d);
+          });
+          return deduped.map((item) => {
+            const k1 = (item.customId || "").trim().toUpperCase();
+            const k2 = (item.id || "").trim().toUpperCase();
+            const ov = debtOverrides[k1] || debtOverrides[k2];
+            const p = prevMap.get(k1) || prevMap.get(k2);
+            if (ov || (p && (p as any).isUserEdited)) {
+              return {
+                ...item,
+                ...(p && (p as any).isUserEdited ? p : {}),
+                ...(ov || {}),
+                dueDate: ov?.dueDate || (p && (p as any).isUserEdited ? p.dueDate : undefined) || item.dueDate,
+                amount: ov?.amount !== undefined ? ov.amount : ((p && (p as any).isUserEdited && p.amount) ? p.amount : item.amount),
+                isUserEdited: true,
+              };
+            }
+            return item;
+          });
+        });
       },
       [],
     );

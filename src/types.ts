@@ -422,6 +422,8 @@ export interface DebtRecord {
   terms?: Term[];
   originFinancialRecordId?: string;
   originCustomId?: string;
+  isUserEdited?: boolean;
+  updatedAt?: string;
 }
 
 export interface Assignment {
