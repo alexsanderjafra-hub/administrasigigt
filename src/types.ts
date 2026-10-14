@@ -204,6 +204,7 @@ export interface QuotationItem {
   unit: string;
   unitPrice: number;
   total: number;
+  specifications?: { key: string; value: string }[] | string;
 }
 
 export interface Quotation {
@@ -222,9 +223,25 @@ export interface Quotation {
   userId?: string;
   createdAt: number;
   boqProjectId?: string;
-  status?: 'Draft' | 'Terkirim' | 'Disetujui' | 'Ditolak' | 'Jadi Proyek';
   attachmentName?: string;
   attachmentBase64?: string;
+  status?: 'Draft' | 'Terkirim' | 'Disetujui' | 'Ditolak' | 'Jadi Proyek';
+  quotationType?: 'Barang dan Jasa' | 'Barang' | 'Jasa';
+  includeShipping?: boolean;
+  shippingCost?: number;
+  includeServiceFee?: boolean;
+  serviceFee?: number;
+  includePPN?: boolean;
+  taxRate?: number;
+  compName?: string;
+  compAddress?: string;
+  compLogoUrl?: string;
+  digitalSignatureUrl?: string;
+  includeDiscount?: boolean;
+  discountType?: 'rupiah' | 'percent';
+  discountVal?: number;
+  discountAmount?: number;
+  paymentTerms?: string;
 }
 
 export interface AuditLog {

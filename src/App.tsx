@@ -7438,15 +7438,19 @@ const getScheduleForRecord = (
           existingSlot.date = f.date;
         }
         existingSlot.amount = Math.min(effectivePaymentAmount, contractVal);
+        if (f.terminName && !(existingSlot as any).terminName) {
+          (existingSlot as any).terminName = f.terminName;
+        }
       } else {
         allPayments.push({
           id: f.id || f.customId || Math.random().toString(36).substr(2, 9),
           amount: Math.min(effectivePaymentAmount, contractVal),
           date: f.date,
-          note: f.description || (isPiutang ? "Penerimaan Piutang / Termin Proyek" : "Pembayaran Hutang"),
+          note: f.terminName ? `${f.terminName}${f.description ? ` - ${f.description}` : ""}` : (f.description || (isPiutang ? "Penerimaan Piutang / Termin Proyek" : "Pembayaran Hutang")),
+          terminName: f.terminName,
           financialRecordId: f.id || f.customId,
           recordedBy: f.recordedBy || f.senderName || f.personalHolder || "Admin Keuangan",
-        });
+        } as any);
       }
     }
   });
@@ -12862,6 +12866,7 @@ const AdminDebtScreen = ({
             source: string;
             refNumber?: string;
             status: string;
+            terminName?: string;
           };
 
           const unifiedPayments: UnifiedPaymentItem[] = [];
@@ -12885,6 +12890,8 @@ const AdminDebtScreen = ({
             const pAmt = Math.min(p.amount || 0, contractValue);
             if (isAlreadyAdded(pAmt, p.date, p.financialRecordId || p.id)) return;
             const recorderName = resolveHumanRecorder(p.recordedBy);
+            const linkedFin = p.financialRecordId ? financialRecords.find((f) => f.id === p.financialRecordId || f.customId === p.financialRecordId) : null;
+            const termName = (p as any).terminName || linkedFin?.terminName;
             unifiedPayments.push({
               id: p.id || `pay-${idx}`,
               date: p.date || rec.dueDate || "-",
@@ -12894,6 +12901,7 @@ const AdminDebtScreen = ({
               source: p.financialRecordId ? "Buku Kas PT" : "Pembayaran Kas PT",
               refNumber: p.financialRecordId,
               status: "LUNAS",
+              terminName: termName,
             });
           });
 
@@ -12923,11 +12931,12 @@ const AdminDebtScreen = ({
               id: f.id,
               date: f.date,
               amount: payAmt,
-              note: f.description || (isPiutang ? "Pembayaran Termin / DP Proyek" : "Pembayaran Hutang"),
+              note: f.terminName ? `${f.terminName}${f.description ? ` - ${f.description}` : ""}` : (f.description || (isPiutang ? "Pembayaran Termin / DP Proyek" : "Pembayaran Hutang")),
               recordedBy: recorderName,
               source: f.paymentMethod ? `Kas PT (${f.paymentMethod})` : "Buku Kas PT",
               refNumber: f.customId || f.id,
               status: "LUNAS",
+              terminName: f.terminName,
             });
           });
 
@@ -12936,6 +12945,8 @@ const AdminDebtScreen = ({
             const apAmt = Math.min(ap.amount || 0, contractValue);
             if (isAlreadyAdded(apAmt, ap.date, ap.financialRecordId || ap.id)) return;
             const recorderName = resolveHumanRecorder(ap.recordedBy);
+            const linkedFin = ap.financialRecordId ? financialRecords.find((f) => f.id === ap.financialRecordId || f.customId === ap.financialRecordId) : null;
+            const termName = (ap as any).terminName || linkedFin?.terminName;
             unifiedPayments.push({
               id: ap.id || `sched-pay-${idx}`,
               date: ap.date || rec.dueDate || "-",
@@ -12945,6 +12956,7 @@ const AdminDebtScreen = ({
               source: ap.financialRecordId ? "Buku Kas PT" : "Pembayaran Kas PT",
               refNumber: ap.financialRecordId || ap.id,
               status: "LUNAS",
+              terminName: termName,
             });
           });
 
@@ -13338,6 +13350,11 @@ const AdminDebtScreen = ({
                                 {formatCurrencyIDR(item.amount)}
                               </td>
                               <td className="p-3.5 font-medium text-slate-800 max-w-xs">
+                                {item.terminName && (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-wider border border-emerald-200 mb-1">
+                                    <span>🔢</span> {item.terminName}
+                                  </span>
+                                )}
                                 <p className="font-bold text-slate-900">{item.note}</p>
                                 {item.refNumber && (
                                   <p className="text-[10px] font-mono text-indigo-600 mt-0.5">
@@ -14193,7 +14210,16 @@ const AdminDebtScreen = ({
                                   <td className="p-3 text-right font-mono text-emerald-600 font-black">
                                     {formatCurrencyIDR(pym.amount || 0)}
                                   </td>
-                                  <td className="p-3 text-slate-600">{pym.note || "Pembayaran Piutang / DP / Cicilan"}</td>
+                                  <td className="p-3 text-slate-700">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      {pym.terminName && (
+                                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-wider border border-emerald-200">
+                                          <span>🔢</span> {pym.terminName}
+                                        </span>
+                                      )}
+                                      <span className="font-bold text-slate-800">{pym.note || "Pembayaran Piutang / DP / Cicilan"}</span>
+                                    </div>
+                                  </td>
                                   <td className="p-3 pr-5 text-slate-400 text-[11px]">{pym.recordedBy || "Admin Keuangan"}</td>
                                 </tr>
                               ))
@@ -14691,6 +14717,22 @@ const AdminDebtScreen = ({
                                               {rec.description}
                                             </p>
                                           )}
+                                          {(() => {
+                                            const payments = (sched.allPayments || []).filter((p: any) => p.recordedBy !== "Sistem");
+                                            if (payments.length === 0) return null;
+                                            return (
+                                              <div className="flex flex-wrap items-center gap-1.5 mt-1.5">
+                                                {payments.map((p: any, pIdx: number) => {
+                                                  const label = p.terminName || (p.note ? p.note.split("-")[0]?.trim() : `Pembayaran Ke ${pIdx + 1}`);
+                                                  return (
+                                                    <span key={pIdx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-50 border border-emerald-200 text-emerald-800 font-extrabold text-[9.5px]">
+                                                      <span>✓</span> {label}
+                                                    </span>
+                                                  );
+                                                })}
+                                              </div>
+                                            );
+                                          })()}
                                         </div>
                                       </td>
                                       <td className="p-3.5">
@@ -15290,9 +15332,23 @@ const AdminDebtScreen = ({
                                       </span>
                                     </td>
                                     <td className="p-3.5">
-                                      <span className="text-slate-700 text-[11px]">{fin.category || "-"}</span>
+                                      <div className="flex flex-col gap-1">
+                                        <span className="text-slate-700 text-[11px] font-bold">{fin.category || "-"}</span>
+                                        {fin.terminName && (
+                                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-black uppercase tracking-wider border border-emerald-200 w-fit">
+                                            <span>🔢</span> {fin.terminName}
+                                          </span>
+                                        )}
+                                      </div>
                                     </td>
-                                    <td className="p-3.5 text-slate-600 text-[11px] max-w-sm">{fin.description || "-"}</td>
+                                    <td className="p-3.5 text-slate-600 text-[11px] max-w-sm">
+                                      {fin.terminName && !fin.description?.toUpperCase().includes(fin.terminName.toUpperCase()) && (
+                                        <span className="inline-block mr-1.5 px-2 py-0.5 rounded bg-emerald-50 text-emerald-800 text-[10px] font-black border border-emerald-200 mb-0.5">
+                                          {fin.terminName}
+                                        </span>
+                                      )}
+                                      <span className="font-bold text-slate-800">{fin.description || "-"}</span>
+                                    </td>
                                     <td className="p-3.5 text-slate-500 text-[11px]">
                                       {getDisplaySumberUang(fin)}
                                     </td>
@@ -15995,6 +16051,22 @@ const AdminFinanceScreen = ({
   const effectiveDebtRecords = useMemo(() => {
     return getEffectiveDebtRecords(debtRecords, projects, financialRecords);
   }, [debtRecords, projects, financialRecords]);
+
+  // Daftar nama kreditur yang ada di Menu Hutang untuk dropdown tanpa nominal
+  const allCreditorNamesFromHutang = useMemo(() => {
+    const fromDebts = (effectiveDebtRecords || [])
+      .filter((d) => d.type === "HUTANG" && d.contactName && d.contactName.trim() !== "")
+      .map((d) => d.contactName.trim());
+    const defaults = [
+      "BANG YASIN OWNER PT",
+      "PAK DODO INVESTOR",
+      "FAISAL MUSTOPA",
+      "WELI MAHESA",
+      "MUHAMMAD YASIN",
+      "JIDAN RAMADHAN",
+    ];
+    return Array.from(new Set([...defaults, ...fromDebts])).filter(Boolean);
+  }, [effectiveDebtRecords]);
   const [selectedMonth, setSelectedMonth] = useState(6); // Default to July (6) since we have seeded financial records up to July 4, 2026
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
@@ -16445,17 +16517,17 @@ const AdminFinanceScreen = ({
     const numAmt = Number(amountValue) || 0;
     const pct = contractVal > 0 && numAmt > 0 ? parseFloat(((numAmt / contractVal) * 100).toFixed(2)) : 0;
 
-    const name = `Termin ${termNum}`;
+    const name = `PEMBAYARAN KE ${termNum}`;
     const desc = contractVal > 0 && pct > 0
-      ? `Pembayaran Termin ${termNum} (${pct}% dari Kontrak Rp ${contractVal.toLocaleString("id-ID")})`
-      : `Pembayaran Termin ${termNum}`;
+      ? `PEMBAYARAN KE ${termNum} (${pct}% dari Kontrak Rp ${contractVal.toLocaleString("id-ID")})`
+      : `PEMBAYARAN KE ${termNum}`;
 
     return {
       terminName: name,
       terminDescription: desc,
       terminPercentage: pct > 0 ? String(pct) : "",
       terminStatus: "LUNAS" as const,
-      terminNotes: `Pembayaran Termin ${termNum}`,
+      terminNotes: `PEMBAYARAN KE ${termNum}`,
       terminPaymentDate: existingDate || new Date().toISOString().split("T")[0],
       debtRecord: d,
       project: proj,
@@ -18562,14 +18634,19 @@ const AdminFinanceScreen = ({
                 );
 
                 if (payAmount > 0 || !isSalary) {
+                  const paymentNote = formData.terminName
+                    ? `${formData.terminName}${eachRecord.description ? ` - ${eachRecord.description}` : ""}`
+                    : (isProjectPayment && formData.terminNotes ? formData.terminNotes : eachRecord.description);
+
                   const newPayment: DebtPayment = {
                     id: Math.random().toString(36).substr(2, 9),
                     amount: payAmount,
                     date: formData.date,
-                    note: isProjectPayment && formData.terminNotes ? formData.terminNotes : eachRecord.description,
+                    note: paymentNote,
                     financialRecordId: finId,
                     recordedBy: user.name,
-                  };
+                    terminName: formData.terminName,
+                  } as any;
 
                   const updatedPayments = [...(debt.payments || []), newPayment];
                   const totalPaid = updatedPayments.reduce(
@@ -19128,14 +19205,19 @@ const AdminFinanceScreen = ({
 
               let updatedPayments = [...basePayments];
               if (payAmount > 0 || !isSalary) {
+                const paymentNote = editFormData.terminName
+                  ? `${editFormData.terminName}${updatedRecord.description ? ` - ${updatedRecord.description}` : ""}`
+                  : (isProjectPayment && editFormData.terminNotes ? editFormData.terminNotes : (updatedRecord.description || ""));
+
                 const newPayment: DebtPayment = {
                   id: Math.random().toString(36).substr(2, 9),
                   amount: payAmount,
                   date: editFormData.date,
-                  note: isProjectPayment && editFormData.terminNotes ? editFormData.terminNotes : (updatedRecord.description || ""),
+                  note: paymentNote,
                   financialRecordId: editingTransaction.id,
                   recordedBy: user?.name || "Admin",
-                };
+                  terminName: editFormData.terminName,
+                } as any;
                 updatedPayments.push(newPayment);
               }
 
@@ -24969,29 +25051,35 @@ const AdminFinanceScreen = ({
                                     setUseManualRefHutang(false);
                                     setFormData((prev) => ({ ...prev, refHutang: "", linkedDebtId: "", senderName: "" }));
                                   }}
-                                  className="text-xs font-black text-amber-800 hover:underline ml-1"
+                                  className="text-xs font-black text-amber-800 hover:underline ml-1 cursor-pointer"
                                 >
-                                  ← Pilih dari Daftar Kreditur Terdaftar
+                                  ← Pilih dari Nama Kreditur yang Ada di Menu Hutang
                                 </button>
                               </div>
                             ) : (
                               <div className="space-y-3">
                                 <select
-                                  value={formData.linkedDebtId || (formData.refHutang ? "__CUSTOM__" : "")}
+                                  value={
+                                    allCreditorNamesFromHutang.includes(formData.senderName || "")
+                                      ? (formData.senderName || "")
+                                      : (allCreditorNamesFromHutang.includes(formData.refHutang || "")
+                                          ? (formData.refHutang || "")
+                                          : (formData.senderName || formData.refHutang ? "__CUSTOM__" : ""))
+                                  }
                                   onChange={(e) => {
                                     const val = e.target.value;
                                     if (val === "__MANUAL__") {
                                       setUseManualRefHutang(true);
                                       setFormData((prev) => ({ ...prev, refHutang: "", linkedDebtId: "", senderName: "" }));
                                     } else if (val) {
-                                      const matchedDebt = effectiveDebtRecords.find((d) => d.id === val || d.customId === val);
-                                      const creditorName = matchedDebt ? matchedDebt.contactName : val;
-                                      const refTitle = matchedDebt ? `${matchedDebt.customId || matchedDebt.id} - ${matchedDebt.contactName} (${matchedDebt.title})` : val;
+                                      const matchedDebt = effectiveDebtRecords.find(
+                                        (d) => d.type === "HUTANG" && (d.contactName?.toLowerCase() === val.toLowerCase() || d.id === val || d.customId === val)
+                                      );
                                       setFormData((prev) => ({
                                         ...prev,
                                         linkedDebtId: matchedDebt ? matchedDebt.id : "",
-                                        refHutang: refTitle,
-                                        senderName: creditorName,
+                                        refHutang: val,
+                                        senderName: val,
                                       }));
                                     } else {
                                       setFormData((prev) => ({ ...prev, linkedDebtId: "", refHutang: "", senderName: "" }));
@@ -24999,19 +25087,17 @@ const AdminFinanceScreen = ({
                                   }}
                                   className="w-full px-6 py-5 md:py-6 bg-white border border-amber-300 rounded-3xl text-sm md:text-base font-bold text-slate-800 outline-none focus:ring-4 focus:ring-amber-500/10 cursor-pointer shadow-sm"
                                 >
-                                  <option value="">-- Hubungkan Kreditur / Investor Terdaftar --</option>
-                                  {effectiveDebtRecords
-                                    .filter((d) => d.type === "HUTANG")
-                                    .map((debt) => (
-                                      <option key={debt.id} value={debt.id}>
-                                        [{debt.customId || "HTG"}] {debt.contactName} — {debt.title} (Rp {debt.amount.toLocaleString("id-ID")})
-                                      </option>
-                                    ))}
-                                  <option value="__MANUAL__">+ Ketik Nama Kreditur / Investor Baru...</option>
+                                  <option value="">-- Pilih Nama Kreditur dari Menu Hutang --</option>
+                                  {allCreditorNamesFromHutang.map((creditor) => (
+                                    <option key={creditor} value={creditor}>
+                                      {creditor}
+                                    </option>
+                                  ))}
+                                  <option value="__MANUAL__">+ Tambah Nama Baru (Manual)...</option>
                                 </select>
                                 <div className="flex items-center justify-between">
                                   <p className="text-[11px] font-semibold text-amber-800 ml-1">
-                                    {formData.senderName ? `Pemberi Modal: ${formData.senderName}` : "Pilih kreditur atau ketik nama baru untuk otomatis mencatat hutang PT atas modal yang disuntikkan."}
+                                    {formData.senderName ? `Kreditur Terpilih: ${formData.senderName}` : "Cukup pilih nama kreditur yang ada di Menu Hutang atau tambah baru jika belum ada."}
                                   </p>
                                   <button
                                     type="button"
@@ -25037,7 +25123,10 @@ const AdminFinanceScreen = ({
                                 <input
                                   type="text"
                                   value={formData.refPiutang}
-                                  onChange={(e) => setFormData({ ...formData, refPiutang: e.target.value })}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    setFormData((prev) => ({ ...prev, refPiutang: val }));
+                                  }}
                                   className="w-full px-6 py-5 md:py-6 bg-white border border-slate-200 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
                                   placeholder="Ketik manual atau ID Piutang..."
                                 />
@@ -25065,6 +25154,14 @@ const AdminFinanceScreen = ({
                                       const d = effectiveDebtRecords.find((doc) => doc.title === titleStr && doc.type === "PIUTANG");
                                       const matchedProj = d?.projectId ? projects.find((p) => p.id === d.projectId) : undefined;
                                       
+                                      const priorPaymentsCount = financialRecords.filter(f => 
+                                        f.type === "IN" && 
+                                        (
+                                          (d && (f.linkedDebtId === d.id || f.refPiutang === d.title || (d.customId && f.refPiutang?.includes(d.customId)))) ||
+                                          (titleStr && f.refPiutang && f.refPiutang.toLowerCase().includes(titleStr.toLowerCase()))
+                                        )
+                                      ).length;
+                                      const nextPaymentStr = `PEMBAYARAN KE ${priorPaymentsCount + 1}`;
                                       const autoTermin = calculateTerminDetails(d ? d.id : titleStr, d?.projectId || formData.projectId, formData.amount, undefined, formData.date);
 
                                       setFormData({
@@ -25073,7 +25170,7 @@ const AdminFinanceScreen = ({
                                         linkedDebtId: d ? d.id : formData.linkedDebtId,
                                         projectId: d?.projectId || formData.projectId,
                                         category: formData.category || "Pembayaran Proyek",
-                                        terminName: autoTermin.terminName || formData.terminName,
+                                        terminName: nextPaymentStr || autoTermin.terminName || formData.terminName,
                                         terminDescription: autoTermin.terminDescription || formData.terminDescription,
                                         terminPercentage: autoTermin.terminPercentage || formData.terminPercentage,
                                         terminStatus: autoTermin.terminStatus || formData.terminStatus,
@@ -25100,6 +25197,33 @@ const AdminFinanceScreen = ({
                                 </select>
                               </div>
                             )}
+
+                            {/* Kotak Input Memberitahu Pembayaran Keberapa */}
+                            <div className="mt-3 p-4 bg-emerald-50/90 rounded-2xl border-2 border-emerald-300 space-y-2 shadow-xs">
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 border-b border-emerald-200/80 pb-2">
+                                <label className="text-xs font-black text-emerald-900 uppercase tracking-wider flex items-center gap-2">
+                                  <span>🔢</span> Status Pembayaran Piutang Proyek:
+                                </label>
+                                <span className="text-[11px] font-black text-emerald-800 bg-emerald-200/90 px-3 py-1 rounded-full uppercase tracking-wider w-fit">
+                                  {formData.terminName || "PEMBAYARAN KE 1"}
+                                </span>
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-black text-emerald-800 uppercase tracking-wider block">
+                                  Tulis / Tambahkan Pembayaran Keberapa:
+                                </label>
+                                <input
+                                  type="text"
+                                  value={formData.terminName || ""}
+                                  onChange={(e) => setFormData((prev) => ({ ...prev, terminName: e.target.value }))}
+                                  placeholder='Misal: "PEMBAYARAN KE 1", "PEMBAYARAN KE 2", dst.'
+                                  className="w-full px-5 py-3.5 bg-white border border-emerald-300 rounded-2xl text-sm font-bold text-slate-800 outline-none focus:ring-4 focus:ring-emerald-500/10 shadow-sm placeholder:text-slate-400 font-sans"
+                                />
+                              </div>
+                              <p className="text-[11px] font-semibold text-emerald-800/90 flex items-center gap-1.5">
+                                <span>💡</span> Keterangan ini akan otomatis tersimpan dan tampil jelas di Menu Piutang saat Anda mengklik detail Client atau Proyek.
+                              </p>
+                            </div>
                           </div>
                         )
                       )}
@@ -25537,29 +25661,35 @@ const AdminFinanceScreen = ({
                                     setUseManualRefHutangEdit(false);
                                     setEditFormData((prev) => ({ ...prev, refHutang: "", linkedDebtId: "", senderName: "" }));
                                   }}
-                                  className="text-xs font-black text-amber-800 hover:underline ml-1"
+                                  className="text-xs font-black text-amber-800 hover:underline ml-1 cursor-pointer"
                                 >
-                                  ← Pilih dari Daftar Kreditur Terdaftar
+                                  ← Pilih dari Nama Kreditur yang Ada di Menu Hutang
                                 </button>
                               </div>
                             ) : (
                               <div className="space-y-3">
                                 <select
-                                  value={editFormData.linkedDebtId || (editFormData.refHutang ? "__CUSTOM__" : "")}
+                                  value={
+                                    allCreditorNamesFromHutang.includes(editFormData.senderName || "")
+                                      ? (editFormData.senderName || "")
+                                      : (allCreditorNamesFromHutang.includes(editFormData.refHutang || "")
+                                          ? (editFormData.refHutang || "")
+                                          : (editFormData.senderName || editFormData.refHutang ? "__CUSTOM__" : ""))
+                                  }
                                   onChange={(e) => {
                                     const val = e.target.value;
                                     if (val === "__MANUAL__") {
                                       setUseManualRefHutangEdit(true);
                                       setEditFormData((prev) => ({ ...prev, refHutang: "", linkedDebtId: "", senderName: "" }));
                                     } else if (val) {
-                                      const matchedDebt = effectiveDebtRecords.find((d) => d.id === val || d.customId === val);
-                                      const creditorName = matchedDebt ? matchedDebt.contactName : val;
-                                      const refTitle = matchedDebt ? `${matchedDebt.customId || matchedDebt.id} - ${matchedDebt.contactName} (${matchedDebt.title})` : val;
+                                      const matchedDebt = effectiveDebtRecords.find(
+                                        (d) => d.type === "HUTANG" && (d.contactName?.toLowerCase() === val.toLowerCase() || d.id === val || d.customId === val)
+                                      );
                                       setEditFormData((prev) => ({
                                         ...prev,
                                         linkedDebtId: matchedDebt ? matchedDebt.id : "",
-                                        refHutang: refTitle,
-                                        senderName: creditorName,
+                                        refHutang: val,
+                                        senderName: val,
                                       }));
                                     } else {
                                       setEditFormData((prev) => ({ ...prev, linkedDebtId: "", refHutang: "", senderName: "" }));
@@ -25567,16 +25697,29 @@ const AdminFinanceScreen = ({
                                   }}
                                   className="w-full px-6 py-5 md:py-6 bg-white border border-amber-300 rounded-3xl text-sm md:text-base font-bold text-slate-800 outline-none focus:ring-4 focus:ring-amber-500/10 cursor-pointer shadow-sm"
                                 >
-                                  <option value="">-- Pilih Kreditur / Investor Terdaftar --</option>
-                                  {effectiveDebtRecords
-                                    .filter((d) => d.type === "HUTANG")
-                                    .map((d) => (
-                                      <option key={d.id} value={d.id}>
-                                        {d.customId || d.id} - {d.contactName} ({d.title}) - Sisa: Rp {(d.amount - ((d.payments || []).reduce((s, p) => s + p.amount, 0))).toLocaleString("id-ID")}
-                                      </option>
-                                    ))}
-                                  <option value="__MANUAL__">+ Ketik Nama Kreditur / Investor Baru...</option>
+                                  <option value="">-- Pilih Nama Kreditur dari Menu Hutang --</option>
+                                  {allCreditorNamesFromHutang.map((creditor) => (
+                                    <option key={creditor} value={creditor}>
+                                      {creditor}
+                                    </option>
+                                  ))}
+                                  <option value="__MANUAL__">+ Tambah Nama Baru (Manual)...</option>
                                 </select>
+                                <div className="flex items-center justify-between">
+                                  <p className="text-[11px] font-semibold text-amber-800 ml-1">
+                                    {editFormData.senderName ? `Kreditur Terpilih: ${editFormData.senderName}` : "Cukup pilih nama kreditur yang ada di Menu Hutang atau tambah baru jika belum ada."}
+                                  </p>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setUseManualRefHutangEdit(true);
+                                      setEditFormData((prev) => ({ ...prev, refHutang: "", linkedDebtId: "", senderName: "" }));
+                                    }}
+                                    className="text-xs font-black text-amber-800 hover:text-amber-950 transition-all cursor-pointer"
+                                  >
+                                    + Ketik Nama Baru
+                                  </button>
+                                </div>
                               </div>
                             )}
                             <p className="text-[11px] font-semibold text-amber-800/90 ml-2">
@@ -26580,6 +26723,16 @@ const AdminFinanceScreen = ({
                                     const d = effectiveDebtRecords.find((doc) => doc.title === titleStr && doc.type === "PIUTANG");
                                     const matchedProj = d?.projectId ? projects.find((p) => p.id === d.projectId) : undefined;
                                     
+                                    const priorPaymentsCount = financialRecords.filter(f => 
+                                      f.type === "IN" && 
+                                      f.id !== editingTransaction?.id &&
+                                      f.customId !== editingTransaction?.customId &&
+                                      (
+                                        (d && (f.linkedDebtId === d.id || f.refPiutang === d.title || (d.customId && f.refPiutang?.includes(d.customId)))) ||
+                                        (titleStr && f.refPiutang && f.refPiutang.toLowerCase().includes(titleStr.toLowerCase()))
+                                      )
+                                    ).length;
+                                    const nextPaymentStr = `PEMBAYARAN KE ${priorPaymentsCount + 1}`;
                                     const autoTermin = calculateTerminDetails(d ? d.id : titleStr, d?.projectId || editFormData.projectId, editFormData.amount, editingTransaction?.id, editFormData.date);
 
                                     setEditFormData({
@@ -26588,7 +26741,7 @@ const AdminFinanceScreen = ({
                                       linkedDebtId: d ? d.id : editFormData.linkedDebtId,
                                       projectId: d?.projectId || editFormData.projectId,
                                       category: editFormData.category || "Pembayaran Proyek",
-                                      terminName: autoTermin.terminName || editFormData.terminName,
+                                      terminName: nextPaymentStr || autoTermin.terminName || editFormData.terminName,
                                       terminDescription: autoTermin.terminDescription || editFormData.terminDescription,
                                       terminPercentage: autoTermin.terminPercentage || editFormData.terminPercentage,
                                       terminStatus: autoTermin.terminStatus || editFormData.terminStatus,
@@ -26615,6 +26768,33 @@ const AdminFinanceScreen = ({
                               </select>
                             </div>
                           )}
+
+                          {/* Kotak Input Memberitahu Pembayaran Keberapa */}
+                          <div className="mt-3 p-4 bg-emerald-50/90 rounded-2xl border-2 border-emerald-300 space-y-2 shadow-xs">
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 border-b border-emerald-200/80 pb-2">
+                              <label className="text-xs font-black text-emerald-900 uppercase tracking-wider flex items-center gap-2">
+                                <span>🔢</span> Status Pembayaran Piutang Proyek:
+                              </label>
+                              <span className="text-[11px] font-black text-emerald-800 bg-emerald-200/90 px-3 py-1 rounded-full uppercase tracking-wider w-fit">
+                                {editFormData.terminName || "PEMBAYARAN KE 1"}
+                              </span>
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[11px] font-black text-emerald-800 uppercase tracking-wider block">
+                                Tulis / Tambahkan Pembayaran Keberapa:
+                              </label>
+                              <input
+                                type="text"
+                                value={editFormData.terminName || ""}
+                                onChange={(e) => setEditFormData((prev) => ({ ...prev, terminName: e.target.value }))}
+                                placeholder='Misal: "PEMBAYARAN KE 1", "PEMBAYARAN KE 2", dst.'
+                                className="w-full px-5 py-3.5 bg-white border border-emerald-300 rounded-2xl text-sm font-bold text-slate-800 outline-none focus:ring-4 focus:ring-emerald-500/10 shadow-sm placeholder:text-slate-400 font-sans"
+                              />
+                            </div>
+                            <p className="text-[11px] font-semibold text-emerald-800/90 flex items-center gap-1.5">
+                              <span>💡</span> Keterangan ini akan otomatis tersimpan dan tampil jelas di Menu Piutang saat Anda mengklik detail Client atau Proyek.
+                            </p>
+                          </div>
                         </div>
                       )}
 
@@ -30750,6 +30930,23 @@ export default function App() {
   const [quoteAttention, setQuoteAttention] = useState("");
   const [quoteDate, setQuoteDate] = useState("");
   const [quoteBoqId, setQuoteBoqId] = useState("");
+  const [quoteType, setQuoteType] = useState<"Barang dan Jasa" | "Barang" | "Jasa">("Barang dan Jasa");
+  const [includePPN, setIncludePPN] = useState<boolean>(true);
+  const [quoteTaxRate, setQuoteTaxRate] = useState<number>(11);
+  const [includeShipping, setIncludeShipping] = useState<boolean>(false);
+  const [shippingCost, setShippingCost] = useState<number>(0);
+  const [includeServiceFee, setIncludeServiceFee] = useState<boolean>(false);
+  const [serviceFee, setServiceFee] = useState<number>(0);
+  const [quoteCompName, setQuoteCompName] = useState<string>("PT. GARDA INOVASI GLOBALTECH");
+  const [quoteCompAddress, setQuoteCompAddress] = useState<string>("Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09, Ds. Pisangan Jaya, Kec. Sepatan, Kab Tangerang, Banten 15525");
+  const [quoteCompLogo, setQuoteCompLogo] = useState<string>("");
+  const [quoteSignature, setQuoteSignature] = useState<string>("");
+  const [quotePreparedByName, setQuotePreparedByName] = useState<string>("");
+  const [includeDiscount, setIncludeDiscount] = useState<boolean>(false);
+  const [quoteDiscountType, setQuoteDiscountType] = useState<"rupiah" | "percent">("rupiah");
+  const [quoteDiscountVal, setQuoteDiscountVal] = useState<number>(0);
+  const [quoteNotes, setQuoteNotes] = useState<string>("- Harga sudah termasuk PPN\n- Penawaran berlaku selama 14 hari kerja");
+  const [quotePaymentTerms, setQuotePaymentTerms] = useState<string>("- DP 50% saat PO / SPK disetujui\n- Pelunasan 50% setelah pekerjaan selesai");
 
   const [documents, setDocuments] = useState<Document[]>([]);
   const [notifications, setNotifications] = useState<any[]>([]);
@@ -31036,6 +31233,23 @@ export default function App() {
         setQuoteAttention(viewingQuotation.attention || "");
         setQuoteDate(viewingQuotation.date || new Date().toISOString().substring(0, 10));
         setQuoteBoqId(viewingQuotation.boqProjectId || "");
+        setQuoteType(viewingQuotation.quotationType || "Barang dan Jasa");
+        setIncludeShipping(viewingQuotation.includeShipping !== undefined ? viewingQuotation.includeShipping : false);
+        setShippingCost(viewingQuotation.shippingCost || 0);
+        setIncludeServiceFee(viewingQuotation.includeServiceFee !== undefined ? viewingQuotation.includeServiceFee : false);
+        setServiceFee(viewingQuotation.serviceFee || 0);
+        setIncludePPN(viewingQuotation.includePPN !== undefined ? viewingQuotation.includePPN : true);
+        setQuoteTaxRate(viewingQuotation.taxRate !== undefined ? viewingQuotation.taxRate : 11);
+        setQuoteCompName(viewingQuotation.compName || "PT. GARDA INOVASI GLOBALTECH");
+        setQuoteCompAddress(viewingQuotation.compAddress || "Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09, Ds. Pisangan Jaya, Kec. Sepatan, Kab Tangerang, Banten 15525");
+        setQuoteCompLogo(viewingQuotation.compLogoUrl || "");
+        setQuoteSignature(viewingQuotation.digitalSignatureUrl || "");
+        setQuotePreparedByName(viewingQuotation.preparedBy || currentUser?.name || "ALEXSANDER");
+        setIncludeDiscount(viewingQuotation.includeDiscount !== undefined ? viewingQuotation.includeDiscount : false);
+        setQuoteDiscountType(viewingQuotation.discountType || "rupiah");
+        setQuoteDiscountVal(viewingQuotation.discountVal || 0);
+        setQuoteNotes(viewingQuotation.notes || "- Harga sudah termasuk PPN\n- Penawaran berlaku selama 14 hari kerja");
+        setQuotePaymentTerms(viewingQuotation.paymentTerms || "- DP 50% saat PO / SPK disetujui\n- Pelunasan 50% setelah pekerjaan selesai");
         
         // Detect if it was saved in attachment-only mode
         const isAttachmentOnly = !!viewingQuotation.attachmentName && 
@@ -31068,6 +31282,23 @@ export default function App() {
         setQuoteAttention("");
         setQuoteDate(new Date().toISOString().substring(0, 10));
         setQuoteBoqId("");
+        setQuoteType("Barang dan Jasa");
+        setIncludeShipping(false);
+        setShippingCost(0);
+        setIncludeServiceFee(false);
+        setServiceFee(0);
+        setIncludePPN(true);
+        setQuoteTaxRate(11);
+        setQuoteCompName("PT. GARDA INOVASI GLOBALTECH");
+        setQuoteCompAddress("Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09, Ds. Pisangan Jaya, Kec. Sepatan, Kab Tangerang, Banten 15525");
+        setQuoteCompLogo("");
+        setQuoteSignature("");
+        setQuotePreparedByName(currentUser?.name || "ALEXSANDER");
+        setIncludeDiscount(false);
+        setQuoteDiscountType("rupiah");
+        setQuoteDiscountVal(0);
+        setQuoteNotes("- Harga sudah termasuk PPN\n- Penawaran berlaku selama 14 hari kerja");
+        setQuotePaymentTerms("- DP 50% saat PO / SPK disetujui\n- Pelunasan 50% setelah pekerjaan selesai");
         setUploadedFileInfo(null);
         setUploadedFileBase64("");
         
@@ -34302,33 +34533,50 @@ export default function App() {
             unit: item.unit || "",
             unitPrice: item.unitPrice || 0,
             total: total,
+            specifications: item.specifications || [],
           };
         });
 
-      if (finalItems.length === 0) {
-        alert("Harap masukkan minimal satu item pekerjaan.");
-        return;
-      }
-
-      tax = Math.round(subTotal * 0.11);
-      grandTotal = subTotal + tax;
+      const discAmount = includeDiscount
+        ? (quoteDiscountType === "percent" ? Math.round(subTotal * (quoteDiscountVal / 100)) : quoteDiscountVal)
+        : 0;
+      const baseAfterDisc = Math.max(0, subTotal - discAmount);
+      const shipping = includeShipping ? Number(shippingCost || 0) : 0;
+      const service = includeServiceFee ? Number(serviceFee || 0) : 0;
+      tax = includePPN ? Math.round((baseAfterDisc + service) * (quoteTaxRate / 100)) : 0;
+      grandTotal = baseAfterDisc + shipping + service + tax;
     }
 
     const id = viewingQuotation?.id || `QT-${Date.now()}`;
     const newQuotation: Quotation = {
       id,
-      number: formData.get("number") as string,
-      date: formData.get("date") as string,
-      recipient: formData.get("recipient") as string,
-      attention: formData.get("attention") as string,
-      jobDescription: formData.get("jobDescription") as string,
+      number: quoteNumber || (formData.get("number") as string),
+      date: quoteDate || (formData.get("date") as string),
+      recipient: quoteRecipient || (formData.get("recipient") as string),
+      attention: quoteAttention || (formData.get("attention") as string),
+      jobDescription: quoteJobDesc || (formData.get("jobDescription") as string),
       items: finalItems,
       subTotal,
+      quotationType: quoteType,
+      includeDiscount,
+      discountType: quoteDiscountType,
+      discountVal: quoteDiscountVal,
+      discountAmount: includeDiscount ? (quoteDiscountType === "percent" ? Math.round(subTotal * (quoteDiscountVal / 100)) : quoteDiscountVal) : 0,
+      includeShipping,
+      shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+      includeServiceFee,
+      serviceFee: includeServiceFee ? Number(serviceFee || 0) : 0,
+      includePPN,
+      taxRate: quoteTaxRate,
       tax,
       grandTotal,
-      notes:
-        (formData.get("notes") as string) || " - Harga belum termasuk PPN 11%",
-      preparedBy: currentUser?.name || "Admin",
+      notes: quoteNotes,
+      paymentTerms: quotePaymentTerms,
+      preparedBy: quotePreparedByName || currentUser?.name || "ALEXSANDER",
+      compName: quoteCompName,
+      compAddress: quoteCompAddress,
+      compLogoUrl: quoteCompLogo,
+      digitalSignatureUrl: quoteSignature,
       userId: currentUser?.id,
       createdAt: viewingQuotation?.createdAt || Date.now(),
       boqProjectId: quoteBoqId || "",
@@ -34453,11 +34701,20 @@ export default function App() {
     pdf.setTextColor(0, 0, 0);
     pdf.setFontSize(14);
     pdf.setFont("helvetica", "bold");
-    pdf.text("SURAT PENAWARAN HARGA", pageWidth / 2, 55, { align: "center" });
-    pdf.line(75, 57, 135, 57);
+    pdf.text("SURAT PENAWARAN HARGA", pageWidth / 2, 53, { align: "center" });
+
+    const qTypeStr = quotation.quotationType || "Barang dan Jasa";
+    const typeSubtext = qTypeStr === "Barang" ? "PENGADAAN BARANG" : qTypeStr === "Jasa" ? "PENYEDIAAN JASA" : "PENGADAAN BARANG & JASA";
+    pdf.setFontSize(8.5);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(22, 38, 70);
+    pdf.text(`(${typeSubtext})`, pageWidth / 2, 58, { align: "center" });
+
+    pdf.line(75, 60, 135, 60);
 
     pdf.setFontSize(9);
     pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(0, 0, 0);
     pdf.text("Kepada", 15, 68);
     pdf.text(":", 35, 68);
     pdf.text(quotation.recipient, 38, 68);
@@ -34533,12 +34790,39 @@ export default function App() {
     pdf.text(fmt(quotation.subTotal), pageWidth - 16, y + 5.5, {
       align: "right",
     });
-    y += 8;
-
-    pdf.text("PPN 11%", totalX - 2, y + 5.5, { align: "right" });
+    // 0. DISKON
+    const discAmt = quotation.discountAmount || 0;
+    const isDisc = quotation.includeDiscount || discAmt > 0;
+    pdf.text("DISKON", totalX - 2, y + 5.5, { align: "right" });
     pdf.rect(totalX, y, totalW, 8, "S");
     pdf.text("Rp", totalX + 1, y + 5.5);
-    pdf.text(fmt(quotation.tax), pageWidth - 16, y + 5.5, { align: "right" });
+    pdf.text(isDisc ? `-${fmt(discAmt)}` : "0", pageWidth - 16, y + 5.5, { align: "right" });
+    y += 8;
+
+    // 1. ONGKOS KIRIM / PENGIRIMAN
+    pdf.text("ONGKOS KIRIM / PENGIRIMAN", totalX - 2, y + 5.5, { align: "right" });
+    pdf.rect(totalX, y, totalW, 8, "S");
+    pdf.text("Rp", totalX + 1, y + 5.5);
+    pdf.text(quotation.includeShipping ? fmt(quotation.shippingCost || 0) : "0", pageWidth - 16, y + 5.5, {
+      align: "right",
+    });
+    y += 8;
+
+    // 2. BIAYA JASA & INSTALASI
+    pdf.text("BIAYA JASA & INSTALASI", totalX - 2, y + 5.5, { align: "right" });
+    pdf.rect(totalX, y, totalW, 8, "S");
+    pdf.text("Rp", totalX + 1, y + 5.5);
+    pdf.text(quotation.includeServiceFee ? fmt(quotation.serviceFee || 0) : "0", pageWidth - 16, y + 5.5, {
+      align: "right",
+    });
+    y += 8;
+
+    // 3. PPN
+    const taxRateLabel = quotation.taxRate ? `PPN ${quotation.taxRate}%` : "PPN 11%";
+    pdf.text(taxRateLabel, totalX - 2, y + 5.5, { align: "right" });
+    pdf.rect(totalX, y, totalW, 8, "S");
+    pdf.text("Rp", totalX + 1, y + 5.5);
+    pdf.text(quotation.includePPN ? fmt(quotation.tax || 0) : "0", pageWidth - 16, y + 5.5, { align: "right" });
     y += 8;
 
     pdf.text("GRAND TOTAL", totalX - 2, y + 5.5, { align: "right" });
@@ -34715,16 +34999,41 @@ export default function App() {
       "sepuluh",
       "sebelas",
     ];
+    if (n < 0) return "minus " + numberToWords(Math.abs(n));
+    if (n === 0) return "nol";
     if (n < 12) return units[n];
     if (n < 20) return units[n - 10] + " belas";
-    if (n < 100) return units[Math.floor(n / 10)] + " puluh " + units[n % 10];
-    if (n < 200) return "seratus " + numberToWords(n - 100);
+    if (n < 100)
+      return (
+        units[Math.floor(n / 10)] +
+        " puluh" +
+        (n % 10 !== 0 ? " " + units[n % 10] : "")
+      );
+    if (n < 200) return "seratus" + (n - 100 !== 0 ? " " + numberToWords(n - 100) : "");
     if (n < 1000)
-      return units[Math.floor(n / 100)] + " ratus " + numberToWords(n % 100);
-    if (n < 2000) return "seribu " + numberToWords(n - 1000);
+      return (
+        units[Math.floor(n / 100)] +
+        " ratus" +
+        (n % 100 !== 0 ? " " + numberToWords(n % 100) : "")
+      );
+    if (n < 2000) return "seribu" + (n - 1000 !== 0 ? " " + numberToWords(n - 1000) : "");
     if (n < 1000000)
       return (
-        numberToWords(Math.floor(n / 1000)) + " ribu " + numberToWords(n % 1000)
+        numberToWords(Math.floor(n / 1000)) +
+        " ribu" +
+        (n % 1000 !== 0 ? " " + numberToWords(n % 1000) : "")
+      );
+    if (n < 1000000000)
+      return (
+        numberToWords(Math.floor(n / 1000000)) +
+        " juta" +
+        (n % 1000000 !== 0 ? " " + numberToWords(n % 1000000) : "")
+      );
+    if (n < 1000000000000)
+      return (
+        numberToWords(Math.floor(n / 1000000000)) +
+        " miliar" +
+        (n % 1000000000 !== 0 ? " " + numberToWords(n % 1000000000) : "")
       );
     return n.toString();
   };
@@ -35064,474 +35373,711 @@ export default function App() {
 
     // Initialize items if empty when opening
     if (quotationItems.length === 0) {
-      if (viewingQuotation) {
+      if (viewingQuotation && viewingQuotation.items && viewingQuotation.items.length > 0) {
         setQuotationItems(viewingQuotation.items);
       } else {
         setQuotationItems([
-          { description: "", vol: 1, unit: "lot", unitPrice: 0 },
+          { description: "", vol: 1, unit: "Unit", unitPrice: 0, specifications: [] },
         ]);
       }
     }
 
+    const subTotalCalc = quotationItems.reduce((acc, it) => acc + ((it.vol || 0) * (it.unitPrice || 0)), 0);
+    const discAmountCalc = includeDiscount
+      ? (quoteDiscountType === "percent" ? Math.round(subTotalCalc * (quoteDiscountVal / 100)) : quoteDiscountVal)
+      : 0;
+    const baseAfterDisc = Math.max(0, subTotalCalc - discAmountCalc);
+    const shippingAmountCalc = includeShipping ? Number(shippingCost || 0) : 0;
+    const taxAmountCalc = includePPN ? Math.round(baseAfterDisc * (quoteTaxRate / 100)) : 0;
+    const grandTotalCalc = baseAfterDisc + shippingAmountCalc + taxAmountCalc;
+    const terbilangText = `${numberToWords(grandTotalCalc)} rupiah`.toUpperCase();
+
     return (
-      <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-slate-900/60 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[110] flex items-center justify-center p-2 sm:p-4 md:p-6 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
+          initial={{ opacity: 0, scale: 0.96 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="bg-white rounded-[40px] p-8 w-full max-w-4xl shadow-2xl overflow-y-auto max-h-[90vh]"
+          className="bg-slate-100 rounded-[32px] p-3 sm:p-5 md:p-6 w-full max-w-5xl shadow-2xl overflow-y-auto max-h-[96vh] space-y-4"
         >
-          <div className="flex justify-between items-center mb-8 pb-4 border-b border-slate-100">
-            <div>
-              <h3 className="text-2xl font-black text-slate-900 tracking-tight">
-                Buat Surat Penawaran
-              </h3>
-              <p className="text-slate-400 font-medium text-sm">
-                Lengkapi detail penawaran harga klien.
-              </p>
+          {/* TOP BAR DIALOG: TITLE & CLOSE */}
+          <div className="flex justify-between items-center bg-white px-5 py-3.5 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-sm shadow-md">
+                📄
+              </div>
+              <div>
+                <h3 className="text-base md:text-lg font-black text-slate-900 tracking-tight leading-tight">
+                  Form Surat Penawaran Harga (SPH)
+                </h3>
+                <p className="text-slate-400 font-bold text-[11px] leading-none">
+                  Layout form input interaktif sesuai format surat penawaran harga resmi.
+                </p>
+              </div>
             </div>
             <button
+              type="button"
               onClick={() => {
                 setIsQuotationModalOpen(false);
                 setViewingQuotation(null);
                 setQuotationItems([]);
               }}
-              className="p-3 hover:bg-slate-100 rounded-full transition-colors"
+              className="p-2 hover:bg-slate-100 text-slate-500 hover:text-slate-900 rounded-full transition-colors cursor-pointer"
+              title="Tutup Form"
             >
-              <X size={24} />
+              <X size={20} />
             </button>
           </div>
 
-          {/* UPLOAD BERKAS PENAWARAN (LAMPIRAN) */}
-          <div className="mb-6 p-6 bg-slate-50 border border-slate-200/80 rounded-[32px] space-y-4 text-left font-sans shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                <FileText size={20} />
-              </div>
-              <div>
-                <h4 className="text-sm font-black uppercase tracking-wider text-slate-800">
-                  Unggah Berkas Lampiran Surat Penawaran (SPH)
-                </h4>
-                <p className="text-[11px] text-slate-500 font-semibold leading-none">
-                  Unggah berkas dokumen asli Anda (PDF, Gambar JPEG/PNG, dll.) untuk dilampirkan ke dalam sistem.
-                </p>
-              </div>
+          {/* PILIHAN UTAMA PALING ATAS: BARANG DAN JASA, BARANG, JASA */}
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                Pilihan Kategori Utama:
+              </span>
             </div>
-
-            <div 
-              className="border-2 border-dashed border-slate-200 hover:border-indigo-500 transition-all rounded-[24px] p-6 flex flex-col items-center justify-center cursor-pointer relative min-h-[120px] bg-white"
-              onClick={() => document.getElementById("quote-file-attachment")?.click()}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const file = e.dataTransfer.files?.[0];
-                if (file) handleQuoteAIFile(file);
-              }}
-            >
-              <input 
-                type="file" 
-                id="quote-file-attachment" 
-                className="hidden" 
-                accept="application/pdf,image/*,text/plain" 
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (file) handleQuoteAIFile(file);
-                }}
-              />
-              
-              {parsingFile ? (
-                <div className="flex flex-col items-center gap-2">
-                  <div className="w-8 h-8 rounded-full border-4 border-slate-200 border-t-indigo-600 animate-spin" />
-                  <span className="text-xs font-bold text-slate-600 animate-pulse">Membaca berkas...</span>
-                </div>
-              ) : uploadedFileInfo ? (
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                    <FileText size={20} />
-                  </div>
-                  <div className="text-xs font-black text-slate-800">
-                    File Terlampir: {uploadedFileInfo.name} {uploadedFileInfo.size > 0 ? `(${Math.round(uploadedFileInfo.size / 1024)} KB)` : ""}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setUploadedFileInfo(null);
-                      setUploadedFileBase64("");
-                    }}
-                    className="mt-1 text-rose-500 hover:text-rose-600 text-[10px] uppercase font-black tracking-wider cursor-pointer"
-                  >
-                    Hapus Berkas
-                  </button>
-                </div>
-              ) : (
-                <div className="flex flex-col items-center gap-2 text-center">
-                  <Upload size={28} className="text-slate-400" />
-                  <div className="text-xs font-black text-slate-700">
-                    Seret & lepas berkas di sini, atau <span className="text-indigo-600 underline">pilih file</span>
-                  </div>
-                  <div className="text-[10px] text-slate-400 font-semibold">
-                    Mendukung berkas PDF, Gambar (JPEG/PNG), atau File Teks
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {uploadedFileInfo && (
-              <div className="p-3.5 bg-indigo-50/50 border border-indigo-100/60 rounded-xl text-[11px] text-indigo-700 font-semibold leading-relaxed">
-                💡 <strong>Berkas berhasil terlampir!</strong> Silakan lengkapi informasi SPH dan masukkan total nilai penawaran Anda di bawah ini, kemudian klik Simpan untuk mendaftarkannya.
-              </div>
-            )}
-          </div>
-
-          <form onSubmit={handleSaveQuotation} className="space-y-6">
-            {/* Pilihan Mode Input Data SPH */}
-            <div className="bg-slate-50 border border-slate-200/60 p-4 px-6 rounded-[2rem] flex items-center justify-between text-left shadow-sm">
-              <div className="space-y-0.5 pr-4">
-                <span className="text-xs font-black text-slate-800 block">
-                  Metode Input SPH
-                </span>
-                <span className="text-[10px] text-slate-500 font-semibold leading-relaxed block">
-                  {isAttachmentOnlyMode 
-                    ? "Menggunakan berkas lampiran asli & memasukkan satu nilai total global." 
-                    : "Menulis rincian item pekerjaan secara detail satu per satu."}
-                </span>
-              </div>
-              <div className="flex items-center gap-3 shrink-0">
-                <span className={`text-[10px] font-black uppercase tracking-wider ${!isAttachmentOnlyMode ? "text-indigo-600" : "text-slate-400"}`}>
-                  Detail
-                </span>
+            <div className="grid grid-cols-3 gap-2 sm:w-[440px]">
+              {[
+                { id: "Barang dan Jasa", label: "Barang dan Jasa", icon: "🏢" },
+                { id: "Barang", label: "Barang", icon: "📦" },
+                { id: "Jasa", label: "Jasa", icon: "🛠️" },
+              ].map((t) => (
                 <button
+                  key={t.id}
                   type="button"
-                  onClick={() => setIsAttachmentOnlyMode(!isAttachmentOnlyMode)}
-                  className={`w-12 h-6 rounded-full p-1 transition-colors cursor-pointer relative duration-200 focus:outline-none ${
-                    isAttachmentOnlyMode ? "bg-slate-900" : "bg-indigo-600"
+                  onClick={() => setQuoteType(t.id as any)}
+                  className={`py-2 px-2.5 rounded-xl border text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    quoteType === t.id
+                      ? "bg-slate-900 border-slate-900 text-white shadow-md shadow-slate-900/20 scale-[1.02]"
+                      : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
                   }`}
                 >
-                  <div
-                    className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform duration-200 ${
-                      isAttachmentOnlyMode ? "translate-x-6" : "translate-x-0"
-                    }`}
-                  />
+                  <span className="text-sm">{t.icon}</span>
+                  <span className="truncate">{t.label}</span>
                 </button>
-                <span className={`text-[10px] font-black uppercase tracking-wider ${isAttachmentOnlyMode ? "text-slate-900" : "text-slate-400"}`}>
-                  Global
-                </span>
+              ))}
+            </div>
+          </div>
+
+          {/* DOKUMEN UTAMA: LAYOUT FORM INPUT PERSIS SESUAI GAMBAR SKETCH */}
+          <form onSubmit={handleSaveQuotation} className="bg-white rounded-3xl border-2 border-slate-300 shadow-xl p-5 sm:p-8 md:p-10 space-y-7 text-left font-sans text-slate-900">
+            
+            {/* 1. BAGIAN KOP SURAT (ATAS): UPLOAD LOGO (KIRI) & INPUT NAMA PT KITA / ALAMAT (KANAN) */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start pb-5 border-b-2 border-slate-200">
+              {/* UPLOAD LOGO BOX (KIRI) */}
+              <div className="md:col-span-4">
+                <input
+                  type="file"
+                  id="quote-comp-logo-input"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        if (ev.target?.result) setQuoteCompLogo(ev.target.result as string);
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                />
+                <div 
+                  onClick={() => document.getElementById("quote-comp-logo-input")?.click()}
+                  className="w-full h-36 border-2 border-slate-400 hover:border-slate-800 rounded-2xl flex flex-col items-center justify-center p-3 cursor-pointer transition-all bg-slate-50/60 hover:bg-slate-50 relative group select-none"
+                >
+                  {quoteCompLogo ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center relative">
+                      <img src={quoteCompLogo} alt="Logo Perusahaan" className="max-h-24 max-w-full object-contain" />
+                      <span className="text-[10px] font-black text-slate-500 mt-1.5 group-hover:text-slate-900">
+                        Klik untuk ganti logo
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setQuoteCompLogo("");
+                        }}
+                        className="absolute top-0 right-0 px-2 py-0.5 bg-rose-50 text-rose-600 rounded-md hover:bg-rose-100 text-[10px] font-black border border-rose-200"
+                      >
+                        Hapus
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center text-center space-y-1">
+                      <div className="w-10 h-10 rounded-xl bg-slate-200 text-slate-600 flex items-center justify-center font-bold text-lg mb-0.5">
+                        🏢
+                      </div>
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                        UPLOAD LOGO
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-bold">
+                        Klik untuk pilih file gambar logo
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* INPUT NAMA PT KITA & INPUT ALAMAT (KANAN) */}
+              <div className="md:col-span-8 space-y-2.5">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                    INPUT NAMA PT KITA
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={quoteCompName}
+                    onChange={(e) => setQuoteCompName(e.target.value)}
+                    placeholder="INPUT NAMA PT KITA"
+                    className="w-full px-4 py-2.5 bg-white border-2 border-slate-300 rounded-xl text-sm font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                    INPUT ALAMAT
+                  </label>
+                  <textarea
+                    rows={2}
+                    required
+                    value={quoteCompAddress}
+                    onChange={(e) => setQuoteCompAddress(e.target.value)}
+                    placeholder="INPUT ALAMAT LENGKAP KANTOR / WORKSHOP..."
+                    className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none transition-all resize-none placeholder:text-slate-400"
+                  />
+                </div>
               </div>
             </div>
 
-            {/* Hubungkan dengan Projek BOQ Desain Kustom */}
-            {!isAttachmentOnlyMode && (
-              <div className="p-5 bg-indigo-50/50 border border-indigo-100 rounded-[28px] space-y-3 font-sans text-left">
-                <div className="flex items-center gap-2">
-                  <div className="w-8 h-8 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center">
-                    <Briefcase size={14} className="animate-pulse" />
+            {/* 2. JUDUL DOKUMEN TENGAH: SURAT PENAWARAN HARGA */}
+            <div className="text-center py-1 space-y-1">
+              <h2 className="text-xl md:text-2xl font-black text-slate-900 tracking-wider uppercase border-b-2 border-slate-900 inline-block pb-1">
+                SURAT PENAWARAN HARGA
+              </h2>
+              <p className="text-xs font-black text-indigo-800 uppercase tracking-widest block">
+                ({quoteType === "Barang" ? "PENGADAAN BARANG" : quoteType === "Jasa" ? "PENYEDIAAN JASA" : "PENGADAAN BARANG & JASA"})
+              </p>
+            </div>
+
+            {/* 3. METADATA: KEPADA & UP (KIRI) | NOMOR, TANGGAL & PEKERJAAN (KANAN) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 pt-1">
+              {/* KOLOM KIRI: KEPADA & UP */}
+              <div className="space-y-2.5 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    KEPADA
+                  </span>
+                  <input
+                    type="text"
+                    name="recipient"
+                    required
+                    value={quoteRecipient}
+                    onChange={(e) => setQuoteRecipient(e.target.value)}
+                    placeholder="INPUT NAMA PT"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    UP
+                  </span>
+                  <input
+                    type="text"
+                    name="attention"
+                    required
+                    value={quoteAttention}
+                    onChange={(e) => setQuoteAttention(e.target.value)}
+                    placeholder="INPUT NAMA PENERIMA"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                  />
+                </div>
+              </div>
+
+              {/* KOLOM KANAN: NOMOR, TANGGAL, PEKERJAAN */}
+              <div className="space-y-2.5 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    NOMOR
+                  </span>
+                  <input
+                    type="text"
+                    name="number"
+                    required
+                    value={quoteNumber}
+                    onChange={(e) => setQuoteNumber(e.target.value)}
+                    placeholder="INPUT NOMOR SPH"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-mono font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    TANGGAL
+                  </span>
+                  <input
+                    type="date"
+                    name="date"
+                    required
+                    value={quoteDate}
+                    onChange={(e) => setQuoteDate(e.target.value)}
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:border-slate-800 outline-none transition-all"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    PEKERJAAN
+                  </span>
+                  <input
+                    type="text"
+                    name="jobDescription"
+                    required
+                    value={quoteJobDesc}
+                    onChange={(e) => setQuoteJobDesc(e.target.value)}
+                    placeholder="INPUT NAMA PEKERJAAN"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* 4. TABEL ITEM PEKERJAAN (NO | DESKRIPSI | QTY | SATUAN | HARGA SATUAN | JUMLAH) */}
+            <div className="space-y-3">
+              <div className="overflow-x-auto border-2 border-slate-300 rounded-2xl bg-white shadow-xs">
+                <table className="w-full text-left border-collapse font-sans text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 border-b-2 border-slate-300 font-black text-slate-900 text-center uppercase tracking-wider text-[11px]">
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-12">NO</th>
+                      <th className="py-3 px-3 border-r-2 border-slate-300">DESKRIPSI</th>
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-20">QTY</th>
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-24">SATUAN</th>
+                      <th className="py-3 px-3 border-r-2 border-slate-300 w-36">HARGA SATUAN</th>
+                      <th className="py-3 px-3 w-36">JUMLAH</th>
+                      <th className="py-3 px-2 w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y-2 divide-slate-200">
+                    {quotationItems.map((item, idx) => {
+                      const itemTotal = (item.vol || 0) * (item.unitPrice || 0);
+                      const currentSpecs = Array.isArray(item.specifications) ? item.specifications : [];
+
+                      return (
+                        <tr key={idx} className="align-top hover:bg-slate-50/50 transition-colors">
+                          <td className="py-3 px-2 text-center font-black text-slate-800 border-r-2 border-slate-300 text-xs">
+                            {idx + 1}
+                          </td>
+                          <td className="py-2.5 px-3 border-r-2 border-slate-300 space-y-2">
+                            <input
+                              type="text"
+                              required
+                              value={item.description || ""}
+                              onChange={(e) => updateQuotationItem(idx, "description", e.target.value)}
+                              placeholder="Deskripsi item pekerjaan / barang / jasa"
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-slate-800 outline-none"
+                            />
+
+                            {/* SUB ROW SPESIFIKASI PERSIS SEPERTI GAMBAR SKETCH */}
+                            <div className="bg-slate-50 p-2.5 rounded-xl border border-dashed border-slate-300 space-y-2 text-[10px]">
+                              <span className="text-[9px] font-black uppercase text-slate-500 tracking-wider block">
+                                spesifikasi
+                              </span>
+
+                              {/* Tampilkan daftar spesifikasi yang sudah ditambahkan */}
+                              {currentSpecs.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5 mb-1.5">
+                                  {currentSpecs.map((sp: any, sIdx: number) => (
+                                    <span key={sIdx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-300 rounded-md font-bold text-slate-700">
+                                      <span className="font-black text-indigo-700">{sp.key}:</span> {sp.value}
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const nextSpecs = [...currentSpecs];
+                                          nextSpecs.splice(sIdx, 1);
+                                          updateQuotationItem(idx, "specifications" as any, nextSpecs);
+                                        }}
+                                        className="text-rose-500 hover:text-rose-700 font-black ml-0.5 cursor-pointer"
+                                      >
+                                        ×
+                                      </button>
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Inputs Spesifikasi: [ Label ] [ Nilai ] [ + ] */}
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  id={`spec-key-${idx}`}
+                                  placeholder="Nama / Label Spek"
+                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[10px] font-semibold text-slate-800 outline-none focus:border-slate-700"
+                                />
+                                <input
+                                  type="text"
+                                  id={`spec-val-${idx}`}
+                                  placeholder="Nilai Spek (misal: SUS 304 / 50 m3)"
+                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[10px] font-semibold text-slate-800 outline-none focus:border-slate-700"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const kInput = document.getElementById(`spec-key-${idx}`) as HTMLInputElement;
+                                    const vInput = document.getElementById(`spec-val-${idx}`) as HTMLInputElement;
+                                    const k = kInput?.value?.trim();
+                                    const v = vInput?.value?.trim();
+                                    if (k || v) {
+                                      updateQuotationItem(idx, "specifications" as any, [...currentSpecs, { key: k || "Spec", value: v || "-" }]);
+                                      if (kInput) kInput.value = "";
+                                      if (vInput) vInput.value = "";
+                                    }
+                                  }}
+                                  className="px-3 py-1 bg-slate-900 text-white rounded-lg font-black text-xs hover:bg-slate-800 transition-all cursor-pointer"
+                                  title="Tambah Spesifikasi"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
+                            <input
+                              type="number"
+                              min={1}
+                              value={item.vol || 1}
+                              onChange={(e) => updateQuotationItem(idx, "vol", Math.max(1, parseFloat(e.target.value) || 1))}
+                              className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none"
+                            />
+                          </td>
+                          <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
+                            <input
+                              type="text"
+                              value={item.unit || "Unit"}
+                              onChange={(e) => updateQuotationItem(idx, "unit", e.target.value)}
+                              placeholder="Unit"
+                              className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none"
+                            />
+                          </td>
+                          <td className="py-2.5 px-3 border-r-2 border-slate-300 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              value={item.unitPrice || 0}
+                              onChange={(e) => updateQuotationItem(idx, "unitPrice", Math.max(0, parseFloat(e.target.value) || 0))}
+                              className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-right text-slate-900 focus:border-slate-800 outline-none"
+                            />
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-black text-slate-900 text-xs">
+                            Rp {itemTotal.toLocaleString("id-ID")}
+                          </td>
+                          <td className="py-2.5 px-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => removeQuotationItem(idx)}
+                              disabled={quotationItems.length <= 1}
+                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg disabled:opacity-20 cursor-pointer"
+                              title="Hapus Baris"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* BUTTON + Kolom DI BAWAH KANAN TABEL PERSIS SEPERTI GAMBAR */}
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={addQuotationItem}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>+ Kolom</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 5. BAGIAN BAWAH: KIRI (TERBILANG, NOTES, TERM OF PAYMENT) & KANAN (TOTAL & 3 CHECKLIST) */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 md:gap-8 pt-3 items-start border-t-2 border-slate-200">
+              
+              {/* SISI KIRI: TERBILANG, NOTES, TERM OF PAYMENT */}
+              <div className="md:col-span-7 space-y-4">
+                {/* TERBILANG BOX */}
+                <div className="space-y-1">
+                  <div className="inline-block px-3 py-1 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest">
+                    TERBILANG
                   </div>
-                  <div>
-                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                      Hubungkan & Gabung dengan Projek BOQ (Merge Otomatis)
-                    </h4>
-                    <p className="text-[10px] text-slate-500 font-bold leading-none">
-                      Pilih projek BOQ kustom Anda. Isi penawaran akan terisi instan, dan seluruh rincian BOQ akan dicetak di halaman berikutnya secara otomatis.
-                    </p>
+                  <div className="p-3 bg-slate-50 border-2 border-slate-300 rounded-xl text-xs font-black text-slate-800 italic leading-relaxed">
+                    {terbilangText}
                   </div>
                 </div>
+
+                {/* NOTES BOX */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div className="inline-block px-3 py-1 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest">
+                      NOTES
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setQuoteNotes((prev) => prev ? `${prev}\n- ` : "- ")}
+                      className="px-2.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-md text-[10px] font-black uppercase cursor-pointer"
+                      title="Tambah Catatan"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={quoteNotes}
+                    onChange={(e) => setQuoteNotes(e.target.value)}
+                    placeholder="INPUT NOTES / CATATAN..."
+                    className="w-full p-3 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none resize-none leading-relaxed"
+                  />
+                </div>
+
+                {/* TERM OF PAYMENT BOX */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <div className="inline-block px-3 py-1 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest">
+                      TERM OF PAYMENT
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setQuotePaymentTerms((prev) => prev ? `${prev}\n- ` : "- ")}
+                      className="px-2.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-md text-[10px] font-black uppercase cursor-pointer"
+                      title="Tambah Termin"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={quotePaymentTerms}
+                    onChange={(e) => setQuotePaymentTerms(e.target.value)}
+                    placeholder="INPUT TERMIN PEMBAYARAN..."
+                    className="w-full p-3 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none resize-none leading-relaxed"
+                  />
+                </div>
+              </div>
+
+              {/* SISI KANAN: TOTAL, 3 CHECKLIST (DISKON, PPN 11%, ONGKIR), GRAND TOTAL */}
+              <div className="md:col-span-5 bg-slate-50 p-4 sm:p-5 rounded-2xl border-2 border-slate-300 space-y-3 font-sans">
                 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    {boqProjects.length > 0 ? (
-                      <select
-                        className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-sans font-extrabold text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-350"
-                        value={quoteBoqId}
-                        onChange={(e) => {
-                          const boqId = e.target.value;
-                          setQuoteBoqId(boqId);
-                          if (!boqId) return;
-                          const selectedBoq = boqProjects.find((b) => b.id === boqId);
-                          if (!selectedBoq) return;
-                          
-                          // Auto populate values
-                          setQuoteRecipient(selectedBoq.clientName || "");
-                          setQuoteJobDesc(`Rancangan Projek ${selectedBoq.name} (Kapasitas Desain: ${selectedBoq.capacity || "-"})`);
-                          setQuoteAttention(selectedBoq.description || `Lampiran SPH Rancang Projek ${selectedBoq.name}`);
-                          
-                          // Set items with detailed calculations
-                          if (selectedBoq.items && selectedBoq.items.length > 0) {
-                            const mappedItems = selectedBoq.items.map((bi: any, index: number) => {
-                              const totalUnitPrice = (bi.priceItem || 0) + (bi.priceService || 0) + (bi.priceInstallation || 0);
-                              return {
-                                id: `item-${Date.now()}-${index}`,
-                                description: `${bi.name} (${bi.brand || "Standar"})${bi.specifications ? `\nSpesifikasi: ${bi.specifications}` : ""}`,
-                                vol: bi.quantity || 1,
-                                unit: bi.unit || "Unit",
-                                unitPrice: totalUnitPrice,
-                                total: (bi.quantity || 1) * totalUnitPrice
-                              };
-                            });
-                            setQuotationItems(mappedItems);
-                          }
-                        }}
-                      >
-                        <option value="">-- Hubungkan dengan Rencana BOQ Kustom Anda --</option>
-                        {boqProjects.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.name} - Klien: {b.clientName || "Instansi"} ({b.items?.length || 0} item, Rp {b.costs?.finalTotal?.toLocaleString("id-ID")})
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <div className="text-xs font-black text-slate-400 bg-slate-100 p-3 rounded-xl border border-dashed border-slate-200 text-center">
-                        Belum ada rancangan BOQ di E-Katalog. Silakan buat rancangan baru di E-Katalog terlebih dahulu.
+                {/* ROW: TOTAL (OTOMATIS) */}
+                <div className="flex items-center justify-between pb-2 border-b-2 border-slate-200">
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                    TOTAL
+                  </span>
+                  <span className="text-sm font-mono font-black text-slate-900 bg-white px-3 py-1.5 rounded-lg border border-slate-300">
+                    Rp {subTotalCalc.toLocaleString("id-ID")}
+                  </span>
+                </div>
+
+                {/* ROW: CHECKLIST 1: DISKON */}
+                <div className="p-3 bg-white rounded-xl border border-slate-300 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includeDiscount}
+                        onChange={(e) => setIncludeDiscount(e.target.checked)}
+                        className="w-5 h-5 rounded accent-slate-900 cursor-pointer"
+                      />
+                      <span className="text-xs font-black text-slate-800">
+                        DISKON
+                      </span>
+                    </label>
+                    {includeDiscount && (
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setQuoteDiscountType("rupiah")}
+                          className={`px-2 py-0.5 text-[9px] font-black rounded ${quoteDiscountType === "rupiah" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}
+                        >
+                          Rp
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setQuoteDiscountType("percent")}
+                          className={`px-2 py-0.5 text-[9px] font-black rounded ${quoteDiscountType === "percent" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"}`}
+                        >
+                          %
+                        </button>
                       </div>
                     )}
                   </div>
-                  <div className="flex items-center">
-                    <span className="text-[10px] text-indigo-650 font-sans font-extrabold bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-1.5 flex items-center gap-1.5 w-full">
-                      <CheckCircle size={11} className="text-emerald-500 animate-pulse" /> 
-                      {boqProjects.length > 0
-                        ? "Projek BOQ terpilih akan digabungkan di halaman setelah Surat Penawaran (SPH) secara otomatis."
-                        : "Buat BOQ baru di menu E-Katalog untuk mengaktifkan penggabungan otomatis."
-                      }
-                    </span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Nomor Surat
-                  </label>
-                  <input
-                    value={quoteNumber}
-                    onChange={(e) => setQuoteNumber(e.target.value)}
-                    name="number"
-                    required
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Pekerjaan
-                  </label>
-                  <textarea
-                    value={quoteJobDesc}
-                    onChange={(e) => setQuoteJobDesc(e.target.value)}
-                    name="jobDescription"
-                    required
-                    rows={4}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none resize-none focus:bg-white focus:border-primary/20 transition-all"
-                    placeholder="Contoh: Pemeliharaan IPAL dan STP di Gedung A..."
-                  />
-                </div>
-              </div>
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Kepada
-                  </label>
-                  <input
-                    value={quoteRecipient}
-                    onChange={(e) => setQuoteRecipient(e.target.value)}
-                    name="recipient"
-                    required
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Up / Alamat
-                  </label>
-                  <input
-                    value={quoteAttention}
-                    onChange={(e) => setQuoteAttention(e.target.value)}
-                    name="attention"
-                    required
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none"
-                  />
-                </div>
-                <input
-                  type="hidden"
-                  name="date"
-                  defaultValue={new Date().toLocaleDateString("id-ID", {
-                    day: "2-digit",
-                    month: "long",
-                    year: "numeric",
-                  })}
-                />
-              </div>
-            </div>
-            {isAttachmentOnlyMode ? (
-              <div className="p-6 bg-slate-900/5 border border-slate-200/80 rounded-[2.5rem] space-y-4 text-left">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-8 h-8 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold">
-                    📎
-                  </div>
-                  <div>
-                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider">
-                      Informasi Nilai SPH Global & Lampiran Berkas
-                    </h4>
-                    <p className="text-[10px] text-slate-500 font-semibold leading-none">
-                      Masukkan nilai akhir surat penawaran Anda. Berkas lampiran di atas akan disimpan sebagai dokumen SPH utama.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Total Nilai Penawaran (Grand Total Rupiah)
-                    </label>
-                    <div className="relative">
-                      <span className="absolute left-5 top-1/2 -translate-y-1/2 text-sm font-black text-slate-400">
-                        Rp
-                      </span>
+                  {includeDiscount ? (
+                    <div className="flex items-center gap-2">
                       <input
                         type="number"
-                        required
-                        value={manualGrandTotal || ""}
-                        onChange={(e) => setManualGrandTotal(Number(e.target.value))}
-                        placeholder="Contoh: 15000000"
-                        className="w-full pl-12 pr-6 py-4 bg-white border border-slate-200 rounded-2xl text-sm font-extrabold focus:outline-none focus:ring-4 focus:ring-primary/5 transition-all shadow-sm text-slate-800"
+                        min={0}
+                        value={quoteDiscountVal || ""}
+                        placeholder="ISI MANUAL BISA NOMINAL ATAU PERSENTASE"
+                        onChange={(e) => setQuoteDiscountVal(Math.max(0, parseFloat(e.target.value) || 0))}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none"
                       />
+                      <span className="text-xs font-mono font-bold text-rose-600 shrink-0">
+                        -Rp {discAmountCalc.toLocaleString("id-ID")}
+                      </span>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="text-[10px] text-slate-400 font-semibold italic">
+                      (Tidak diceklis - Di PDF nominal Rp 0)
+                    </div>
+                  )}
+                </div>
 
-                  <div className="bg-white p-4 rounded-2xl border border-slate-150 flex items-center justify-between shadow-sm">
-                    <div>
-                      <span className="text-xs font-black text-slate-700 block">
-                        Sudah Termasuk PPN 11%?
+                {/* ROW: CHECKLIST 2: PPN 11% */}
+                <div className="p-3 bg-white rounded-xl border border-slate-300 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includePPN}
+                        onChange={(e) => setIncludePPN(e.target.checked)}
+                        className="w-5 h-5 rounded accent-slate-900 cursor-pointer"
+                      />
+                      <span className="text-xs font-black text-slate-800">
+                        PPN 11%
                       </span>
-                      <span className="text-[10px] text-slate-400 font-semibold block leading-none">
-                        Aktifkan jika nilai di samping sudah bersih termasuk pajak.
+                    </label>
+                    <span className="text-xs font-mono font-black text-slate-900">
+                      Rp {includePPN ? taxAmountCalc.toLocaleString("id-ID") : "0"}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-semibold">
+                    {includePPN ? "OTOMATIS * 11%" : "(Tidak diceklis - Di PDF nominal Rp 0)"}
+                  </div>
+                </div>
+
+                {/* ROW: CHECKLIST 3: ONGKIR */}
+                <div className="p-3 bg-white rounded-xl border border-slate-300 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includeShipping}
+                        onChange={(e) => setIncludeShipping(e.target.checked)}
+                        className="w-5 h-5 rounded accent-slate-900 cursor-pointer"
+                      />
+                      <span className="text-xs font-black text-slate-800">
+                        ONGKIR
                       </span>
-                    </div>
+                    </label>
+                    <span className="text-xs font-mono font-black text-slate-900">
+                      Rp {includeShipping ? Number(shippingCost || 0).toLocaleString("id-ID") : "0"}
+                    </span>
+                  </div>
+                  {includeShipping ? (
                     <input
-                      type="checkbox"
-                      checked={manualIncludePPN}
-                      onChange={(e) => setManualIncludePPN(e.target.checked)}
-                      className="w-5 h-5 accent-primary rounded cursor-pointer"
+                      type="number"
+                      min={0}
+                      value={shippingCost || ""}
+                      placeholder="ISI MANUAL ONGKIR"
+                      onChange={(e) => setShippingCost(Math.max(0, parseFloat(e.target.value) || 0))}
+                      className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none"
                     />
-                  </div>
+                  ) : (
+                    <div className="text-[10px] text-slate-400 font-semibold italic">
+                      (Tidak diceklis - Di PDF nominal Rp 0)
+                    </div>
+                  )}
                 </div>
 
-                {!uploadedFileInfo && (
-                  <div className="p-3 bg-amber-50 border border-amber-150 rounded-xl text-[10px] text-amber-700 font-bold flex items-center gap-2">
-                    <span>⚠️</span>
-                    <span><strong>Harap upload berkas lampiran terlebih dahulu</strong> di panel upload atas agar SPH terdokumentasi dengan baik.</span>
+                {/* ROW AKHIR: TOTAL (OTOMATIS MENJUMLAHKAN DARI TOTAL AWAL SAMPAI ONGKIR) */}
+                <div className="p-3.5 bg-slate-900 text-white rounded-xl space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase tracking-wider">
+                      TOTAL
+                    </span>
+                    <span className="text-base font-mono font-black text-emerald-400">
+                      Rp {grandTotalCalc.toLocaleString("id-ID")}
+                    </span>
                   </div>
-                )}
-              </div>
-            ) : (
-              <div className="pt-6 border-t border-slate-100">
-                <div className="flex justify-between items-center mb-4">
-                  <h4 className="text-sm font-black text-slate-900 uppercase tracking-widest">
-                    Item Pekerjaan
-                  </h4>
-                  <button
-                    type="button"
-                    onClick={addQuotationItem}
-                    className="flex items-center gap-2 px-4 py-2 bg-emerald-50 text-emerald-600 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-emerald-100 transition-all"
-                  >
-                    <Plus size={14} />
-                    <span>Tambah Item</span>
-                  </button>
+                  <p className="text-[9px] text-slate-300 font-semibold leading-tight">
+                    OTOMATIS MENJUMLAHKAN DARI TOTAL AWAL SAMPAI ONGKIR
+                  </p>
                 </div>
-                <div className="space-y-4">
-                  {quotationItems.map((item, idx) => (
-                    <div
-                      key={idx}
-                      className="p-4 bg-slate-50/50 border border-slate-100 rounded-[24px] space-y-4"
-                    >
-                      <div className="flex gap-2">
-                        <div className="flex-1">
-                          <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 ml-1">
-                            Deskripsi Pekerjaan / Uraian
-                          </p>
-                          <input
-                            value={item.description || ""}
-                            onChange={(e) =>
-                              updateQuotationItem(
-                                idx,
-                                "description",
-                                e.target.value,
-                              )
-                            }
-                            placeholder="Contoh: Pengadaan Material Kabel..."
-                            className="w-full px-5 py-4 bg-white border border-slate-200 rounded-2xl text-xs font-black outline-none focus-border-primary/30 transition-all shadow-sm"
-                          />
-                        </div>
-                        <div className="pt-6">
-                          <button
-                            type="button"
-                            onClick={() => removeQuotationItem(idx)}
-                            disabled={quotationItems.length <= 1}
-                            className="w-12 h-12 flex-shrink-0 flex items-center justify-center bg-rose-50 text-rose-500 rounded-2xl hover:bg-rose-100 disabled:opacity-30 transition-all border border-rose-100"
-                          >
-                            <Trash2 size={18} />
-                          </button>
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="space-y-1.5">
-                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                            Volume
-                          </label>
-                          <input
-                            value={item.vol || 0}
-                            onChange={(e) =>
-                              updateQuotationItem(
-                                idx,
-                                "vol",
-                                Number(e.target.value),
-                              )
-                            }
-                            type="number"
-                            className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-black outline-none"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                            Satuan
-                          </label>
-                          <input
-                            value={item.unit || ""}
-                            onChange={(e) =>
-                              updateQuotationItem(idx, "unit", e.target.value)
-                            }
-                            placeholder="Lot"
-                            className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-black outline-none"
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                            Harga
-                          </label>
-                          <input
-                            value={item.unitPrice || 0}
-                            onChange={(e) =>
-                              updateQuotationItem(
-                                idx,
-                                "unitPrice",
-                                Number(e.target.value),
-                              )
-                            }
-                            type="number"
-                            className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl text-xs font-black outline-none"
-                          />
-                        </div>
-                      </div>
+
+              </div>
+            </div>
+
+            {/* 6. BAGIAN PENUTUP & TANDA TANGAN (BAWAH KIRI PERSIS SESUAI SKETCH) */}
+            <div className="pt-4 border-t-2 border-slate-200 space-y-3">
+              <div className="space-y-0.5 text-xs text-slate-700 font-semibold leading-relaxed">
+                <p>Demikian penawaran ini kami sampaikan. Atas perhatian dan kerjasamanya kami ucapkan terimakasih.</p>
+                <p className="font-bold">Hormat Kami</p>
+              </div>
+
+              <div className="w-full max-w-xs space-y-2">
+                {/* UPLOAD TANDA TANGAN DIGITAL BOX */}
+                <input
+                  type="file"
+                  id="quote-signature-input"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        if (ev.target?.result) setQuoteSignature(ev.target.result as string);
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
+                />
+                <div
+                  onClick={() => document.getElementById("quote-signature-input")?.click()}
+                  className="w-full h-32 border-2 border-slate-400 hover:border-slate-800 rounded-2xl flex flex-col items-center justify-center p-3 cursor-pointer transition-all bg-slate-50/60 hover:bg-slate-50 relative group select-none"
+                >
+                  {quoteSignature ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center relative">
+                      <img src={quoteSignature} alt="Tanda Tangan Digital" className="max-h-20 max-w-full object-contain" />
+                      <span className="text-[9px] font-black text-slate-500 mt-1">
+                        Klik untuk ganti TTD
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setQuoteSignature("");
+                        }}
+                        className="absolute top-0 right-0 px-2 py-0.5 bg-rose-50 text-rose-600 rounded text-[9px] font-black border border-rose-200"
+                      >
+                        Hapus
+                      </button>
                     </div>
-                  ))}
+                  ) : (
+                    <div className="text-center space-y-1">
+                      <span className="text-xl block">✍️</span>
+                      <span className="text-[11px] font-black uppercase tracking-wider text-slate-800 block">
+                        UPLOAD TANDA TANGAN DIGITAL
+                      </span>
+                      <span className="text-[9px] text-slate-400 font-bold block">
+                        Klik untuk pilih file TTD / Stempel
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* INPUT NAMA LENGKAP */}
+                <div className="space-y-1">
+                  <input
+                    type="text"
+                    required
+                    value={quotePreparedByName}
+                    onChange={(e) => setQuotePreparedByName(e.target.value)}
+                    placeholder="INPUT NAMA LENGKAP"
+                    className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black uppercase tracking-wider text-slate-900 focus:border-slate-800 outline-none"
+                  />
                 </div>
               </div>
-            )}
-            <div className="flex gap-4 pt-8">
+            </div>
+
+            {/* 7. MODAL BUTTONS (BATAL & SIMPAN) */}
+            <div className="flex gap-4 pt-4 border-t-2 border-slate-200">
               <button
                 type="button"
                 onClick={() => {
@@ -35539,17 +36085,18 @@ export default function App() {
                   setViewingQuotation(null);
                   setQuotationItems([]);
                 }}
-                className="flex-1 py-4 bg-slate-100 rounded-3xl font-black text-xs uppercase text-slate-500"
+                className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl font-black text-xs uppercase tracking-wider transition-all cursor-pointer"
               >
                 Batal
               </button>
               <button
                 type="submit"
-                className="flex-[2] py-4 bg-primary text-white rounded-3xl font-black text-xs uppercase shadow-xl hover:shadow-primary/20 transition-all"
+                className="flex-[2] py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-black text-xs uppercase tracking-wider transition-all shadow-xl hover:shadow-slate-900/20 cursor-pointer"
               >
-                Simpan & Download PDF
+                Simpan & Format PDF
               </button>
             </div>
+
           </form>
         </motion.div>
       </div>

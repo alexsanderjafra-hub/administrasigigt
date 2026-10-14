@@ -122,6 +122,12 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const [qPreparedBy, setQPreparedBy] = useState("PT. GARDA INOVASI GLOBALTECH");
   const [qItems, setQItems] = useState<any[]>([]);
   const [connectedBoqId, setConnectedBoqId] = useState("");
+  const [qType, setQType] = useState<"Barang dan Jasa" | "Barang" | "Jasa">("Barang dan Jasa");
+  const [includeShipping, setIncludeShipping] = useState<boolean>(false);
+  const [shippingCost, setShippingCost] = useState<number>(0);
+  const [includeServiceFee, setIncludeServiceFee] = useState<boolean>(false);
+  const [serviceFee, setServiceFee] = useState<number>(0);
+  const [includePPN, setIncludePPN] = useState<boolean>(true);
 
   // If BOQ spec
   const [bName, setBName] = useState("");
@@ -144,6 +150,12 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         setQPreparedBy(initialQuotationData.preparedBy || "PT. GARDA INOVASI GLOBALTECH");
         setQItems(initialQuotationData.items ? [...initialQuotationData.items] : []);
         setConnectedBoqId(initialQuotationData.boqProjectId || "");
+        setQType(initialQuotationData.quotationType || "Barang dan Jasa");
+        setIncludeShipping(initialQuotationData.includeShipping !== undefined ? initialQuotationData.includeShipping : false);
+        setShippingCost(initialQuotationData.shippingCost || 0);
+        setIncludeServiceFee(initialQuotationData.includeServiceFee !== undefined ? initialQuotationData.includeServiceFee : false);
+        setServiceFee(initialQuotationData.serviceFee || 0);
+        setIncludePPN(initialQuotationData.includePPN !== undefined ? initialQuotationData.includePPN : true);
 
         // Load dynamic attributes
         setDiscountType(initialQuotationData.discountType || "rupiah");
@@ -182,9 +194,11 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const qDiscountAmount = discountType === "percent" 
     ? Math.round(qSubtotal * (discountVal / 100))
     : discountVal;
-  const qTaxBase = Math.max(0, qSubtotal - qDiscountAmount);
-  const qTax = Math.round(qTaxBase * (taxRate / 100));
-  const qGrandTotal = qTaxBase + qTax;
+  const qShipping = includeShipping ? Number(shippingCost || 0) : 0;
+  const qServiceFee = includeServiceFee ? Number(serviceFee || 0) : 0;
+  const qTaxBase = Math.max(0, qSubtotal - qDiscountAmount + qServiceFee);
+  const qTax = includePPN ? Math.round(qTaxBase * (taxRate / 100)) : 0;
+  const qGrandTotal = qSubtotal - qDiscountAmount + qShipping + qServiceFee + qTax;
 
   const numberToWordsID = (num: number): string => {
     const values = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"];
@@ -271,9 +285,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         jobDescription: qJobDesc,
         notes: qNotes,
         preparedBy: qPreparedBy,
-        items: qItems,
-        boqProjectId: connectedBoqId,
         subTotal: qSubtotal,
+        quotationType: qType,
+        includeShipping,
+        shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+        includeServiceFee,
+        serviceFee: includeServiceFee ? Number(serviceFee || 0) : 0,
+        includePPN,
         discountType,
         discountVal,
         taxRate,
@@ -361,31 +379,50 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       pdf.setTextColor(0, 51, 153);
       pdf.text(compEmail, pageWidth - marginSize, 37, { align: "right" });
 
-      pdf.setTextColor(0, 0, 0);
-      pdf.setFontSize(14);
+      pdf.setTextColor(15, 23, 42);
+      pdf.setFontSize(13);
       pdf.setFont("helvetica", "bold");
-      pdf.text("SURAT PENAWARAN HARGA", pageWidth / 2, 53, { align: "center" });
-      pdf.line(pageWidth / 2 - 30, 55, pageWidth / 2 + 30, 55);
+      pdf.text("SURAT PENAWARAN HARGA", pageWidth / 2, 51, { align: "center" });
 
-      pdf.setFontSize(9);
+      const typeSubtext = qType === "Barang" 
+        ? "PENGADAAN BARANG" 
+        : qType === "Jasa" 
+        ? "PENYEDIAAN JASA" 
+        : "PENGADAAN BARANG & JASA";
+      pdf.setFontSize(8);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(22, 38, 70);
+      pdf.text(`(${typeSubtext})`, pageWidth / 2, 56, { align: "center" });
+
+      pdf.setDrawColor(22, 38, 70);
+      pdf.setLineWidth(0.4);
+      pdf.line(pageWidth / 2 - 38, 58, pageWidth / 2 + 38, 58);
+
+      pdf.setFontSize(8.5);
       pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(0, 0, 0);
       pdf.text("Kepada", marginSize, 66);
-      pdf.text(":", marginSize + 20, 66);
-      pdf.text(qRecipient, marginSize + 23, 66);
-      pdf.text("Up", marginSize, 71);
-      pdf.text(":", marginSize + 20, 71);
-      pdf.text(qAttention, marginSize + 23, 71);
-
-      pdf.text("Nomor", pageWidth - marginSize - 55, 66);
-      pdf.text(":", pageWidth - marginSize - 25, 66);
-      pdf.text(qNum, pageWidth - marginSize - 22, 66);
-      pdf.text("Tanggal", pageWidth - marginSize - 55, 71);
-      pdf.text(":", pageWidth - marginSize - 25, 71);
-      pdf.text(qDate, pageWidth - marginSize - 22, 71);
-      pdf.text("Pekerjaan", pageWidth - marginSize - 55, 76);
-      pdf.text(":", pageWidth - marginSize - 25, 76);
+      pdf.text(":", marginSize + 18, 66);
       pdf.setFont("helvetica", "bold");
-      pdf.text(qJobDesc, pageWidth - marginSize - 22, 76, { maxWidth: 65 });
+      pdf.text(qRecipient, marginSize + 21, 66);
+      pdf.setFont("helvetica", "normal");
+      pdf.text("Up", marginSize, 71);
+      pdf.text(":", marginSize + 18, 71);
+      pdf.text(qAttention, marginSize + 21, 71);
+
+      const rightMetaX = pageWidth - marginSize - 62;
+      pdf.text("Nomor", rightMetaX, 66);
+      pdf.text(":", rightMetaX + 20, 66);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(qNum, rightMetaX + 23, 66);
+      pdf.setFont("helvetica", "normal");
+      pdf.text("Tanggal", rightMetaX, 71);
+      pdf.text(":", rightMetaX + 20, 71);
+      pdf.text(qDate, rightMetaX + 23, 71);
+      pdf.text("Pekerjaan", rightMetaX, 76);
+      pdf.text(":", rightMetaX + 20, 76);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(qJobDesc, rightMetaX + 23, 76, { maxWidth: 58 });
       pdf.setFont("helvetica", "normal");
 
       pdf.text(
@@ -411,16 +448,100 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         ]
       ];
 
-      if (qDiscountAmount > 0) {
-        footRows.push([
-          { content: `DISKON (${discountType === "percent" ? `${discountVal}%` : "Rp"})`, colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 8, textColor: [30, 41, 59] } },
-          { content: `-Rp ${qDiscountAmount.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 8.5, textColor: [220, 38, 38] } }
-        ]);
-      }
-
+      // Checkpoint: DISKON (Muncul tulisan, jika tidak diceklis nominalnya Rp 0)
       footRows.push([
-        { content: `PPN ${taxRate}%`, colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 8, textColor: [30, 41, 59] } },
-        { content: `Rp ${qTax.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 8.5 } }
+        { 
+          content: `DISKON ${discountType === "percent" && discountVal > 0 ? `(${discountVal}%)` : ""}`.trim(), 
+          colSpan: 4, 
+          styles: { 
+            halign: "right", 
+            fontStyle: qDiscountAmount > 0 ? ("bold" as const) : ("normal" as const), 
+            fontSize: 8, 
+            textColor: qDiscountAmount > 0 ? [220, 38, 38] : [100, 116, 139] 
+          } 
+        },
+        { 
+          content: qDiscountAmount > 0 ? `-Rp ${qDiscountAmount.toLocaleString("id-ID")}` : "Rp 0", 
+          colSpan: 2, 
+          styles: { 
+            halign: "right", 
+            fontStyle: qDiscountAmount > 0 ? ("bold" as const) : ("normal" as const), 
+            fontSize: 8.5,
+            textColor: qDiscountAmount > 0 ? [220, 38, 38] : [100, 116, 139]
+          } 
+        }
+      ]);
+
+      // Checkpoint 1: ONGKOS KIRIM / PENGIRIMAN (Muncul tulisan, jika tidak diceklis nominalnya Rp 0)
+      footRows.push([
+        { 
+          content: "ONGKOS KIRIM / PENGIRIMAN", 
+          colSpan: 4, 
+          styles: { 
+            halign: "right", 
+            fontStyle: includeShipping ? ("bold" as const) : ("normal" as const), 
+            fontSize: 8, 
+            textColor: includeShipping ? [30, 41, 59] : [100, 116, 139] 
+          } 
+        },
+        { 
+          content: includeShipping ? `Rp ${Number(shippingCost || 0).toLocaleString("id-ID")}` : "Rp 0", 
+          colSpan: 2, 
+          styles: { 
+            halign: "right", 
+            fontStyle: includeShipping ? ("bold" as const) : ("normal" as const), 
+            fontSize: 8.5,
+            textColor: includeShipping ? [30, 41, 59] : [100, 116, 139]
+          } 
+        }
+      ]);
+
+      // Checkpoint 2: BIAYA JASA & INSTALASI (Muncul tulisan, jika tidak diceklis nominalnya Rp 0)
+      footRows.push([
+        { 
+          content: "BIAYA JASA & INSTALASI", 
+          colSpan: 4, 
+          styles: { 
+            halign: "right", 
+            fontStyle: includeServiceFee ? ("bold" as const) : ("normal" as const), 
+            fontSize: 8, 
+            textColor: includeServiceFee ? [30, 41, 59] : [100, 116, 139] 
+          } 
+        },
+        { 
+          content: includeServiceFee ? `Rp ${Number(serviceFee || 0).toLocaleString("id-ID")}` : "Rp 0", 
+          colSpan: 2, 
+          styles: { 
+            halign: "right", 
+            fontStyle: includeServiceFee ? ("bold" as const) : ("normal" as const), 
+            fontSize: 8.5,
+            textColor: includeServiceFee ? [30, 41, 59] : [100, 116, 139]
+          } 
+        }
+      ]);
+
+      // Checkpoint 3: PPN (Muncul tulisan, jika tidak diceklis nominalnya Rp 0)
+      footRows.push([
+        { 
+          content: `PPN ${taxRate}%`, 
+          colSpan: 4, 
+          styles: { 
+            halign: "right", 
+            fontStyle: includePPN ? ("bold" as const) : ("normal" as const), 
+            fontSize: 8, 
+            textColor: includePPN ? [30, 41, 59] : [100, 116, 139] 
+          } 
+        },
+        { 
+          content: includePPN ? `Rp ${qTax.toLocaleString("id-ID")}` : "Rp 0", 
+          colSpan: 2, 
+          styles: { 
+            halign: "right", 
+            fontStyle: includePPN ? ("bold" as const) : ("normal" as const), 
+            fontSize: 8.5,
+            textColor: includePPN ? [30, 41, 59] : [100, 116, 139]
+          } 
+        }
       ]);
 
       footRows.push([
@@ -432,12 +553,12 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         head: [tableHeaders],
         body: qTableRows,
         foot: footRows,
-        startY: 92,
+        startY: 91,
         margin: { left: marginSize, right: marginSize, bottom: 20 },
         theme: "grid",
         styles: {
           fontSize: 8,
-          cellPadding: 2.5,
+          cellPadding: 2.8,
           textColor: [15, 23, 42],
           lineColor: [226, 232, 240],
           lineWidth: 0.1,
@@ -449,10 +570,11 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           fontStyle: "bold",
           halign: "center",
           lineColor: [22, 38, 70],
-          lineWidth: 0.1
+          lineWidth: 0.1,
+          fontSize: 8.5
         },
         columnStyles: {
-          0: { halign: "center", cellWidth: 10, fontStyle: "bold" },
+          0: { halign: "center", cellWidth: 9, fontStyle: "bold" },
           1: { halign: "left" },
           2: { halign: "center", cellWidth: 12 },
           3: { halign: "center", cellWidth: 16 },
@@ -630,9 +752,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           jobDescription: qJobDesc,
           notes: qNotes,
           preparedBy: qPreparedBy,
-          items: qItems,
-          boqProjectId: connectedBoqId,
           subTotal: qSubtotal,
+          quotationType: qType,
+          includeShipping,
+          shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+          includeServiceFee,
+          serviceFee: includeServiceFee ? Number(serviceFee || 0) : 0,
+          includePPN,
           discountType,
           discountVal,
           taxRate,
@@ -901,63 +1027,180 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
 
               {type === "quotation" && (
                 <div className="bg-slate-950/60 p-4 rounded-2xl border border-slate-800 space-y-4">
-                  <h4 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                    <Percent size={12} className="text-emerald-400" /> Diskon & PPN (Pajak)
+                  <h4 className="text-[10px] font-extrabold text-indigo-400 uppercase tracking-widest flex items-center gap-2">
+                    📦 Pilihan Kategori Utama SPH
+                  </h4>
+                  
+                  <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-xl">
+                    {[
+                      { id: "Barang dan Jasa", label: "Barang & Jasa" },
+                      { id: "Barang", label: "Barang" },
+                      { id: "Jasa", label: "Jasa" },
+                    ].map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setQType(t.id as any)}
+                        className={`py-2 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all ${
+                          qType === t.id
+                            ? "bg-indigo-600 text-white shadow-sm font-extrabold"
+                            : "text-slate-400 hover:text-slate-200"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <h4 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-2 pt-2 border-t border-slate-800">
+                    <Percent size={12} className="text-emerald-400" /> Komponen Tambahan (3 Checklist)
                   </h4>
                   
                   <div className="space-y-3 font-sans text-xs">
-                    <div className="space-y-1">
-                      <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Tipe Diskon</label>
-                      <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-lg">
-                        <button
-                          type="button"
-                          onClick={() => setDiscountType("rupiah")}
-                          className={`py-1 text-[9px] font-black uppercase tracking-wider rounded transition-all ${
-                            discountType === "rupiah"
-                              ? "bg-slate-850 text-white shadow-sm border border-slate-700 font-extrabold"
-                              : "text-slate-400 hover:text-slate-200"
-                          }`}
-                        >
-                          Rupiah (Rp)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDiscountType("percent")}
-                          className={`py-1 text-[9px] font-black uppercase tracking-wider rounded transition-all ${
-                            discountType === "percent"
-                              ? "bg-slate-850 text-white shadow-sm border border-slate-700 font-extrabold"
-                              : "text-slate-400 hover:text-slate-200"
-                          }`}
-                        >
-                          Persentase (%)
-                        </button>
-                      </div>
+                    {/* Checklist 1: Ongkir */}
+                    <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2">
+                      <label className="flex items-center justify-between text-slate-300 font-bold cursor-pointer">
+                        <span className="text-[11px] flex items-center gap-1.5">
+                          🚚 Ongkos Kirim / Pengiriman
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={includeShipping}
+                          onChange={(e) => setIncludeShipping(e.target.checked)}
+                          className="w-4 h-4 rounded text-indigo-600 bg-slate-800 border-slate-700"
+                        />
+                      </label>
+                      {includeShipping && (
+                        <div className="space-y-1 pt-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">
+                            Nominal Ongkir (Rp)
+                          </label>
+                          <input
+                            type="number"
+                            value={shippingCost || ""}
+                            min={0}
+                            placeholder="0"
+                            onChange={(e) => setShippingCost(Math.max(0, parseFloat(e.target.value) || 0))}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono"
+                          />
+                        </div>
+                      )}
+                      {!includeShipping && (
+                        <p className="text-[9px] text-slate-500 italic">
+                          *Tulisan tetap dicetak di PDF dengan nominal Rp 0
+                        </p>
+                      )}
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="space-y-1 session-no-trigger">
-                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">
-                          {discountType === "percent" ? "Nominal Diskon (%)" : "Nominal Diskon (Rp)"}
-                        </label>
+                    {/* Checklist 2: Biaya Jasa & Instalasi */}
+                    <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2">
+                      <label className="flex items-center justify-between text-slate-300 font-bold cursor-pointer">
+                        <span className="text-[11px] flex items-center gap-1.5">
+                          🛠️ Biaya Jasa & Instalasi
+                        </span>
                         <input
-                          type="number"
-                          value={discountVal}
-                          min={0}
-                          onChange={(e) => setDiscountVal(Math.max(0, parseFloat(e.target.value) || 0))}
-                          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono"
+                          type="checkbox"
+                          checked={includeServiceFee}
+                          onChange={(e) => setIncludeServiceFee(e.target.checked)}
+                          className="w-4 h-4 rounded text-indigo-600 bg-slate-800 border-slate-700"
                         />
-                      </div>
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Nilai PPN (%)</label>
+                      </label>
+                      {includeServiceFee && (
+                        <div className="space-y-1 pt-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">
+                            Nominal Jasa & Pasang (Rp)
+                          </label>
+                          <input
+                            type="number"
+                            value={serviceFee || ""}
+                            min={0}
+                            placeholder="0"
+                            onChange={(e) => setServiceFee(Math.max(0, parseFloat(e.target.value) || 0))}
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono"
+                          />
+                        </div>
+                      )}
+                      {!includeServiceFee && (
+                        <p className="text-[9px] text-slate-500 italic">
+                          *Tulisan tetap dicetak di PDF dengan nominal Rp 0
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Checklist 3: PPN */}
+                    <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2">
+                      <label className="flex items-center justify-between text-slate-300 font-bold cursor-pointer">
+                        <span className="text-[11px] flex items-center gap-1.5">
+                          🧾 PPN ({taxRate}%)
+                        </span>
                         <input
-                          type="number"
-                          value={taxRate}
-                          min={0}
-                          max={100}
-                          onChange={(e) => setTaxRate(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
-                          className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono"
+                          type="checkbox"
+                          checked={includePPN}
+                          onChange={(e) => setIncludePPN(e.target.checked)}
+                          className="w-4 h-4 rounded text-indigo-600 bg-slate-800 border-slate-700"
                         />
+                      </label>
+                      {includePPN && (
+                        <div className="grid grid-cols-2 gap-2 pt-1">
+                          <div>
+                            <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">
+                              Tarif (%)
+                            </label>
+                            <input
+                              type="number"
+                              value={taxRate}
+                              min={0}
+                              max={100}
+                              onChange={(e) => setTaxRate(Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">
+                              Nominal Pajak
+                            </label>
+                            <div className="px-2.5 py-1.5 bg-slate-950/50 border border-slate-800 rounded-lg text-xs font-mono text-emerald-400 font-bold">
+                              Rp {qTax.toLocaleString("id-ID")}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      {!includePPN && (
+                        <p className="text-[9px] text-slate-500 italic">
+                          *Tulisan tetap dicetak di PDF dengan nominal Rp 0
+                        </p>
+                      )}
+                    </div>
+
+                    {/* Optional Diskon */}
+                    <div className="space-y-1 pt-1 border-t border-slate-800">
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider">Potongan Diskon</label>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setDiscountType("rupiah")}
+                            className={`px-1.5 py-0.5 text-[8px] font-bold rounded ${discountType === "rupiah" ? "bg-slate-800 text-white" : "text-slate-500"}`}
+                          >
+                            Rp
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDiscountType("percent")}
+                            className={`px-1.5 py-0.5 text-[8px] font-bold rounded ${discountType === "percent" ? "bg-slate-800 text-white" : "text-slate-500"}`}
+                          >
+                            %
+                          </button>
+                        </div>
                       </div>
+                      <input
+                        type="number"
+                        value={discountVal || ""}
+                        min={0}
+                        placeholder="0"
+                        onChange={(e) => setDiscountVal(Math.max(0, parseFloat(e.target.value) || 0))}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono"
+                      />
                     </div>
                   </div>
                 </div>
@@ -1113,6 +1356,30 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
 
                     {type === "quotation" ? (
                       <div className="grid grid-cols-1 gap-3 font-sans text-xs">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Kategori Utama SPH</label>
+                          <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-900 border border-slate-800 rounded-lg">
+                            {[
+                              { id: "Barang dan Jasa", label: "Barang & Jasa" },
+                              { id: "Barang", label: "Barang" },
+                              { id: "Jasa", label: "Jasa" },
+                            ].map((t) => (
+                              <button
+                                key={t.id}
+                                type="button"
+                                onClick={() => setQType(t.id as any)}
+                                className={`py-1 text-[9px] font-black uppercase tracking-wider rounded transition-all ${
+                                  qType === t.id
+                                    ? "bg-indigo-600 text-white font-extrabold"
+                                    : "text-slate-400 hover:text-slate-200"
+                                }`}
+                              >
+                                {t.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
                         <div className="space-y-1">
                           <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Nomor SPH / Ref</label>
                           <input
@@ -1410,10 +1677,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                   </div>
 
                   {/* Doc Title */}
-                  <div className="text-center">
+                  <div className="text-center space-y-0.5">
                     <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest border-b border-slate-900 inline-block pb-0.5">
                       SURAT PENAWARAN HARGA
                     </h3>
+                    <p className="text-[8px] font-black text-indigo-900 uppercase tracking-wider">
+                      ({qType === "Barang" ? "PENGADAAN BARANG" : qType === "Jasa" ? "PENYEDIAAN JASA" : "PENGADAAN BARANG & JASA"})
+                    </p>
                   </div>
 
                   {/* Metadata Info */}
@@ -1463,16 +1733,43 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                           <td colSpan={4} className="px-2 py-1.5 text-right border-r border-slate-300 text-[8px]">SUBTOTAL</td>
                           <td colSpan={2} className="px-2 py-1.5 text-right font-mono font-black text-slate-950 text-[10px]">Rp {qSubtotal.toLocaleString("id-ID")}</td>
                         </tr>
-                        {qDiscountAmount > 0 && (
-                          <tr className="bg-rose-50/40 font-extrabold text-slate-800 text-[9px]">
-                            <td colSpan={4} className="px-2 py-1.5 text-right border-r border-slate-300 text-[8px]">DISKON ({discountType === "percent" ? `${discountVal}%` : "Rp"})</td>
-                            <td colSpan={2} className="px-2 py-1.5 text-right font-mono text-[9px] text-rose-600">-Rp {qDiscountAmount.toLocaleString("id-ID")}</td>
-                          </tr>
-                        )}
+                        {/* Checkpoint 0: DISKON */}
                         <tr className="bg-slate-50 font-extrabold text-slate-800 text-[9px]">
-                          <td colSpan={4} className="px-2 py-1.5 text-right border-r border-slate-300 text-[8px]">PPN {taxRate}%</td>
-                          <td colSpan={2} className="px-2 py-1.5 text-right font-mono text-[9px]">Rp {qTax.toLocaleString("id-ID")}</td>
+                          <td colSpan={4} className="px-2 py-1.5 text-right border-r border-slate-300 text-[8px]">
+                            {`DISKON ${discountType === "percent" && discountVal > 0 ? `(${discountVal}%)` : ""}`.trim()}
+                          </td>
+                          <td colSpan={2} className={`px-2 py-1.5 text-right font-mono text-[9px] ${qDiscountAmount > 0 ? "text-rose-600 font-bold" : "text-slate-400"}`}>
+                            {qDiscountAmount > 0 ? `-Rp ${qDiscountAmount.toLocaleString("id-ID")}` : "Rp 0"}
+                          </td>
                         </tr>
+                        {/* Checkpoint 1: ONGKOS KIRIM */}
+                        <tr className="bg-slate-50 font-extrabold text-slate-800 text-[9px]">
+                          <td colSpan={4} className="px-2 py-1.5 text-right border-r border-slate-300 text-[8px]">
+                            ONGKOS KIRIM / PENGIRIMAN
+                          </td>
+                          <td colSpan={2} className={`px-2 py-1.5 text-right font-mono text-[9px] ${includeShipping && shippingCost > 0 ? "text-slate-900 font-bold" : "text-slate-400"}`}>
+                            Rp {includeShipping ? Number(shippingCost || 0).toLocaleString("id-ID") : "0"}
+                          </td>
+                        </tr>
+                        {/* Checkpoint 2: BIAYA JASA & INSTALASI */}
+                        <tr className="bg-slate-50 font-extrabold text-slate-800 text-[9px]">
+                          <td colSpan={4} className="px-2 py-1.5 text-right border-r border-slate-300 text-[8px]">
+                            BIAYA JASA & INSTALASI
+                          </td>
+                          <td colSpan={2} className={`px-2 py-1.5 text-right font-mono text-[9px] ${includeServiceFee && serviceFee > 0 ? "text-slate-900 font-bold" : "text-slate-400"}`}>
+                            Rp {includeServiceFee ? Number(serviceFee || 0).toLocaleString("id-ID") : "0"}
+                          </td>
+                        </tr>
+                        {/* Checkpoint 3: PPN */}
+                        <tr className="bg-slate-50 font-extrabold text-slate-800 text-[9px]">
+                          <td colSpan={4} className="px-2 py-1.5 text-right border-r border-slate-300 text-[8px]">
+                            PPN {taxRate}%
+                          </td>
+                          <td colSpan={2} className={`px-2 py-1.5 text-right font-mono text-[9px] ${includePPN && qTax > 0 ? "text-slate-900 font-bold" : "text-slate-400"}`}>
+                            Rp {includePPN ? qTax.toLocaleString("id-ID") : "0"}
+                          </td>
+                        </tr>
+                        {/* GRAND TOTAL */}
                         <tr className="bg-indigo-50 border-t-2 border-indigo-300 font-black text-indigo-950 text-[10px]">
                           <td colSpan={4} className="px-2 py-1.5 text-right border-r border-indigo-200">GRAND TOTAL</td>
                           <td colSpan={2} className="px-2 py-1.5 text-right font-mono text-xs text-indigo-700">Rp {qGrandTotal.toLocaleString("id-ID")}</td>
