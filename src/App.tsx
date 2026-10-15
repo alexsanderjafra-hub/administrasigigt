@@ -146,6 +146,7 @@ import {
   RotateCcw,
   ArrowUpDown,
   SlidersHorizontal,
+  FolderOpen,
 } from "lucide-react";
 import {
   BarChart,
@@ -218,6 +219,8 @@ import { EKatalog } from "./components/EKatalog";
 import { AdminPurchaseOrderScreen } from "./components/AdminPurchaseOrderScreen";
 import AdminKasbonScreen from "./components/AdminKasbonScreen";
 import { DocumentPreviewModal } from "./components/DocumentPreviewModal";
+import { ImageRepositoryModal } from "./components/ImageRepositoryModal";
+import { imageRepositoryService } from "./services/imageRepositoryService";
 import SheetsDashboard from "./components/SheetsDashboard";
 import { getGoogleAccessToken, setGoogleAccessToken, syncAllDataToGoogleSheets } from "./services/sheets";
 import { calculateKasbonBalances, simulateKasbonAllocation, extractKasbonRecipient } from "./utils/kasbonHelper";
@@ -30941,7 +30944,10 @@ export default function App() {
   const [quoteCompAddress, setQuoteCompAddress] = useState<string>("Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09, Ds. Pisangan Jaya, Kec. Sepatan, Kab Tangerang, Banten 15525");
   const [quoteCompLogo, setQuoteCompLogo] = useState<string>("");
   const [quoteSignature, setQuoteSignature] = useState<string>("");
+  const [isImageRepoOpen, setIsImageRepoOpen] = useState(false);
+  const [imageRepoTargetCategory, setImageRepoTargetCategory] = useState<"logo" | "signature" | "all">("all");
   const [quotePreparedByName, setQuotePreparedByName] = useState<string>("");
+  const [quotePreparedByTitle, setQuotePreparedByTitle] = useState<string>("Direktur");
   const [includeDiscount, setIncludeDiscount] = useState<boolean>(false);
   const [quoteDiscountType, setQuoteDiscountType] = useState<"rupiah" | "percent">("rupiah");
   const [quoteDiscountVal, setQuoteDiscountVal] = useState<number>(0);
@@ -31245,6 +31251,7 @@ export default function App() {
         setQuoteCompLogo(viewingQuotation.compLogoUrl || "");
         setQuoteSignature(viewingQuotation.digitalSignatureUrl || "");
         setQuotePreparedByName(viewingQuotation.preparedBy || currentUser?.name || "ALEXSANDER");
+        setQuotePreparedByTitle(viewingQuotation.preparedByTitle || "Direktur");
         setIncludeDiscount(viewingQuotation.includeDiscount !== undefined ? viewingQuotation.includeDiscount : false);
         setQuoteDiscountType(viewingQuotation.discountType || "rupiah");
         setQuoteDiscountVal(viewingQuotation.discountVal || 0);
@@ -31291,9 +31298,15 @@ export default function App() {
         setQuoteTaxRate(11);
         setQuoteCompName("PT. GARDA INOVASI GLOBALTECH");
         setQuoteCompAddress("Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09, Ds. Pisangan Jaya, Kec. Sepatan, Kab Tangerang, Banten 15525");
-        setQuoteCompLogo("");
-        setQuoteSignature("");
+        
+        // Auto-load previously uploaded logo and signature from repository if available
+        const savedLogo = imageRepositoryService.getLatestImage("logo");
+        setQuoteCompLogo(savedLogo || "");
+        const savedSig = imageRepositoryService.getLatestImage("signature");
+        setQuoteSignature(savedSig || "");
+
         setQuotePreparedByName(currentUser?.name || "ALEXSANDER");
+        setQuotePreparedByTitle("Direktur");
         setIncludeDiscount(false);
         setQuoteDiscountType("rupiah");
         setQuoteDiscountVal(0);
@@ -31308,6 +31321,12 @@ export default function App() {
       }
     }
   }, [isQuotationModalOpen, viewingQuotation]);
+
+  useEffect(() => {
+    if (quotations && quotations.length > 0) {
+      imageRepositoryService.seedFromQuotations(quotations);
+    }
+  }, [quotations]);
 
   const logActivity = useCallback(
     async (module: string, action: string, details: string) => {
@@ -34573,6 +34592,7 @@ export default function App() {
       notes: quoteNotes,
       paymentTerms: quotePaymentTerms,
       preparedBy: quotePreparedByName || currentUser?.name || "ALEXSANDER",
+      preparedByTitle: quotePreparedByTitle || "Direktur",
       compName: quoteCompName,
       compAddress: quoteCompAddress,
       compLogoUrl: quoteCompLogo,
@@ -34584,6 +34604,13 @@ export default function App() {
       attachmentName: uploadedFileInfo?.name || viewingQuotation?.attachmentName || "",
       attachmentBase64: uploadedFileBase64 || viewingQuotation?.attachmentBase64 || "",
     };
+
+    if (quoteCompLogo) {
+      imageRepositoryService.saveImage(quoteCompLogo, "logo", `Logo ${quoteCompName || "Perusahaan"}`);
+    }
+    if (quoteSignature) {
+      imageRepositoryService.saveImage(quoteSignature, "signature", `TTD ${quotePreparedByName || "Direktur"}`);
+    }
 
     try {
       await dbService.setDocument("quotations", id, newQuotation);
@@ -34666,12 +34693,30 @@ export default function App() {
     const fmt = (val: number) => val.toLocaleString("id-ID");
 
     // 1. COMPANY HEADER
-    pdf.setFillColor(22, 38, 70);
-    pdf.rect(15, 15, 25, 25, "F");
-    pdf.setTextColor(255, 255, 255);
-    pdf.setFontSize(14);
-    pdf.setFont("helvetica", "bold");
-    pdf.text("GT", 22, 30);
+    if (quotation.compLogoUrl) {
+      try {
+        let format = "PNG";
+        if (quotation.compLogoUrl.includes("image/jpeg") || quotation.compLogoUrl.includes("image/jpg")) {
+          format = "JPEG";
+        }
+        pdf.addImage(quotation.compLogoUrl, format, 15, 12, 25, 25, undefined, "FAST");
+      } catch (err) {
+        console.error("Error drawing logo in PDF:", err);
+        pdf.setFillColor(22, 38, 70);
+        pdf.rect(15, 15, 25, 25, "F");
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(14);
+        pdf.setFont("helvetica", "bold");
+        pdf.text("GT", 22, 30);
+      }
+    } else {
+      pdf.setFillColor(22, 38, 70);
+      pdf.rect(15, 15, 25, 25, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(14);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("GT", 22, 30);
+    }
 
     pdf.setTextColor(0, 0, 0);
     pdf.setFontSize(12);
@@ -34699,56 +34744,92 @@ export default function App() {
     pdf.text("info@globaltech.id", pageWidth - 15, 37, { align: "right" });
 
     pdf.setTextColor(0, 0, 0);
-    pdf.setFontSize(14);
+    pdf.setFontSize(13);
     pdf.setFont("helvetica", "bold");
     pdf.text("SURAT PENAWARAN HARGA", pageWidth / 2, 53, { align: "center" });
 
-    const qTypeStr = quotation.quotationType || "Barang dan Jasa";
-    const typeSubtext = qTypeStr === "Barang" ? "PENGADAAN BARANG" : qTypeStr === "Jasa" ? "PENYEDIAAN JASA" : "PENGADAAN BARANG & JASA";
-    pdf.setFontSize(8.5);
-    pdf.setFont("helvetica", "bold");
-    pdf.setTextColor(22, 38, 70);
-    pdf.text(`(${typeSubtext})`, pageWidth / 2, 58, { align: "center" });
+    pdf.setDrawColor(75, 85, 99);
+    pdf.setLineWidth(0.4);
+    pdf.line(pageWidth / 2 - 35, 55, pageWidth / 2 + 35, 55);
 
-    pdf.line(75, 60, 135, 60);
+    // Box for quotation metadata
+    pdf.setDrawColor(203, 213, 225);
+    pdf.setFillColor(248, 250, 252);
+    pdf.setLineWidth(0.3);
+    pdf.roundedRect(15, 60, pageWidth - 30, 22, 1.5, 1.5, "FD");
 
-    pdf.setFontSize(9);
+    pdf.setFontSize(8);
     pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(0, 0, 0);
-    pdf.text("Kepada", 15, 68);
-    pdf.text(":", 35, 68);
-    pdf.text(quotation.recipient, 38, 68);
-    pdf.text("Up", 15, 73);
-    pdf.text(":", 35, 73);
-    pdf.text(quotation.attention, 38, 73);
-    pdf.text("Nomor", 130, 68);
-    pdf.text(":", 150, 68);
-    pdf.text(quotation.number, 153, 68);
-    pdf.text("Tanggal", 130, 73);
-    pdf.text(":", 150, 73);
-    pdf.text(quotation.date, 153, 73);
-    pdf.text("Pekerjaan", 130, 78);
-    pdf.text(":", 150, 78);
-    pdf.text(quotation.jobDescription, 153, 78);
+    pdf.setTextColor(71, 85, 105);
 
+    // Left Column (Kepada, Up)
+    const leftColX = 19;
+    const leftColonX = 41;
+    const leftValX = 44;
+
+    pdf.text("Kepada Yth", leftColX, 66);
+    pdf.text(":", leftColonX, 66);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(quotation.recipient || "-", leftValX, 66, { maxWidth: 62 });
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(71, 85, 105);
+    pdf.text("Up / Attn", leftColX, 72);
+    pdf.text(":", leftColonX, 72);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(quotation.attention || "-", leftValX, 72, { maxWidth: 62 });
+
+    // Right Column (Nomor, Tanggal, Pekerjaan)
+    const rightColStart = 110;
+    const rightColonX = 128;
+    const rightValX = 131;
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(71, 85, 105);
+    pdf.text("Nomor", rightColStart, 66);
+    pdf.text(":", rightColonX, 66);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(quotation.number || "-", rightValX, 66, { maxWidth: 62 });
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(71, 85, 105);
+    pdf.text("Tanggal", rightColStart, 72);
+    pdf.text(":", rightColonX, 72);
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(quotation.date || "-", rightValX, 72);
+
+    pdf.setTextColor(71, 85, 105);
+    pdf.text("Pekerjaan", rightColStart, 78);
+    pdf.text(":", rightColonX, 78);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(quotation.jobDescription || "-", rightValX, 78, { maxWidth: 62 });
+
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(30, 41, 59);
     pdf.text(
-      "Bersama ini kami sampaikan penawaran harga dengan spesifikasi sebagai berikut:",
+      "Bersama ini kami sampaikan penawaran harga dengan rincian spesifikasi sebagai berikut:",
       15,
-      90,
+      87,
     );
 
-    let y = 95;
-    const cw = [10, 85, 15, 20, 25, 25];
-    const h = ["NO", "URAIAN PEKERJAAN", "VOL", "SATUAN", "HARGA", "JUMLAH"];
+    let y = 91;
+    // Adjusted widths: NO (12), URAIAN (78), VOL (15), SATUAN (20), HARGA (27), JUMLAH (28) = 180mm
+    const cw = [12, 78, 15, 20, 27, 28];
+    const h = ["NO", "URAIAN PEKERJAAN", "VOL", "SATUAN", "HARGA SATUAN", "TOTAL BIAYA"];
 
     pdf.setFont("helvetica", "bold");
-    pdf.setFillColor(245, 245, 245);
-    pdf.rect(15, y, pageWidth - 30, 8, "F");
-    pdf.rect(15, y, pageWidth - 30, 8, "S");
+    pdf.setFontSize(8);
+    pdf.setFillColor(30, 58, 138); // Biru Navy
+    pdf.setDrawColor(23, 37, 84);
+    pdf.setTextColor(255, 255, 255); // Teks Putih
+    pdf.rect(15, y, pageWidth - 30, 8, "FD");
 
     let x = 15;
     h.forEach((header, i) => {
-      pdf.text(header, x + cw[i] / 2, y + 5.5, { align: "center" });
+      pdf.text(header, x + cw[i] / 2, y + 5.2, { align: "center" });
       x += cw[i];
     });
 
@@ -34756,110 +34837,234 @@ export default function App() {
     pdf.setFont("helvetica", "normal");
 
     quotation.items.forEach((item, index) => {
-      pdf.rect(15, y, pageWidth - 30, 8, "S");
+      // Build structured specifications with aligned colons
+      const specPairs: { key: string; value: string }[] = [];
+      if (item.specifications) {
+        if (Array.isArray(item.specifications)) {
+          item.specifications.forEach((sp: any) => {
+            if (sp && (sp.key || sp.value)) {
+              specPairs.push({ key: (sp.key || "").trim().toUpperCase(), value: (sp.value || "").trim() });
+            }
+          });
+        } else if (typeof item.specifications === "string") {
+          item.specifications.split("\n").filter(Boolean).forEach((line: string) => {
+            const parts = line.split(":");
+            if (parts.length > 1) {
+              specPairs.push({ key: parts[0].trim().toUpperCase(), value: parts.slice(1).join(":").trim() });
+            } else {
+              specPairs.push({ key: "", value: line.trim() });
+            }
+          });
+        }
+      }
+
+      const rowHeight = 7 + (specPairs.length * 4);
+      pdf.setDrawColor(226, 232, 240);
+      pdf.rect(15, y, pageWidth - 30, rowHeight, "S");
+
       let cx = 15;
-      pdf.text((index + 1).toString(), cx + cw[0] / 2, y + 5.5, {
-        align: "center",
-      });
+      pdf.setTextColor(15, 23, 42);
+      pdf.text((index + 1).toString(), cx + cw[0] / 2, y + 5, { align: "center" });
       cx += cw[0];
-      pdf.text(item.description, cx + 2, y + 5.5);
+
+      // Description + specs under it with aligned colons
+      pdf.setFont("helvetica", "bold");
+      pdf.text(item.description, cx + 2, y + 5);
+      if (specPairs.length > 0) {
+        pdf.setFontSize(7);
+        specPairs.forEach((sp, sIdx) => {
+          const rowY = y + 9 + (sIdx * 3.8);
+          if (sp.key) {
+            pdf.setFont("helvetica", "bold");
+            pdf.setTextColor(71, 85, 105);
+            pdf.text(sp.key, cx + 3, rowY);
+            pdf.text(":", cx + 25, rowY);
+            pdf.setFont("helvetica", "normal");
+            pdf.setTextColor(15, 23, 42);
+            pdf.text(sp.value, cx + 28, rowY, { maxWidth: cw[1] - 31 });
+          } else {
+            pdf.setFont("helvetica", "normal");
+            pdf.setTextColor(71, 85, 105);
+            pdf.text(sp.value, cx + 3, rowY, { maxWidth: cw[1] - 6 });
+          }
+        });
+        pdf.setTextColor(15, 23, 42);
+        pdf.setFontSize(8);
+      }
+      pdf.setFont("helvetica", "normal");
+
       cx += cw[1];
-      pdf.text(item.vol.toString(), cx + cw[2] / 2, y + 5.5, {
-        align: "center",
-      });
+      pdf.text(item.vol.toString(), cx + cw[2] / 2, y + 5, { align: "center" });
       cx += cw[2];
-      pdf.text(item.unit, cx + cw[3] / 2, y + 5.5, { align: "center" });
+      pdf.text(item.unit || "Unit", cx + cw[3] / 2, y + 5, { align: "center" });
       cx += cw[3];
-      pdf.text("Rp", cx + 1, y + 5.5);
-      pdf.text(fmt(item.unitPrice), cx + cw[4] - 1, y + 5.5, {
-        align: "right",
-      });
+      pdf.text(`Rp ${fmt(item.unitPrice)}`, cx + cw[4] - 2, y + 5, { align: "right" });
       cx += cw[4];
-      pdf.text("Rp", cx + 1, y + 5.5);
-      pdf.text(fmt(item.total), cx + cw[5] - 1, y + 5.5, { align: "right" });
-      y += 8;
+      pdf.text(`Rp ${fmt(item.total)}`, cx + cw[5] - 2, y + 5, { align: "right" });
+
+      y += rowHeight;
     });
 
     const totalX = 15 + cw[0] + cw[1] + cw[2] + cw[3];
     const totalW = cw[4] + cw[5];
 
+    // SUB TOTAL (abu-abu netral)
+    pdf.setFillColor(248, 250, 252);
+    pdf.setDrawColor(203, 213, 225);
+    pdf.rect(totalX, y, totalW, 7, "FD");
     pdf.setFont("helvetica", "bold");
-    pdf.text("SUB TOTAL", totalX - 2, y + 5.5, { align: "right" });
-    pdf.rect(totalX, y, totalW, 8, "S");
-    pdf.text("Rp", totalX + 1, y + 5.5);
-    pdf.text(fmt(quotation.subTotal), pageWidth - 16, y + 5.5, {
-      align: "right",
-    });
+    pdf.setTextColor(15, 23, 42);
+    pdf.text("SUB TOTAL", totalX - 3, y + 5.2, { align: "right" });
+    pdf.text(`Rp ${fmt(quotation.subTotal)}`, pageWidth - 17, y + 5.2, { align: "right" });
+    y += 7;
+
     // 0. DISKON
     const discAmt = quotation.discountAmount || 0;
     const isDisc = quotation.includeDiscount || discAmt > 0;
-    pdf.text("DISKON", totalX - 2, y + 5.5, { align: "right" });
-    pdf.rect(totalX, y, totalW, 8, "S");
-    pdf.text("Rp", totalX + 1, y + 5.5);
-    pdf.text(isDisc ? `-${fmt(discAmt)}` : "0", pageWidth - 16, y + 5.5, { align: "right" });
-    y += 8;
+    pdf.setFillColor(248, 250, 252);
+    pdf.rect(totalX, y, totalW, 7, "FD");
+    pdf.setFont("helvetica", isDisc && discAmt > 0 ? "bold" : "normal");
+    pdf.setTextColor(isDisc && discAmt > 0 ? 220 : 100, isDisc && discAmt > 0 ? 38 : 116, isDisc && discAmt > 0 ? 38 : 139);
+    pdf.text("DISKON", totalX - 3, y + 5.2, { align: "right" });
+    pdf.text(isDisc && discAmt > 0 ? `-Rp ${fmt(discAmt)}` : "Rp 0", pageWidth - 17, y + 5.2, { align: "right" });
+    y += 7;
 
     // 1. ONGKOS KIRIM / PENGIRIMAN
-    pdf.text("ONGKOS KIRIM / PENGIRIMAN", totalX - 2, y + 5.5, { align: "right" });
-    pdf.rect(totalX, y, totalW, 8, "S");
-    pdf.text("Rp", totalX + 1, y + 5.5);
-    pdf.text(quotation.includeShipping ? fmt(quotation.shippingCost || 0) : "0", pageWidth - 16, y + 5.5, {
+    pdf.setFillColor(248, 250, 252);
+    pdf.rect(totalX, y, totalW, 7, "FD");
+    pdf.setFont("helvetica", quotation.includeShipping ? "bold" : "normal");
+    pdf.setTextColor(quotation.includeShipping ? 15 : 100, quotation.includeShipping ? 23 : 116, quotation.includeShipping ? 42 : 139);
+    pdf.text("ONGKOS KIRIM / PENGIRIMAN", totalX - 3, y + 5.2, { align: "right" });
+    pdf.text(quotation.includeShipping && quotation.shippingCost ? `Rp ${fmt(quotation.shippingCost)}` : "Rp 0", pageWidth - 17, y + 5.2, {
       align: "right",
     });
-    y += 8;
+    y += 7;
 
-    // 2. BIAYA JASA & INSTALASI
-    pdf.text("BIAYA JASA & INSTALASI", totalX - 2, y + 5.5, { align: "right" });
-    pdf.rect(totalX, y, totalW, 8, "S");
-    pdf.text("Rp", totalX + 1, y + 5.5);
-    pdf.text(quotation.includeServiceFee ? fmt(quotation.serviceFee || 0) : "0", pageWidth - 16, y + 5.5, {
-      align: "right",
-    });
-    y += 8;
-
-    // 3. PPN
+    // 2. PPN
     const taxRateLabel = quotation.taxRate ? `PPN ${quotation.taxRate}%` : "PPN 11%";
-    pdf.text(taxRateLabel, totalX - 2, y + 5.5, { align: "right" });
-    pdf.rect(totalX, y, totalW, 8, "S");
-    pdf.text("Rp", totalX + 1, y + 5.5);
-    pdf.text(quotation.includePPN ? fmt(quotation.tax || 0) : "0", pageWidth - 16, y + 5.5, { align: "right" });
-    y += 8;
+    pdf.setFillColor(248, 250, 252);
+    pdf.rect(totalX, y, totalW, 7, "FD");
+    pdf.setFont("helvetica", quotation.includePPN ? "bold" : "normal");
+    pdf.setTextColor(quotation.includePPN ? 15 : 100, quotation.includePPN ? 23 : 116, quotation.includePPN ? 42 : 139);
+    pdf.text(taxRateLabel, totalX - 3, y + 5.2, { align: "right" });
+    pdf.text(quotation.includePPN && quotation.tax ? `Rp ${fmt(quotation.tax)}` : "Rp 0", pageWidth - 17, y + 5.2, { align: "right" });
+    y += 7;
 
-    pdf.text("GRAND TOTAL", totalX - 2, y + 5.5, { align: "right" });
-    pdf.rect(totalX, y, totalW, 8, "S");
-    pdf.text("Rp", totalX + 1, y + 5.5);
-    pdf.text(fmt(quotation.grandTotal), pageWidth - 16, y + 5.5, {
+    // GRAND TOTAL (Biru Navy dengan teks putih)
+    pdf.setFillColor(30, 58, 138);
+    pdf.setDrawColor(23, 37, 84);
+    pdf.rect(totalX, y, totalW, 8, "FD");
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(30, 58, 138);
+    pdf.text("GRAND TOTAL", totalX - 3, y + 5.5, { align: "right" });
+    pdf.setTextColor(255, 255, 255);
+    pdf.text(`Rp ${fmt(quotation.grandTotal)}`, pageWidth - 17, y + 5.5, {
       align: "right",
     });
     y += 12;
 
     pdf.setFont("helvetica", "italic");
+    pdf.setFontSize(8);
+    pdf.setTextColor(51, 65, 85);
     pdf.text(
       `*Terbilang : ${numberToWords(quotation.grandTotal)} rupiah`,
       15,
       y,
     );
-    y += 10;
+    y += 8;
 
-    pdf.setFont("helvetica", "bold");
-    pdf.text("Note:", 15, y);
+    // Notes and Term of Payment (ABOVE Hormat Kami)
+    const availableWidth = pageWidth - 30;
+    if (quotation.notes && quotation.notes.trim()) {
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(30, 41, 59);
+      pdf.text("Catatan / Notes:", 15, y);
+      y += 4;
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(71, 85, 105);
+      const noteLines = pdf.splitTextToSize(quotation.notes.trim(), availableWidth);
+      noteLines.forEach((l: string) => {
+        pdf.text(l, 15, y);
+        y += 3.6;
+      });
+      y += 2;
+    }
+
+    if (quotation.paymentTerms && quotation.paymentTerms.trim()) {
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(30, 41, 59);
+      pdf.text("Term of Payment:", 15, y);
+      y += 4;
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(7.5);
+      pdf.setTextColor(71, 85, 105);
+      const topLines = pdf.splitTextToSize(quotation.paymentTerms.trim(), availableWidth);
+      topLines.forEach((l: string) => {
+        pdf.text(l, 15, y);
+        y += 3.6;
+      });
+      y += 2;
+    }
+
     pdf.setFont("helvetica", "normal");
-    pdf.text(quotation.notes, 15, y + 5);
-    y += 15;
-
+    pdf.setFontSize(8);
+    pdf.setTextColor(30, 41, 59);
     pdf.text(
       "Demikian penawaran ini kami sampaikan. Atas perhatian dan kerjasamanya kami ucapkan terimakasih.",
       15,
       y,
     );
-    y += 10;
-    pdf.text("Hormat kami,", 15, y);
-    pdf.setFont("helvetica", "bold");
-    pdf.text("PT. GARDA INOVASI GLOBALTECH", 15, y + 5);
+    y += 8;
 
-    y += 30;
-    pdf.text(quotation.preparedBy.toUpperCase(), 15, y);
-    pdf.line(15, y + 1, 60, y + 1);
+    // Tanda tangan di sebelah KIRI, rapih, dan tidak mepet
+    const sigLeftX = 15;
+    pdf.setFont("helvetica", "normal");
+    pdf.setFontSize(8.5);
+    pdf.setTextColor(0, 0, 0);
+    pdf.text("Hormat kami,", sigLeftX, y);
+    pdf.setFont("helvetica", "bold");
+    pdf.text(quotation.compName || "PT. GARDA INOVASI GLOBALTECH", sigLeftX, y + 4.5);
+
+    if (quotation.digitalSignatureUrl) {
+      try {
+        let sigFormat = "PNG";
+        if (quotation.digitalSignatureUrl.includes("image/jpeg") || quotation.digitalSignatureUrl.includes("image/jpg")) {
+          sigFormat = "JPEG";
+        }
+        // Area gambar tanda tangan di tengah-tengah kolom tanda tangan, rapih dan tidak mepet
+        const sigColW = 55;
+        const sigImgW = 38;
+        const sigImgH = 18;
+        const sigImgX = sigLeftX + (sigColW - sigImgW) / 2;
+        pdf.addImage(quotation.digitalSignatureUrl, sigFormat, sigImgX, y + 6.5, sigImgW, sigImgH, undefined, "FAST");
+        y += 6.5 + sigImgH + 3.5;
+      } catch (err) {
+        console.error("Error drawing signature image in PDF:", err);
+        y += 22;
+      }
+    } else {
+      y += 22;
+    }
+
+    const signerName = (quotation.preparedBy || "ALEXSANDER").toUpperCase();
+    const signerTitle = quotation.preparedByTitle || "Direktur";
+    pdf.setFontSize(8.5);
+    pdf.setFont("helvetica", "bold");
+    pdf.setTextColor(15, 23, 42);
+    pdf.text(signerName, sigLeftX, y);
+
+    const nameW = pdf.getTextWidth(signerName);
+    pdf.setDrawColor(51, 65, 85);
+    pdf.setLineWidth(0.4);
+    pdf.line(sigLeftX, y + 1.2, sigLeftX + Math.max(nameW, 35), y + 1.2);
+
+    pdf.setFontSize(8);
+    pdf.setFont("helvetica", "normal");
+    pdf.setTextColor(71, 85, 105);
+    pdf.text(signerTitle, sigLeftX, y + 5.5);
 
     // Check for referenced BOQ project
     const connectedBoq = quotation.boqProjectId ? boqProjects.find(b => b.id === quotation.boqProjectId) : null;
@@ -35464,7 +35669,7 @@ export default function App() {
             {/* 1. BAGIAN KOP SURAT (ATAS): UPLOAD LOGO (KIRI) & INPUT NAMA PT KITA / ALAMAT (KANAN) */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start pb-5 border-b-2 border-slate-200">
               {/* UPLOAD LOGO BOX (KIRI) */}
-              <div className="md:col-span-4">
+              <div className="md:col-span-4 space-y-2">
                 <input
                   type="file"
                   id="quote-comp-logo-input"
@@ -35475,7 +35680,15 @@ export default function App() {
                     if (file) {
                       const reader = new FileReader();
                       reader.onload = (ev) => {
-                        if (ev.target?.result) setQuoteCompLogo(ev.target.result as string);
+                        if (ev.target?.result) {
+                          const res = ev.target.result as string;
+                          setQuoteCompLogo(res);
+                          imageRepositoryService.saveImage(
+                            res,
+                            "logo",
+                            file.name.replace(/\.[^/.]+$/, "")
+                          );
+                        }
                       };
                       reader.readAsDataURL(file);
                     }
@@ -35483,13 +35696,15 @@ export default function App() {
                 />
                 <div 
                   onClick={() => document.getElementById("quote-comp-logo-input")?.click()}
-                  className="w-full h-36 border-2 border-slate-400 hover:border-slate-800 rounded-2xl flex flex-col items-center justify-center p-3 cursor-pointer transition-all bg-slate-50/60 hover:bg-slate-50 relative group select-none"
+                  className="w-full h-36 border-2 border-slate-400 hover:border-slate-800 rounded-2xl flex flex-col items-center justify-center p-3 cursor-pointer transition-all bg-slate-50/60 hover:bg-slate-50 relative group select-none shadow-xs"
                 >
                   {quoteCompLogo ? (
                     <div className="w-full h-full flex flex-col items-center justify-center relative">
-                      <img src={quoteCompLogo} alt="Logo Perusahaan" className="max-h-24 max-w-full object-contain" />
-                      <span className="text-[10px] font-black text-slate-500 mt-1.5 group-hover:text-slate-900">
-                        Klik untuk ganti logo
+                      <div className="w-full h-24 flex items-center justify-center p-1">
+                        <img src={quoteCompLogo} alt="Logo Perusahaan" className="max-h-full max-w-full object-contain mx-auto" />
+                      </div>
+                      <span className="text-[10px] font-black text-slate-500 mt-1 group-hover:text-slate-900">
+                        Klik untuk ganti file logo
                       </span>
                       <button
                         type="button"
@@ -35511,11 +35726,24 @@ export default function App() {
                         UPLOAD LOGO
                       </span>
                       <span className="text-[10px] text-slate-400 font-bold">
-                        Klik untuk pilih file gambar logo
+                        Klik untuk upload dari laptop
                       </span>
                     </div>
                   )}
                 </div>
+
+                {/* Tombol Akses Penampung Riwayat Logo */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImageRepoTargetCategory("logo");
+                    setIsImageRepoOpen(true);
+                  }}
+                  className="w-full py-2 px-3 bg-amber-50/90 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
+                >
+                  <FolderOpen size={13} className="text-amber-700" />
+                  <span>Pilih dari Penampung Logo</span>
+                </button>
               </div>
 
               {/* INPUT NAMA PT KITA & INPUT ALAMAT (KANAN) */}
@@ -36022,7 +36250,15 @@ export default function App() {
                     if (file) {
                       const reader = new FileReader();
                       reader.onload = (ev) => {
-                        if (ev.target?.result) setQuoteSignature(ev.target.result as string);
+                        if (ev.target?.result) {
+                          const res = ev.target.result as string;
+                          setQuoteSignature(res);
+                          imageRepositoryService.saveImage(
+                            res,
+                            "signature",
+                            file.name.replace(/\.[^/.]+$/, "")
+                          );
+                        }
                       };
                       reader.readAsDataURL(file);
                     }
@@ -36030,13 +36266,15 @@ export default function App() {
                 />
                 <div
                   onClick={() => document.getElementById("quote-signature-input")?.click()}
-                  className="w-full h-32 border-2 border-slate-400 hover:border-slate-800 rounded-2xl flex flex-col items-center justify-center p-3 cursor-pointer transition-all bg-slate-50/60 hover:bg-slate-50 relative group select-none"
+                  className="w-full h-32 border-2 border-slate-400 hover:border-slate-800 rounded-2xl flex flex-col items-center justify-center p-3 cursor-pointer transition-all bg-slate-50/60 hover:bg-slate-50 relative group select-none shadow-xs"
                 >
                   {quoteSignature ? (
                     <div className="w-full h-full flex flex-col items-center justify-center relative">
-                      <img src={quoteSignature} alt="Tanda Tangan Digital" className="max-h-20 max-w-full object-contain" />
-                      <span className="text-[9px] font-black text-slate-500 mt-1">
-                        Klik untuk ganti TTD
+                      <div className="w-full h-20 flex items-center justify-center p-1">
+                        <img src={quoteSignature} alt="Tanda Tangan Digital" className="max-h-full max-w-full object-contain mx-auto" />
+                      </div>
+                      <span className="text-[9px] font-black text-slate-500 mt-1 group-hover:text-slate-900">
+                        Klik untuk ganti file TTD
                       </span>
                       <button
                         type="button"
@@ -36056,14 +36294,27 @@ export default function App() {
                         UPLOAD TANDA TANGAN DIGITAL
                       </span>
                       <span className="text-[9px] text-slate-400 font-bold block">
-                        Klik untuk pilih file TTD / Stempel
+                        Klik untuk upload dari laptop
                       </span>
                     </div>
                   )}
                 </div>
 
-                {/* INPUT NAMA LENGKAP */}
-                <div className="space-y-1">
+                {/* Tombol Akses Penampung Riwayat TTD */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImageRepoTargetCategory("signature");
+                    setIsImageRepoOpen(true);
+                  }}
+                  className="w-full py-2 px-3 bg-indigo-50/90 hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
+                >
+                  <FolderOpen size={13} className="text-indigo-700" />
+                  <span>Pilih dari Penampung TTD</span>
+                </button>
+
+                {/* INPUT NAMA LENGKAP & JABATAN */}
+                <div className="space-y-2">
                   <input
                     type="text"
                     required
@@ -36071,6 +36322,14 @@ export default function App() {
                     onChange={(e) => setQuotePreparedByName(e.target.value)}
                     placeholder="INPUT NAMA LENGKAP"
                     className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black uppercase tracking-wider text-slate-900 focus:border-slate-800 outline-none"
+                  />
+                  <input
+                    type="text"
+                    required
+                    value={quotePreparedByTitle}
+                    onChange={(e) => setQuotePreparedByTitle(e.target.value)}
+                    placeholder="INPUT NAMA JABATAN (misal: Direktur / Direktur Utama)"
+                    className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none"
                   />
                 </div>
               </div>
@@ -54789,6 +55048,20 @@ case "izin-cuti":
       {renderTaskModal()}
       {renderDocumentPreviewModal()}
       {renderQuotationModal()}
+      {isImageRepoOpen && (
+        <ImageRepositoryModal
+          isOpen={isImageRepoOpen}
+          onClose={() => setIsImageRepoOpen(false)}
+          targetCategory={imageRepoTargetCategory}
+          onSelectImage={(dataUrl, category) => {
+            if (imageRepoTargetCategory === "logo" || category === "logo") {
+              setQuoteCompLogo(dataUrl);
+            } else {
+              setQuoteSignature(dataUrl);
+            }
+          }}
+        />
+      )}
       {renderReminderModal()}
       {renderSalaryDetailModal()}
       {renderLogoutModal()}

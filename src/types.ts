@@ -242,6 +242,7 @@ export interface Quotation {
   discountVal?: number;
   discountAmount?: number;
   paymentTerms?: string;
+  preparedByTitle?: string;
 }
 
 export interface AuditLog {

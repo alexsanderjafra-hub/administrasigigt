@@ -118,16 +118,17 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const [qAttention, setQAttention] = useState("");
   const [qDate, setQDate] = useState("");
   const [qJobDesc, setQJobDesc] = useState("");
-  const [qNotes, setQNotes] = useState("Syarat pembayaran:\n- DP 50% saat kontrak disetujui\n- Pelunasan 55% setelah komisioning unit terpasang\n- Garansi mekanikal & elektrikal 12 bulan.");
-  const [qPreparedBy, setQPreparedBy] = useState("PT. GARDA INOVASI GLOBALTECH");
+  const [qNotes, setQNotes] = useState("");
+  const [qPaymentTerms, setQPaymentTerms] = useState("");
+  const [qPreparedBy, setQPreparedBy] = useState("ALEXSANDER");
+  const [qPreparedByTitle, setQPreparedByTitle] = useState("Direktur");
   const [qItems, setQItems] = useState<any[]>([]);
   const [connectedBoqId, setConnectedBoqId] = useState("");
   const [qType, setQType] = useState<"Barang dan Jasa" | "Barang" | "Jasa">("Barang dan Jasa");
   const [includeShipping, setIncludeShipping] = useState<boolean>(false);
   const [shippingCost, setShippingCost] = useState<number>(0);
-  const [includeServiceFee, setIncludeServiceFee] = useState<boolean>(false);
-  const [serviceFee, setServiceFee] = useState<number>(0);
   const [includePPN, setIncludePPN] = useState<boolean>(true);
+  const [qDigitalSigUrl, setQDigitalSigUrl] = useState<string>("");
 
   // If BOQ spec
   const [bName, setBName] = useState("");
@@ -146,15 +147,15 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         setQAttention(initialQuotationData.attention || "");
         setQDate(initialQuotationData.date || new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" }));
         setQJobDesc(initialQuotationData.jobDescription || "");
-        setQNotes(initialQuotationData.notes || "Syarat pembayaran:\n- DP 50% saat kontrak disetujui\n- Pelunasan 55% setelah komisioning unit terpasang\n- Garansi mekanikal & elektrikal 12 bulan.");
-        setQPreparedBy(initialQuotationData.preparedBy || "PT. GARDA INOVASI GLOBALTECH");
+        setQNotes(initialQuotationData.notes !== undefined ? initialQuotationData.notes : "- Harga sudah termasuk PPN\n- Penawaran berlaku selama 14 hari kerja");
+        setQPaymentTerms(initialQuotationData.paymentTerms !== undefined ? initialQuotationData.paymentTerms : "- DP 50% saat PO / SPK disetujui\n- Pelunasan 50% setelah pekerjaan selesai");
+        setQPreparedBy(initialQuotationData.preparedBy || "ALEXSANDER");
+        setQPreparedByTitle(initialQuotationData.preparedByTitle || "Direktur");
         setQItems(initialQuotationData.items ? [...initialQuotationData.items] : []);
         setConnectedBoqId(initialQuotationData.boqProjectId || "");
         setQType(initialQuotationData.quotationType || "Barang dan Jasa");
         setIncludeShipping(initialQuotationData.includeShipping !== undefined ? initialQuotationData.includeShipping : false);
         setShippingCost(initialQuotationData.shippingCost || 0);
-        setIncludeServiceFee(initialQuotationData.includeServiceFee !== undefined ? initialQuotationData.includeServiceFee : false);
-        setServiceFee(initialQuotationData.serviceFee || 0);
         setIncludePPN(initialQuotationData.includePPN !== undefined ? initialQuotationData.includePPN : true);
 
         // Load dynamic attributes
@@ -169,6 +170,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         setCompEmail(initialQuotationData.compEmail || "info@globaltech.id");
         setCompOffice(initialQuotationData.compOffice || "REGIONAL OFFICE BANTEN");
         setCompLogoUrl(initialQuotationData.compLogoUrl || "");
+        setQDigitalSigUrl(initialQuotationData.digitalSignatureUrl || "");
       } else if (type === "boq" && initialBoqData) {
         setBName(initialBoqData.name || "");
         setBType(initialBoqData.projType || "WTP");
@@ -195,10 +197,9 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
     ? Math.round(qSubtotal * (discountVal / 100))
     : discountVal;
   const qShipping = includeShipping ? Number(shippingCost || 0) : 0;
-  const qServiceFee = includeServiceFee ? Number(serviceFee || 0) : 0;
-  const qTaxBase = Math.max(0, qSubtotal - qDiscountAmount + qServiceFee);
+  const qTaxBase = Math.max(0, qSubtotal - qDiscountAmount);
   const qTax = includePPN ? Math.round(qTaxBase * (taxRate / 100)) : 0;
-  const qGrandTotal = qSubtotal - qDiscountAmount + qShipping + qServiceFee + qTax;
+  const qGrandTotal = qSubtotal - qDiscountAmount + qShipping + qTax;
 
   const numberToWordsID = (num: number): string => {
     const values = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"];
@@ -284,13 +285,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         date: qDate,
         jobDescription: qJobDesc,
         notes: qNotes,
+        paymentTerms: qPaymentTerms,
         preparedBy: qPreparedBy,
+        preparedByTitle: qPreparedByTitle,
         subTotal: qSubtotal,
         quotationType: qType,
         includeShipping,
         shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
-        includeServiceFee,
-        serviceFee: includeServiceFee ? Number(serviceFee || 0) : 0,
         includePPN,
         discountType,
         discountVal,
@@ -303,6 +304,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         compEmail,
         compOffice,
         compLogoUrl,
+        digitalSignatureUrl: qDigitalSigUrl,
         tax: qTax,
         grandTotal: qGrandTotal
       };
@@ -382,69 +384,109 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       pdf.setTextColor(15, 23, 42);
       pdf.setFontSize(13);
       pdf.setFont("helvetica", "bold");
-      pdf.text("SURAT PENAWARAN HARGA", pageWidth / 2, 51, { align: "center" });
+      pdf.text("SURAT PENAWARAN HARGA", pageWidth / 2, 53, { align: "center" });
 
-      const typeSubtext = qType === "Barang" 
-        ? "PENGADAAN BARANG" 
-        : qType === "Jasa" 
-        ? "PENYEDIAAN JASA" 
-        : "PENGADAAN BARANG & JASA";
-      pdf.setFontSize(8);
-      pdf.setFont("helvetica", "bold");
-      pdf.setTextColor(22, 38, 70);
-      pdf.text(`(${typeSubtext})`, pageWidth / 2, 56, { align: "center" });
-
-      pdf.setDrawColor(22, 38, 70);
+      pdf.setDrawColor(75, 85, 99);
       pdf.setLineWidth(0.4);
-      pdf.line(pageWidth / 2 - 38, 58, pageWidth / 2 + 38, 58);
+      pdf.line(pageWidth / 2 - 35, 55, pageWidth / 2 + 35, 55);
 
-      pdf.setFontSize(8.5);
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(0, 0, 0);
-      pdf.text("Kepada", marginSize, 66);
-      pdf.text(":", marginSize + 18, 66);
-      pdf.setFont("helvetica", "bold");
-      pdf.text(qRecipient, marginSize + 21, 66);
-      pdf.setFont("helvetica", "normal");
-      pdf.text("Up", marginSize, 71);
-      pdf.text(":", marginSize + 18, 71);
-      pdf.text(qAttention, marginSize + 21, 71);
+      // Box for quotation metadata
+      pdf.setDrawColor(203, 213, 225);
+      pdf.setFillColor(248, 250, 252);
+      pdf.setLineWidth(0.3);
+      pdf.roundedRect(marginSize, 60, pageWidth - (marginSize * 2), 22, 1.5, 1.5, "FD");
 
-      const rightMetaX = pageWidth - marginSize - 62;
-      pdf.text("Nomor", rightMetaX, 66);
-      pdf.text(":", rightMetaX + 20, 66);
-      pdf.setFont("helvetica", "bold");
-      pdf.text(qNum, rightMetaX + 23, 66);
+      pdf.setFontSize(8);
       pdf.setFont("helvetica", "normal");
-      pdf.text("Tanggal", rightMetaX, 71);
-      pdf.text(":", rightMetaX + 20, 71);
-      pdf.text(qDate, rightMetaX + 23, 71);
-      pdf.text("Pekerjaan", rightMetaX, 76);
-      pdf.text(":", rightMetaX + 20, 76);
-      pdf.setFont("helvetica", "bold");
-      pdf.text(qJobDesc, rightMetaX + 23, 76, { maxWidth: 58 });
-      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(71, 85, 105);
 
+      // Left Column (Kepada, Up)
+      const leftColX = marginSize + 4;
+      const leftColonX = leftColX + 22;
+      const leftValX = leftColonX + 3;
+
+      pdf.text("Kepada Yth", leftColX, 66);
+      pdf.text(":", leftColonX, 66);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(qRecipient || "-", leftValX, 66, { maxWidth: 62 });
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(71, 85, 105);
+      pdf.text("Up / Attn", leftColX, 72);
+      pdf.text(":", leftColonX, 72);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(qAttention || "-", leftValX, 72, { maxWidth: 62 });
+
+      // Right Column (Nomor, Tanggal, Pekerjaan)
+      const rightColStart = marginSize + (pageWidth - marginSize * 2) / 2 + 5;
+      const rightColonX = rightColStart + 18;
+      const rightValX = rightColonX + 3;
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(71, 85, 105);
+      pdf.text("Nomor", rightColStart, 66);
+      pdf.text(":", rightColonX, 66);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(qNum || "-", rightValX, 66, { maxWidth: 62 });
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(71, 85, 105);
+      pdf.text("Tanggal", rightColStart, 72);
+      pdf.text(":", rightColonX, 72);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(qDate || "-", rightValX, 72);
+
+      pdf.setTextColor(71, 85, 105);
+      pdf.text("Pekerjaan", rightColStart, 78);
+      pdf.text(":", rightColonX, 78);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(qJobDesc || "-", rightValX, 78, { maxWidth: 62 });
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(30, 41, 59);
       pdf.text(
         "Bersama ini kami sampaikan penawaran harga dengan rincian spesifikasi sebagai berikut:",
         marginSize,
-        86,
+        87,
       );
 
       const tableHeaders = ["NO", "URAIAN PEKERJAAN", "VOL", "SATUAN", "HARGA SATUAN", "TOTAL BIAYA"];
-      const qTableRows = qItems.map((item, index) => [
-        String(index + 1),
-        item.description || "",
-        String(item.vol || item.quantity || 1),
-        item.unit || "Unit",
-        `Rp ${Number(item.unitPrice || 0).toLocaleString("id-ID")}`,
-        `Rp ${((item.vol || item.quantity || 1) * (item.unitPrice || 0)).toLocaleString("id-ID")}`
-      ]);
+      const qTableRows = qItems.map((item, index) => {
+        let descText = item.description || "";
+        let specs: { key: string; value: string }[] = [];
+        if (item.specifications) {
+          if (Array.isArray(item.specifications)) {
+            specs = item.specifications;
+          } else if (typeof item.specifications === "string") {
+            const lines = item.specifications.split("\n").filter(Boolean);
+            specs = lines.map(l => {
+              const parts = l.split(":");
+              return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
+            });
+          }
+          const validSpecs = specs.filter(s => s && (s.key || s.value));
+          if (validSpecs.length > 0) {
+            // Add spacer lines so autoTable expands cell height for specs
+            descText += "\n" + validSpecs.map(() => " ").join("\n");
+          }
+        }
+        return [
+          String(index + 1),
+          descText,
+          String(item.vol || item.quantity || 1),
+          item.unit || "Unit",
+          `Rp ${Number(item.unitPrice || 0).toLocaleString("id-ID")}`,
+          `Rp ${((item.vol || item.quantity || 1) * (item.unitPrice || 0)).toLocaleString("id-ID")}`
+        ];
+      });
 
       const footRows: any[] = [
         [
-          { content: "SUB TOTAL", colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 8, textColor: [30, 41, 59] } },
-          { content: `Rp ${qSubtotal.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 8.5 } }
+          { content: "SUB TOTAL", colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 8, fillColor: [248, 250, 252] as any, textColor: [15, 23, 42] } },
+          { content: `Rp ${qSubtotal.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 8.5, fillColor: [248, 250, 252] as any, textColor: [15, 23, 42] } }
         ]
       ];
 
@@ -457,6 +499,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
             halign: "right", 
             fontStyle: qDiscountAmount > 0 ? ("bold" as const) : ("normal" as const), 
             fontSize: 8, 
+            fillColor: [248, 250, 252] as any,
             textColor: qDiscountAmount > 0 ? [220, 38, 38] : [100, 116, 139] 
           } 
         },
@@ -467,7 +510,8 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
             halign: "right", 
             fontStyle: qDiscountAmount > 0 ? ("bold" as const) : ("normal" as const), 
             fontSize: 8.5,
-            textColor: qDiscountAmount > 0 ? [220, 38, 38] : [100, 116, 139]
+            fillColor: [248, 250, 252] as any,
+            textColor: qDiscountAmount > 0 ? [220, 38, 38] : [100, 116, 139] 
           } 
         }
       ]);
@@ -481,7 +525,8 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
             halign: "right", 
             fontStyle: includeShipping ? ("bold" as const) : ("normal" as const), 
             fontSize: 8, 
-            textColor: includeShipping ? [30, 41, 59] : [100, 116, 139] 
+            fillColor: [248, 250, 252] as any,
+            textColor: includeShipping ? [15, 23, 42] : [100, 116, 139] 
           } 
         },
         { 
@@ -491,36 +536,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
             halign: "right", 
             fontStyle: includeShipping ? ("bold" as const) : ("normal" as const), 
             fontSize: 8.5,
-            textColor: includeShipping ? [30, 41, 59] : [100, 116, 139]
+            fillColor: [248, 250, 252] as any,
+            textColor: includeShipping ? [15, 23, 42] : [100, 116, 139]
           } 
         }
       ]);
 
-      // Checkpoint 2: BIAYA JASA & INSTALASI (Muncul tulisan, jika tidak diceklis nominalnya Rp 0)
-      footRows.push([
-        { 
-          content: "BIAYA JASA & INSTALASI", 
-          colSpan: 4, 
-          styles: { 
-            halign: "right", 
-            fontStyle: includeServiceFee ? ("bold" as const) : ("normal" as const), 
-            fontSize: 8, 
-            textColor: includeServiceFee ? [30, 41, 59] : [100, 116, 139] 
-          } 
-        },
-        { 
-          content: includeServiceFee ? `Rp ${Number(serviceFee || 0).toLocaleString("id-ID")}` : "Rp 0", 
-          colSpan: 2, 
-          styles: { 
-            halign: "right", 
-            fontStyle: includeServiceFee ? ("bold" as const) : ("normal" as const), 
-            fontSize: 8.5,
-            textColor: includeServiceFee ? [30, 41, 59] : [100, 116, 139]
-          } 
-        }
-      ]);
-
-      // Checkpoint 3: PPN (Muncul tulisan, jika tidak diceklis nominalnya Rp 0)
+      // Checkpoint 2: PPN (Muncul tulisan, jika tidak diceklis nominalnya Rp 0)
       footRows.push([
         { 
           content: `PPN ${taxRate}%`, 
@@ -529,7 +551,8 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
             halign: "right", 
             fontStyle: includePPN ? ("bold" as const) : ("normal" as const), 
             fontSize: 8, 
-            textColor: includePPN ? [30, 41, 59] : [100, 116, 139] 
+            fillColor: [248, 250, 252] as any,
+            textColor: includePPN ? [15, 23, 42] : [100, 116, 139] 
           } 
         },
         { 
@@ -539,14 +562,15 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
             halign: "right", 
             fontStyle: includePPN ? ("bold" as const) : ("normal" as const), 
             fontSize: 8.5,
-            textColor: includePPN ? [30, 41, 59] : [100, 116, 139]
+            fillColor: [248, 250, 252] as any,
+            textColor: includePPN ? [15, 23, 42] : [100, 116, 139]
           } 
         }
       ]);
 
       footRows.push([
-        { content: "GRAND TOTAL", colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 9, fillColor: [240, 245, 255] as any, textColor: [15, 23, 42] } },
-        { content: `Rp ${qGrandTotal.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 9.5, fillColor: [240, 245, 255] as any, textColor: [0, 51, 153] } }
+        { content: "GRAND TOTAL", colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 8.5, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } },
+        { content: `Rp ${qGrandTotal.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fontSize: 9, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } }
       ]);
 
       autoTable(pdf, {
@@ -558,114 +582,227 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         theme: "grid",
         styles: {
           fontSize: 8,
-          cellPadding: 2.8,
+          cellPadding: 2,
           textColor: [15, 23, 42],
-          lineColor: [226, 232, 240],
+          lineColor: [203, 213, 225],
           lineWidth: 0.1,
           valign: "middle"
         },
         headStyles: {
-          fillColor: [22, 38, 70],
-          textColor: [255, 255, 255],
+          fillColor: [30, 58, 138], // Biru Navy
+          textColor: [255, 255, 255], // Teks Putih
           fontStyle: "bold",
           halign: "center",
-          lineColor: [22, 38, 70],
+          lineColor: [23, 37, 84],
           lineWidth: 0.1,
-          fontSize: 8.5
+          fontSize: 8,
+          cellPadding: 2.5
+        },
+        footStyles: {
+          fillColor: [248, 250, 252], // Neutral light gray (abu-abu, no tosca!)
+          textColor: [15, 23, 42],
+          fontStyle: "bold",
+          lineColor: [203, 213, 225],
+          lineWidth: 0.1
         },
         columnStyles: {
-          0: { halign: "center", cellWidth: 9, fontStyle: "bold" },
+          0: { halign: "center", cellWidth: 12, fontStyle: "bold" },
           1: { halign: "left" },
-          2: { halign: "center", cellWidth: 12 },
-          3: { halign: "center", cellWidth: 16 },
-          4: { halign: "right", cellWidth: 28 },
+          2: { halign: "center", cellWidth: 14 },
+          3: { halign: "center", cellWidth: 20 },
+          4: { halign: "right", cellWidth: 27 },
           5: { halign: "right", cellWidth: 28 }
         },
         alternateRowStyles: {
           fillColor: [248, 250, 252]
+        },
+        didDrawCell: (data) => {
+          if (data.section === "body" && data.column.index === 1) {
+            const item = qItems[data.row.index];
+            if (item && item.specifications) {
+              let specs: { key: string; value: string }[] = [];
+              if (Array.isArray(item.specifications)) {
+                specs = item.specifications;
+              } else if (typeof item.specifications === "string") {
+                const lines = item.specifications.split("\n").filter(Boolean);
+                specs = lines.map(l => {
+                  const parts = l.split(":");
+                  return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
+                });
+              }
+              const validSpecs = specs.filter(s => s && (s.key || s.value));
+              if (validSpecs.length > 0) {
+                let curY = data.cell.y + 7.5;
+                validSpecs.forEach(sp => {
+                  const k = (sp.key || "").trim().toUpperCase();
+                  const v = (sp.value || "").trim();
+                  pdf.setFontSize(7);
+                  if (k) {
+                    pdf.setFont("helvetica", "bold");
+                    pdf.setTextColor(71, 85, 105);
+                    pdf.text(k, data.cell.x + 3, curY);
+                    pdf.text(":", data.cell.x + 24, curY);
+                    pdf.setFont("helvetica", "normal");
+                    pdf.setTextColor(15, 23, 42);
+                    pdf.text(v, data.cell.x + 27, curY, { maxWidth: data.cell.width - 30 });
+                  } else {
+                    pdf.setFont("helvetica", "normal");
+                    pdf.setTextColor(71, 85, 105);
+                    pdf.text(v, data.cell.x + 3, curY, { maxWidth: data.cell.width - 6 });
+                  }
+                  curY += 3.6;
+                });
+              }
+            }
+          }
         }
       });
 
-      let finalY = (pdf as any).lastAutoTable.finalY + 8;
+      let finalY = (pdf as any).lastAutoTable.finalY + 7;
       
-      if (finalY > pageHeight - 65) {
+      if (finalY > pageHeight - 75) {
         pdf.addPage();
         finalY = 20;
       }
 
       pdf.setFont("helvetica", "italic");
       pdf.setFontSize(8);
-      pdf.setTextColor(30, 41, 59);
+      pdf.setTextColor(51, 65, 85);
       pdf.text(`*Terbilang : ${numberToWordsID(qGrandTotal)} rupiah`, marginSize, finalY);
-      finalY += 8;
+      finalY += 6;
 
-      if (finalY > pageHeight - 60) {
+      const contentWidth = pageWidth - (marginSize * 2);
+
+      // --- NOTES & TERM OF PAYMENT (ABOVE HORMAT KAMI) ---
+      const hasNotes = qNotes && qNotes.trim();
+      const hasTerms = qPaymentTerms && qPaymentTerms.trim();
+
+      if (hasNotes || hasTerms) {
+        if (finalY > pageHeight - 65) {
+          pdf.addPage();
+          finalY = 20;
+        }
+
+        if (hasNotes) {
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(8);
+          pdf.setTextColor(30, 41, 59);
+          pdf.text("Catatan / Notes:", marginSize, finalY);
+          finalY += 4;
+          
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(7.5);
+          pdf.setTextColor(71, 85, 105);
+          const notesLines = pdf.splitTextToSize(qNotes.trim(), contentWidth);
+          notesLines.forEach((line: string) => {
+            pdf.text(line, marginSize, finalY);
+            finalY += 3.6;
+          });
+          finalY += 2;
+        }
+
+        if (hasTerms) {
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(8);
+          pdf.setTextColor(30, 41, 59);
+          pdf.text("Term of Payment:", marginSize, finalY);
+          finalY += 4;
+          
+          pdf.setFont("helvetica", "normal");
+          pdf.setFontSize(7.5);
+          pdf.setTextColor(71, 85, 105);
+          const topLines = pdf.splitTextToSize(qPaymentTerms.trim(), contentWidth);
+          topLines.forEach((line: string) => {
+            pdf.text(line, marginSize, finalY);
+            finalY += 3.6;
+          });
+          finalY += 2;
+        }
+      }
+
+      finalY += 2;
+      if (finalY > pageHeight - 45) {
         pdf.addPage();
         finalY = 20;
       }
 
-      const contentWidth = pageWidth - (marginSize * 2);
-
-      // Left Column elements
+      // Closing Statement
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(8);
-      pdf.setTextColor(0, 0, 0);
+      pdf.setTextColor(30, 41, 59);
       pdf.text(
         "Demikian penawaran ini kami sampaikan. Atas perhatian dan kerjasamanya kami ucapkan terimakasih.",
         marginSize,
-        finalY,
-        { maxWidth: contentWidth / 2 - 5 }
+        finalY
       );
+      finalY += 8;
 
-      if (showTncNotes) {
-        pdf.setFont("helvetica", "bold");
-        pdf.setFontSize(8);
-        pdf.text("Syarat & Ketentuan Tambahan:", marginSize, finalY + 8);
-        
-        pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(7.5);
-        pdf.setTextColor(71, 85, 105);
-        const notesLines = pdf.splitTextToSize(qNotes, contentWidth / 2 - 5);
-        
-        pdf.setFillColor(248, 250, 252);
-        pdf.setDrawColor(226, 232, 240);
-        pdf.rect(marginSize, finalY + 11, contentWidth / 2 - 5, (notesLines.length * 4) + 6, "FD");
-        
-        notesLines.forEach((line, idx) => {
-          pdf.text(line, marginSize + 3, finalY + 15 + (idx * 4));
-        });
+      // Signature section (Hormat kami di sebelah KIRI dan rapih)
+      if (finalY > pageHeight - 38) {
+        pdf.addPage();
+        finalY = 20;
       }
 
-      // Right Column signatures
-      const rightColX = pageWidth - marginSize;
+      const sigX = marginSize;
       
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(8.5);
       pdf.setTextColor(0, 0, 0);
-      pdf.text("Hormat kami,", rightColX, finalY, { align: "right" });
+      pdf.text("Hormat kami,", sigX, finalY);
       pdf.setFont("helvetica", "bold");
-      pdf.text(compName, rightColX, finalY + 4, { align: "right" });
+      pdf.text(compName, sigX, finalY + 4.5);
 
-      if (showDigitalStamp) {
-        pdf.setDrawColor(22, 38, 70);
-        pdf.setFillColor(240, 245, 255);
-        pdf.rect(rightColX - 50, finalY + 8, 50, 14, "FD");
+      if (qDigitalSigUrl) {
+        try {
+          let sigFormat = "PNG";
+          if (qDigitalSigUrl.includes("image/jpeg") || qDigitalSigUrl.includes("image/jpg")) {
+            sigFormat = "JPEG";
+          }
+          // Area gambar tanda tangan di tengah-tengah kolom tanda tangan, rapih dan tidak mepet
+          const sigColW = 55;
+          const sigImgW = 38;
+          const sigImgH = 18;
+          const sigImgX = sigX + (sigColW - sigImgW) / 2;
+          pdf.addImage(qDigitalSigUrl, sigFormat, sigImgX, finalY + 6.5, sigImgW, sigImgH, undefined, "FAST");
+          finalY += 6.5 + sigImgH + 3.5;
+        } catch (err) {
+          console.error("Error drawing signature in PDF:", err);
+          finalY += 22;
+        }
+      } else if (showDigitalStamp) {
+        pdf.setDrawColor(203, 213, 225);
+        pdf.setFillColor(248, 250, 252);
+        pdf.roundedRect(sigX, finalY + 7, 48, 13, 1, 1, "FD");
         pdf.setFontSize(7);
         pdf.setFont("helvetica", "bold");
-        pdf.setTextColor(22, 38, 70);
-        pdf.text("VERIFIED SIGNATURE", rightColX - 25, finalY + 13, { align: "center" });
+        pdf.setTextColor(30, 58, 138);
+        pdf.text("VERIFIED SIGNATURE", sigX + 24, finalY + 11.5, { align: "center" });
         pdf.setFontSize(6);
         pdf.setFont("helvetica", "italic");
         pdf.setTextColor(100, 116, 139);
-        pdf.text(`Authorized by ${compName}`, rightColX - 25, finalY + 19, { align: "center" });
+        pdf.text(`Authorized by ${compName}`, sigX + 24, finalY + 16, { align: "center" });
+        finalY += 16;
+      } else {
+        finalY += 18;
       }
+
+      const signerName = (qPreparedBy || "ALEXSANDER").toUpperCase();
+      const signerTitle = qPreparedByTitle || "Direktur";
 
       pdf.setFontSize(8.5);
       pdf.setFont("helvetica", "bold");
-      pdf.setTextColor(0, 0, 0);
-      pdf.text(qPreparedBy.toUpperCase(), rightColX, finalY + 36, { align: "right" });
-      pdf.setDrawColor(71, 85, 105);
-      pdf.line(rightColX - 50, finalY + 37, rightColX, finalY + 37);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(signerName, sigX, finalY + 4);
+
+      const nameW = pdf.getTextWidth(signerName);
+      pdf.setDrawColor(51, 65, 85);
+      pdf.setLineWidth(0.4);
+      pdf.line(sigX, finalY + 5.2, sigX + Math.max(nameW, 35), finalY + 5.2);
+
+      pdf.setFontSize(8);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(signerTitle, sigX, finalY + 9.5);
 
       // PAGE 2: CONNECTED BOQ (If present)
       if (connectedBoqId && currentBoqItemsToUse.length > 0) {
@@ -751,13 +888,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           date: qDate,
           jobDescription: qJobDesc,
           notes: qNotes,
+          paymentTerms: qPaymentTerms,
           preparedBy: qPreparedBy,
+          preparedByTitle: qPreparedByTitle,
           subTotal: qSubtotal,
           quotationType: qType,
           includeShipping,
           shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
-          includeServiceFee,
-          serviceFee: includeServiceFee ? Number(serviceFee || 0) : 0,
           includePPN,
           discountType,
           discountVal,
@@ -1053,7 +1190,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                   </div>
 
                   <h4 className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest flex items-center gap-2 pt-2 border-t border-slate-800">
-                    <Percent size={12} className="text-emerald-400" /> Komponen Tambahan (3 Checklist)
+                    <Percent size={12} className="text-emerald-400" /> Komponen Tambahan
                   </h4>
                   
                   <div className="space-y-3 font-sans text-xs">
@@ -1092,42 +1229,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                       )}
                     </div>
 
-                    {/* Checklist 2: Biaya Jasa & Instalasi */}
-                    <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2">
-                      <label className="flex items-center justify-between text-slate-300 font-bold cursor-pointer">
-                        <span className="text-[11px] flex items-center gap-1.5">
-                          🛠️ Biaya Jasa & Instalasi
-                        </span>
-                        <input
-                          type="checkbox"
-                          checked={includeServiceFee}
-                          onChange={(e) => setIncludeServiceFee(e.target.checked)}
-                          className="w-4 h-4 rounded text-indigo-600 bg-slate-800 border-slate-700"
-                        />
-                      </label>
-                      {includeServiceFee && (
-                        <div className="space-y-1 pt-1">
-                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">
-                            Nominal Jasa & Pasang (Rp)
-                          </label>
-                          <input
-                            type="number"
-                            value={serviceFee || ""}
-                            min={0}
-                            placeholder="0"
-                            onChange={(e) => setServiceFee(Math.max(0, parseFloat(e.target.value) || 0))}
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono"
-                          />
-                        </div>
-                      )}
-                      {!includeServiceFee && (
-                        <p className="text-[9px] text-slate-500 italic">
-                          *Tulisan tetap dicetak di PDF dengan nominal Rp 0
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Checklist 3: PPN */}
+                    {/* Checklist 2: PPN */}
                     <div className="p-3 bg-slate-900/80 rounded-xl border border-slate-800 space-y-2">
                       <label className="flex items-center justify-between text-slate-300 font-bold cursor-pointer">
                         <span className="text-[11px] flex items-center gap-1.5">
@@ -1431,9 +1533,20 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                             <input
                               value={qPreparedBy}
                               onChange={(e) => setQPreparedBy(e.target.value)}
+                              placeholder="Nama Penandatangan"
                               className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-white font-extrabold focus:outline-none focus:border-indigo-500"
                             />
                           </div>
+                        </div>
+
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Jabatan Penandatangan</label>
+                          <input
+                            value={qPreparedByTitle}
+                            onChange={(e) => setQPreparedByTitle(e.target.value)}
+                            placeholder="misal: Direktur / Direktur Utama"
+                            className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-white font-bold text-xs focus:outline-none focus:border-indigo-500"
+                          />
                         </div>
 
                         <div className="space-y-1 pt-1.5">
@@ -1490,14 +1603,27 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                           </div>
                         </div>
 
-                        <div className="space-y-1 pt-2">
-                          <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Syarat Ketentuan SPH (T&C)</label>
-                          <textarea
-                            value={qNotes}
-                            onChange={(e) => setQNotes(e.target.value)}
-                            rows={3}
-                            className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-white font-bold text-xs focus:outline-none focus:border-indigo-500 resize-none"
-                          />
+                        <div className="grid grid-cols-2 gap-2 pt-2">
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Catatan (Notes)</label>
+                            <textarea
+                              value={qNotes}
+                              onChange={(e) => setQNotes(e.target.value)}
+                              rows={3}
+                              placeholder="Catatan penawaran..."
+                              className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-white font-bold text-xs focus:outline-none focus:border-indigo-500 resize-none"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Term of Payment (TOP)</label>
+                            <textarea
+                              value={qPaymentTerms}
+                              onChange={(e) => setQPaymentTerms(e.target.value)}
+                              rows={3}
+                              placeholder="Term of payment..."
+                              className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded-lg text-white font-bold text-xs focus:outline-none focus:border-indigo-500 resize-none"
+                            />
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -1643,7 +1769,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                 // SPH PREVIEW CONTENT
                 <div className="space-y-6">
                   {/* Company Letterhead */}
-                  <div className="flex justify-between items-start border-b-2 border-indigo-900 pb-4">
+                  <div className="flex justify-between items-start border-b-2 border-slate-300 pb-4">
                     {/* Header Left */}
                     <div className="space-y-1 flex-1">
                       <div className="flex items-center gap-2">
@@ -1651,7 +1777,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                           compLogoUrl ? (
                             <img src={compLogoUrl} alt="Logo" className="w-10 h-10 object-contain rounded border border-slate-200" />
                           ) : (
-                            <div className="w-10 h-10 bg-indigo-900 text-white rounded font-black flex items-center justify-center text-xs">
+                            <div className="w-10 h-10 bg-slate-700 text-white rounded font-black flex items-center justify-center text-xs">
                               {compName.substring(0, 2).toUpperCase()}
                             </div>
                           )
@@ -1681,21 +1807,40 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                     <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest border-b border-slate-900 inline-block pb-0.5">
                       SURAT PENAWARAN HARGA
                     </h3>
-                    <p className="text-[8px] font-black text-indigo-900 uppercase tracking-wider">
-                      ({qType === "Barang" ? "PENGADAAN BARANG" : qType === "Jasa" ? "PENYEDIAAN JASA" : "PENGADAAN BARANG & JASA"})
-                    </p>
                   </div>
 
-                  {/* Metadata Info */}
-                  <div className="grid grid-cols-2 gap-4 text-[9px] leading-tight">
-                    <div className="space-y-1">
-                      <p className="flex"><span className="w-16 font-extrabold text-slate-500">Kepada</span><span className="w-3 font-extrabold">:</span><span className="font-extrabold text-slate-900">{qRecipient}</span></p>
-                      <p className="flex"><span className="w-16 font-extrabold text-slate-500">Up</span><span className="w-3 font-extrabold">:</span><span className="font-extrabold text-slate-800">{qAttention}</span></p>
-                    </div>
-                    <div className="space-y-1 text-right sm:text-left sm:pl-10">
-                      <p className="flex"><span className="w-16 font-extrabold text-slate-500">Nomor</span><span className="w-3 font-extrabold">:</span><span className="font-bold text-indigo-700 font-mono text-[8px]">{qNum}</span></p>
-                      <p className="flex"><span className="w-16 font-extrabold text-slate-500">Tanggal</span><span className="w-3 font-extrabold">:</span><span className="bold text-slate-800">{qDate}</span></p>
-                      <p className="flex"><span className="w-16 font-extrabold text-slate-500">Pekerjaan</span><span className="w-3 font-extrabold">:</span><span className="font-extrabold text-slate-800 truncate block max-w-[120px]" title={qJobDesc}>{qJobDesc}</span></p>
+                  {/* Metadata Info Box */}
+                  <div className="border border-slate-300 bg-slate-50/70 rounded-md p-3 text-[9px] leading-relaxed">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <div className="grid grid-cols-[70px_12px_1fr] items-baseline">
+                          <span className="font-semibold text-slate-600">Kepada Yth</span>
+                          <span className="font-bold text-slate-700">:</span>
+                          <span className="font-bold text-slate-900">{qRecipient || "-"}</span>
+                        </div>
+                        <div className="grid grid-cols-[70px_12px_1fr] items-baseline">
+                          <span className="font-semibold text-slate-600">Up / Attn</span>
+                          <span className="font-bold text-slate-700">:</span>
+                          <span className="font-medium text-slate-800">{qAttention || "-"}</span>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="grid grid-cols-[65px_12px_1fr] items-baseline">
+                          <span className="font-semibold text-slate-600">Nomor</span>
+                          <span className="font-bold text-slate-700">:</span>
+                          <span className="font-mono font-semibold text-slate-900">{qNum || "-"}</span>
+                        </div>
+                        <div className="grid grid-cols-[65px_12px_1fr] items-baseline">
+                          <span className="font-semibold text-slate-600">Tanggal</span>
+                          <span className="font-bold text-slate-700">:</span>
+                          <span className="font-medium text-slate-800">{qDate || "-"}</span>
+                        </div>
+                        <div className="grid grid-cols-[65px_12px_1fr] items-baseline">
+                          <span className="font-semibold text-slate-600">Pekerjaan</span>
+                          <span className="font-bold text-slate-700">:</span>
+                          <span className="font-semibold text-slate-800 truncate block" title={qJobDesc}>{qJobDesc || "-"}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -1706,24 +1851,54 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                   {/* SPH Print Table */}
                   <div className="border border-slate-300 rounded overflow-hidden">
                     <table className="w-full text-left border-collapse font-sans text-[8px]">
-                      <thead>
-                        <tr className="bg-slate-100 border-b border-slate-300 font-black text-slate-800">
-                          <th className="px-2 py-1.5 text-center border-r border-slate-300 w-8">NO</th>
-                          <th className="px-2 py-1.5 border-r border-slate-300">URAIAN PEKERJAAN</th>
-                          <th className="px-2 py-1.5 text-center border-r border-slate-300 w-10">VOL</th>
-                          <th className="px-2 py-1.5 text-center border-r border-slate-300 w-12">SATUAN</th>
-                          <th className="px-2 py-1.5 text-right border-r border-slate-300 w-24">HARGA SATUAN</th>
-                          <th className="px-2 py-1.5 text-right w-24">TOTAL BIAYA</th>
+                      <thead className="bg-[#1e3a8a] text-white">
+                        <tr className="border-b border-[#172554] font-bold text-white">
+                          <th className="px-2 py-2 text-center border-r border-blue-900/40 w-9 text-white">NO</th>
+                          <th className="px-2 py-2 border-r border-blue-900/40 text-white">URAIAN PEKERJAAN</th>
+                          <th className="px-2 py-2 text-center border-r border-blue-900/40 w-11 text-white">VOL</th>
+                          <th className="px-2 py-2 text-center border-r border-blue-900/40 w-14 text-white">SATUAN</th>
+                          <th className="px-2 py-2 text-right border-r border-blue-900/40 w-24 text-white">HARGA SATUAN</th>
+                          <th className="px-2 py-2 text-right w-24 text-white">TOTAL BIAYA</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200">
                         {qItems.map((item, idx) => (
-                          <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                            <td className="px-2 py-1.5 text-center border-r border-slate-300 font-bold">{idx + 1}</td>
-                            <td className="px-2 py-1.5 border-r border-slate-300 font-extrabold text-slate-900 whitespace-pre-line">{item.description}</td>
-                            <td className="px-2 py-1.5 text-center border-r border-slate-300 font-bold">{item.vol || item.quantity || 1}</td>
-                            <td className="px-2 py-1.5 text-center border-r border-slate-300 text-slate-500 font-bold">{item.unit || "Unit"}</td>
-                            <td className="px-2 py-1.5 text-right border-r border-slate-300 font-mono">Rp {(item.unitPrice || 0).toLocaleString("id-ID")}</td>
+                          <tr key={idx} className="hover:bg-slate-50 transition-colors align-top">
+                            <td className="px-2 py-1.5 text-center border-r border-slate-300 font-bold text-slate-900">{idx + 1}</td>
+                            <td className="px-2 py-1.5 border-r border-slate-300 text-slate-900">
+                              <div className="font-extrabold text-slate-900">{item.description}</div>
+                              {item.specifications && (() => {
+                                let specs: { key: string; value: string }[] = [];
+                                if (Array.isArray(item.specifications)) {
+                                  specs = item.specifications;
+                                } else if (typeof item.specifications === "string") {
+                                  specs = item.specifications.split("\n").filter(Boolean).map(l => {
+                                    const parts = l.split(":");
+                                    return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
+                                  });
+                                }
+                                const validSpecs = specs.filter(s => s && (s.key || s.value));
+                                if (validSpecs.length === 0) return null;
+                                return (
+                                  <div className="mt-1.5 space-y-0.5 text-[7px] text-slate-600 font-mono pl-1">
+                                    {validSpecs.map((sp: any, sIdx: number) => {
+                                      const k = (sp.key || "").trim().toUpperCase();
+                                      const v = (sp.value || "").trim();
+                                      return (
+                                        <div key={sIdx} className="grid grid-cols-[75px_10px_1fr] items-baseline">
+                                          <span className="font-semibold text-slate-600">{k}</span>
+                                          <span className="font-bold text-slate-800">:</span>
+                                          <span className="font-medium text-slate-900">{v}</span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              })()}
+                            </td>
+                            <td className="px-2 py-1.5 text-center border-r border-slate-300 font-bold text-slate-800">{item.vol || item.quantity || 1}</td>
+                            <td className="px-2 py-1.5 text-center border-r border-slate-300 text-slate-600 font-bold">{item.unit || "Unit"}</td>
+                            <td className="px-2 py-1.5 text-right border-r border-slate-300 font-mono text-slate-800">Rp {(item.unitPrice || 0).toLocaleString("id-ID")}</td>
                             <td className="px-2 py-1.5 text-right font-mono font-black text-slate-900">Rp {((item.vol || item.quantity || 1) * (item.unitPrice || 0)).toLocaleString("id-ID")}</td>
                           </tr>
                         ))}
@@ -1751,16 +1926,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                             Rp {includeShipping ? Number(shippingCost || 0).toLocaleString("id-ID") : "0"}
                           </td>
                         </tr>
-                        {/* Checkpoint 2: BIAYA JASA & INSTALASI */}
-                        <tr className="bg-slate-50 font-extrabold text-slate-800 text-[9px]">
-                          <td colSpan={4} className="px-2 py-1.5 text-right border-r border-slate-300 text-[8px]">
-                            BIAYA JASA & INSTALASI
-                          </td>
-                          <td colSpan={2} className={`px-2 py-1.5 text-right font-mono text-[9px] ${includeServiceFee && serviceFee > 0 ? "text-slate-900 font-bold" : "text-slate-400"}`}>
-                            Rp {includeServiceFee ? Number(serviceFee || 0).toLocaleString("id-ID") : "0"}
-                          </td>
-                        </tr>
-                        {/* Checkpoint 3: PPN */}
+                        {/* Checkpoint 2: PPN */}
                         <tr className="bg-slate-50 font-extrabold text-slate-800 text-[9px]">
                           <td colSpan={4} className="px-2 py-1.5 text-right border-r border-slate-300 text-[8px]">
                             PPN {taxRate}%
@@ -1770,9 +1936,9 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                           </td>
                         </tr>
                         {/* GRAND TOTAL */}
-                        <tr className="bg-indigo-50 border-t-2 border-indigo-300 font-black text-indigo-950 text-[10px]">
-                          <td colSpan={4} className="px-2 py-1.5 text-right border-r border-indigo-200">GRAND TOTAL</td>
-                          <td colSpan={2} className="px-2 py-1.5 text-right font-mono text-xs text-indigo-700">Rp {qGrandTotal.toLocaleString("id-ID")}</td>
+                        <tr className="bg-[#1e3a8a] border-t-2 border-[#172554] font-black text-white text-[10px]">
+                          <td colSpan={4} className="px-2 py-1.5 text-right border-r border-blue-900/40 text-white">GRAND TOTAL</td>
+                          <td colSpan={2} className="px-2 py-1.5 text-right font-mono text-xs text-white font-black">Rp {qGrandTotal.toLocaleString("id-ID")}</td>
                         </tr>
                       </tfoot>
                     </table>
@@ -1782,31 +1948,61 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                     *Terbilang: {numberToWordsID(qGrandTotal)} rupiah
                   </p>
 
-                  {/* Conditions & Sign stamp */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                    <div className="space-y-1 font-sans text-[8px] border border-slate-200/80 p-2 rounded-xl bg-slate-50">
-                      <p className="font-black text-slate-700 uppercase tracking-wider">Syarat & Ketentuan Tambahan:</p>
-                      <p className="text-slate-500 leading-relaxed font-bold whitespace-pre-wrap">{qNotes}</p>
-                    </div>
-
-                    <div className="text-right space-y-4 pr-4 border-l border-slate-100 flex flex-col justify-end">
-                      <div className="space-y-1 text-[9px]">
-                        <p className="text-slate-500 font-bold">Hormat Kami,</p>
-                        <p className="font-extrabold text-slate-900 uppercase">{compName}</p>
-                      </div>
-
-                      {showDigitalStamp && (
-                        <div className="flex justify-end pt-1">
-                          <div className="bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-lg flex flex-col items-center justify-center text-[7px] text-indigo-700 w-36 text-center shadow-xs">
-                            <span className="font-black uppercase tracking-wider text-indigo-900">VERIFIED SIGNATURE</span>
-                            <span className="font-medium text-slate-400 mt-0.5 truncate max-w-full text-center" title={compName}>{compName}</span>
-                          </div>
+                  {/* Catatan / Notes & Term of Payment (ABOVE Hormat Kami) */}
+                  {((qNotes && qNotes.trim()) || (qPaymentTerms && qPaymentTerms.trim())) && (
+                    <div className="space-y-2 font-sans text-[8px] pt-1">
+                      {qNotes && qNotes.trim() && (
+                        <div className="border border-slate-200 p-2.5 rounded-lg bg-slate-50/80 space-y-0.5">
+                          <p className="font-black text-slate-700 uppercase tracking-wider">Catatan / Notes:</p>
+                          <p className="text-slate-600 leading-relaxed font-medium whitespace-pre-wrap">{qNotes}</p>
                         </div>
                       )}
+                      {qPaymentTerms && qPaymentTerms.trim() && (
+                        <div className="border border-slate-200 p-2.5 rounded-lg bg-slate-50/80 space-y-0.5">
+                          <p className="font-black text-slate-700 uppercase tracking-wider">Term of Payment:</p>
+                          <p className="text-slate-600 leading-relaxed font-medium whitespace-pre-wrap">{qPaymentTerms}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
-                      <div className="space-y-1 pt-4 text-[9px]">
-                        <p className="font-black border-t border-slate-350 pt-1 inline-block text-slate-900">{qPreparedBy.toUpperCase()}</p>
-                        <p className="text-slate-400 font-extrabold text-[8px]">Direktorat Estimasi & Teknikal</p>
+                  {/* Closing Statement */}
+                  <p className="text-[9px] text-slate-700 font-medium leading-relaxed pt-1">
+                    Demikian penawaran ini kami sampaikan. Atas perhatian dan kerjasamanya kami ucapkan terimakasih.
+                  </p>
+
+                  {/* Signature Section (Hormat kami di sebelah KIRI dan rapih) */}
+                  <div className="flex justify-start pt-4 text-left">
+                    <div className="space-y-1.5 w-56">
+                      <div className="space-y-0.5 text-[9px]">
+                        <p className="text-slate-600 font-medium">Hormat Kami,</p>
+                        <p className="font-bold text-slate-900 uppercase">{compName}</p>
+                      </div>
+
+                      {qDigitalSigUrl ? (
+                        <div className="py-1">
+                          <div className="w-48 h-20 bg-slate-50/70 border border-slate-200/90 rounded-xl flex items-center justify-center p-2 shadow-xs">
+                            <img
+                              src={qDigitalSigUrl}
+                              alt="Tanda Tangan"
+                              className="max-h-full max-w-full object-contain mx-auto"
+                            />
+                          </div>
+                        </div>
+                      ) : showDigitalStamp ? (
+                        <div className="py-1">
+                          <div className="bg-slate-50 border border-slate-300 px-3 py-1.5 rounded flex flex-col items-center justify-center text-[7px] text-slate-700 w-44 text-center">
+                            <span className="font-black uppercase tracking-wider text-[#1e3a8a]">VERIFIED SIGNATURE</span>
+                            <span className="font-medium text-slate-500 mt-0.5 truncate max-w-full text-center" title={compName}>{compName}</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="h-16" />
+                      )}
+
+                      <div className="space-y-0.5 pt-1 text-[9px]">
+                        <p className="font-black text-slate-900 inline-block border-b-2 border-slate-800 pb-0.5 tracking-wider">{qPreparedBy.toUpperCase()}</p>
+                        <p className="text-slate-600 font-medium text-[8px]">{qPreparedByTitle || "Direktur"}</p>
                       </div>
                     </div>
                   </div>
