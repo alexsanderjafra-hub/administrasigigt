@@ -34874,18 +34874,20 @@ export default function App() {
         pdf.setFontSize(7);
         specPairs.forEach((sp, sIdx) => {
           const rowY = y + 9 + (sIdx * 3.8);
-          if (sp.key) {
-            pdf.setFont("helvetica", "bold");
+          const rawKey = (sp.key || "").trim();
+          const hasKey = rawKey && rawKey !== "-";
+          pdf.setFont("helvetica", "normal"); // Spesifikasi TIDAK di-bold
+
+          if (hasKey) {
             pdf.setTextColor(71, 85, 105);
-            pdf.text(sp.key, cx + 3, rowY);
+            pdf.text(rawKey, cx + 3, rowY);
             pdf.text(":", cx + 25, rowY);
-            pdf.setFont("helvetica", "normal");
             pdf.setTextColor(15, 23, 42);
             pdf.text(sp.value, cx + 28, rowY, { maxWidth: cw[1] - 31 });
           } else {
-            pdf.setFont("helvetica", "normal");
-            pdf.setTextColor(71, 85, 105);
-            pdf.text(sp.value, cx + 3, rowY, { maxWidth: cw[1] - 6 });
+            // Kotak kiri kosong: tidak ada strip '-' dan ':', sejajar dengan nilai spek
+            pdf.setTextColor(15, 23, 42);
+            pdf.text(sp.value, cx + 28, rowY, { maxWidth: cw[1] - 31 });
           }
         });
         pdf.setTextColor(15, 23, 42);
@@ -35679,9 +35681,12 @@ export default function App() {
                     const file = e.target.files?.[0];
                     if (file) {
                       const reader = new FileReader();
-                      reader.onload = (ev) => {
+                      reader.onload = async (ev) => {
                         if (ev.target?.result) {
-                          const res = ev.target.result as string;
+                          let res = ev.target.result as string;
+                          try {
+                            res = await compressImage(res, 600, 600, 0.85);
+                          } catch (_) {}
                           setQuoteCompLogo(res);
                           imageRepositoryService.saveImage(
                             res,
@@ -35909,50 +35914,60 @@ export default function App() {
                               </span>
 
                               {/* Tampilkan daftar spesifikasi yang sudah ditambahkan */}
+                              {/* Tampilkan daftar spesifikasi yang sudah ditambahkan */}
                               {currentSpecs.length > 0 && (
                                 <div className="flex flex-wrap gap-1.5 mb-1.5">
-                                  {currentSpecs.map((sp: any, sIdx: number) => (
-                                    <span key={sIdx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-300 rounded-md font-bold text-slate-700">
-                                      <span className="font-black text-indigo-700">{sp.key}:</span> {sp.value}
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const nextSpecs = [...currentSpecs];
-                                          nextSpecs.splice(sIdx, 1);
-                                          updateQuotationItem(idx, "specifications" as any, nextSpecs);
-                                        }}
-                                        className="text-rose-500 hover:text-rose-700 font-black ml-0.5 cursor-pointer"
-                                      >
-                                        ×
-                                      </button>
-                                    </span>
-                                  ))}
+                                  {currentSpecs.map((sp: any, sIdx: number) => {
+                                    const rawKey = (sp.key || "").trim();
+                                    const hasKey = rawKey && rawKey !== "-";
+                                    return (
+                                      <span key={sIdx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-300 rounded-md text-[10px] text-slate-700">
+                                        {hasKey ? (
+                                          <span className="font-bold text-slate-700">{rawKey}:</span>
+                                        ) : null}
+                                        <span className="font-medium text-slate-800">{sp.value}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const nextSpecs = [...currentSpecs];
+                                            nextSpecs.splice(sIdx, 1);
+                                            updateQuotationItem(idx, "specifications" as any, nextSpecs);
+                                          }}
+                                          className="text-rose-500 hover:text-rose-700 font-black ml-0.5 cursor-pointer"
+                                        >
+                                          ×
+                                        </button>
+                                      </span>
+                                    );
+                                  })}
                                 </div>
                               )}
 
-                              {/* Inputs Spesifikasi: [ Label ] [ Nilai ] [ + ] */}
+                              {/* Inputs Spesifikasi: [ Label (Bisa Kosong) ] [ Nilai Spek ] [ + ] */}
                               <div className="flex items-center gap-1.5">
                                 <input
                                   type="text"
                                   id={`spec-key-${idx}`}
-                                  placeholder="Nama / Label Spek"
-                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[10px] font-semibold text-slate-800 outline-none focus:border-slate-700"
+                                  placeholder="Label Spek (opsional/bisa kosong)"
+                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[10px] font-semibold text-slate-800 outline-none focus:border-slate-700 placeholder:text-slate-400"
                                 />
                                 <input
                                   type="text"
                                   id={`spec-val-${idx}`}
-                                  placeholder="Nilai Spek (misal: SUS 304 / 50 m3)"
-                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[10px] font-semibold text-slate-800 outline-none focus:border-slate-700"
+                                  placeholder="Nilai Spek (misal: FRP / Manhole)"
+                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[10px] font-semibold text-slate-800 outline-none focus:border-slate-700 placeholder:text-slate-400"
                                 />
                                 <button
                                   type="button"
                                   onClick={() => {
                                     const kInput = document.getElementById(`spec-key-${idx}`) as HTMLInputElement;
                                     const vInput = document.getElementById(`spec-val-${idx}`) as HTMLInputElement;
-                                    const k = kInput?.value?.trim();
-                                    const v = vInput?.value?.trim();
+                                    const k = kInput?.value?.trim() || "";
+                                    const v = vInput?.value?.trim() || "";
                                     if (k || v) {
-                                      updateQuotationItem(idx, "specifications" as any, [...currentSpecs, { key: k || "Spec", value: v || "-" }]);
+                                      // If left box is empty or "-", keep it empty ("") - NEVER force "Spec" or "-"
+                                      const cleanKey = (k === "-" ? "" : k);
+                                      updateQuotationItem(idx, "specifications" as any, [...currentSpecs, { key: cleanKey, value: v }]);
                                       if (kInput) kInput.value = "";
                                       if (vInput) vInput.value = "";
                                     }
@@ -36249,9 +36264,12 @@ export default function App() {
                     const file = e.target.files?.[0];
                     if (file) {
                       const reader = new FileReader();
-                      reader.onload = (ev) => {
+                      reader.onload = async (ev) => {
                         if (ev.target?.result) {
-                          const res = ev.target.result as string;
+                          let res = ev.target.result as string;
+                          try {
+                            res = await compressImage(res, 600, 600, 0.85);
+                          } catch (_) {}
                           setQuoteSignature(res);
                           imageRepositoryService.saveImage(
                             res,

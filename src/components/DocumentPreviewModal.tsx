@@ -19,10 +19,12 @@ import {
   Download,
   Building2,
   Percent,
-  Upload
+  Upload,
+  FolderOpen
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { imageRepositoryService } from "../services/imageRepositoryService";
 
 // Custom helper to parse and format clean specification lines without duplication or artificial prefixes
 const getCleanSpecLines = (item: any): string[] => {
@@ -57,8 +59,10 @@ const getCleanSpecLines = (item: any): string[] => {
         const idx = trimmed.indexOf(":");
         const k = trimmed.substring(0, idx).trim();
         const v = trimmed.substring(idx + 1).trim();
-        if (k && v) {
+        if (k && k !== "-" && v) {
           appendSpec(k, v);
+        } else if (v) {
+          specLines.push(v);
         }
       } else {
         // Line doesn't contain a colon (e.g. list points)
@@ -68,6 +72,27 @@ const getCleanSpecLines = (item: any): string[] => {
   }
 
   return specLines;
+};
+
+// Helper to dynamically calculate natural image dimensions and aspect ratio
+const getImageDimensions = (src: string): Promise<{ width: number; height: number; ratio: number }> => {
+  return new Promise((resolve) => {
+    if (!src) {
+      resolve({ width: 1, height: 1, ratio: 1 });
+      return;
+    }
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const w = img.naturalWidth || img.width || 100;
+      const h = img.naturalHeight || img.height || 100;
+      resolve({ width: w, height: h, ratio: w / Math.max(h, 1) });
+    };
+    img.onerror = () => {
+      resolve({ width: 100, height: 100, ratio: 1 });
+    };
+    img.src = src;
+  });
 };
 
 interface DocumentPreviewModalProps {
@@ -96,6 +121,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const [showDigitalStamp, setShowDigitalStamp] = useState(true);
   const [showTncNotes, setShowTncNotes] = useState(true);
   const [activeTab, setActiveTab] = useState<"edit" | "preview">("preview");
+
+  // Visual aspect ratio and sizing configuration for Logo and Signature
+  const [logoSize, setLogoSize] = useState<"compact" | "standard" | "large">("standard");
+  const [sigSize, setSigSize] = useState<"compact" | "standard" | "large">("standard");
+  const [sigAlign, setSigAlign] = useState<"left" | "center">("left");
+  const [showSigRepoPicker, setShowSigRepoPicker] = useState(false);
+  const [showLogoRepoPicker, setShowLogoRepoPicker] = useState(false);
 
   // --- DYNAMIC DISCOUNTS, TAX & COMPANY CREDENTIALS STATE ---
   const [discountType, setDiscountType] = useState<"percent" | "rupiah">("rupiah");
@@ -278,6 +310,12 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
     if (type !== "quotation" || !onSaveQuotation) return;
     setIsSaving(true);
     try {
+      if (compLogoUrl) {
+        imageRepositoryService.saveImage(compLogoUrl, "logo", `Logo ${compName || "Perusahaan"}`);
+      }
+      if (qDigitalSigUrl) {
+        imageRepositoryService.saveImage(qDigitalSigUrl, "signature", `TTD ${qPreparedBy || "Direktur"}`);
+      }
       const payload = {
         number: qNum,
         recipient: qRecipient,
@@ -290,6 +328,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         preparedByTitle: qPreparedByTitle,
         subTotal: qSubtotal,
         quotationType: qType,
+        items: qItems,
         includeShipping,
         shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
         includePPN,
@@ -347,7 +386,23 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
             if (compLogoUrl.includes("image/jpeg") || compLogoUrl.includes("image/jpg")) {
               format = "JPEG";
             }
-            pdf.addImage(compLogoUrl, format, marginSize, 12, 25, 25);
+            const logoDim = await getImageDimensions(compLogoUrl);
+            const ratio = logoDim.ratio; // width / height
+
+            // Proportional bounding box based on logoSize (prevents horizontal squashing or stretching)
+            const maxLogoW = logoSize === "large" ? 48 : logoSize === "compact" ? 30 : 38;
+            const maxLogoH = logoSize === "large" ? 24 : logoSize === "compact" ? 16 : 20;
+
+            let finalLogoW = maxLogoW;
+            let finalLogoH = maxLogoW / ratio;
+            if (finalLogoH > maxLogoH) {
+              finalLogoH = maxLogoH;
+              finalLogoW = maxLogoH * ratio;
+            }
+
+            // Vertically center in header space (Y: 10 to 34)
+            const logoY = 12 + Math.max(0, (22 - finalLogoH) / 2);
+            pdf.addImage(compLogoUrl, format, marginSize, logoY, finalLogoW, finalLogoH, undefined, "FAST");
           } catch (err) {
             console.error("Error drawing custom logo in PDF:", err);
             // Fallback block
@@ -619,39 +674,58 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         didDrawCell: (data) => {
           if (data.section === "body" && data.column.index === 1) {
             const item = qItems[data.row.index];
-            if (item && item.specifications) {
-              let specs: { key: string; value: string }[] = [];
-              if (Array.isArray(item.specifications)) {
-                specs = item.specifications;
-              } else if (typeof item.specifications === "string") {
-                const lines = item.specifications.split("\n").filter(Boolean);
-                specs = lines.map(l => {
-                  const parts = l.split(":");
-                  return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
-                });
+            if (item) {
+              // 1. Draw Item Name / Description in BOLD (hanya nama barang yang di-bold)
+              const itemTitle = (item.description || "").trim();
+              if (itemTitle) {
+                // Clear the default unbolded first line background cleanly
+                const isEven = data.row.index % 2 === 0;
+                pdf.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
+                pdf.rect(data.cell.x + 0.4, data.cell.y + 0.4, data.cell.width - 0.8, 5.6, "F");
+                
+                pdf.setFont("helvetica", "bold");
+                pdf.setFontSize(8);
+                pdf.setTextColor(15, 23, 42);
+                pdf.text(itemTitle, data.cell.x + 3, data.cell.y + 4.2, { maxWidth: data.cell.width - 6 });
               }
-              const validSpecs = specs.filter(s => s && (s.key || s.value));
-              if (validSpecs.length > 0) {
-                let curY = data.cell.y + 7.5;
-                validSpecs.forEach(sp => {
-                  const k = (sp.key || "").trim().toUpperCase();
-                  const v = (sp.value || "").trim();
-                  pdf.setFontSize(7);
-                  if (k) {
-                    pdf.setFont("helvetica", "bold");
-                    pdf.setTextColor(71, 85, 105);
-                    pdf.text(k, data.cell.x + 3, curY);
-                    pdf.text(":", data.cell.x + 24, curY);
-                    pdf.setFont("helvetica", "normal");
-                    pdf.setTextColor(15, 23, 42);
-                    pdf.text(v, data.cell.x + 27, curY, { maxWidth: data.cell.width - 30 });
-                  } else {
-                    pdf.setFont("helvetica", "normal");
-                    pdf.setTextColor(71, 85, 105);
-                    pdf.text(v, data.cell.x + 3, curY, { maxWidth: data.cell.width - 6 });
-                  }
-                  curY += 3.6;
-                });
+
+              // 2. Draw specifications in NORMAL font (Spesifikasi TIDAK di-bold)
+              if (item.specifications) {
+                let specs: { key: string; value: string }[] = [];
+                if (Array.isArray(item.specifications)) {
+                  specs = item.specifications;
+                } else if (typeof item.specifications === "string") {
+                  const lines = item.specifications.split("\n").filter(Boolean);
+                  specs = lines.map(l => {
+                    const parts = l.split(":");
+                    return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
+                  });
+                }
+                const validSpecs = specs.filter(s => s && (s.key || s.value));
+                if (validSpecs.length > 0) {
+                  let curY = data.cell.y + 7.8;
+                  validSpecs.forEach(sp => {
+                    const rawKey = (sp.key || "").trim();
+                    const hasKey = rawKey && rawKey !== "-";
+                    const k = hasKey ? rawKey.toUpperCase() : "";
+                    const v = (sp.value || "").trim();
+                    pdf.setFontSize(7);
+                    pdf.setFont("helvetica", "normal"); // Pas spesifikasi TIDAK di-bold!
+
+                    if (hasKey) {
+                      pdf.setTextColor(71, 85, 105);
+                      pdf.text(k, data.cell.x + 3, curY);
+                      pdf.text(":", data.cell.x + 24, curY);
+                      pdf.setTextColor(15, 23, 42);
+                      pdf.text(v, data.cell.x + 27, curY, { maxWidth: data.cell.width - 30 });
+                    } else {
+                      // Kotak kiri kosong: tidak ada strip '-' dan tidak ada ':', nilai diletakkan sejajar
+                      pdf.setTextColor(15, 23, 42);
+                      pdf.text(v, data.cell.x + 27, curY, { maxWidth: data.cell.width - 30 });
+                    }
+                    curY += 3.6;
+                  });
+                }
               }
             }
           }
@@ -737,8 +811,8 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       );
       finalY += 8;
 
-      // Signature section (Hormat kami di sebelah KIRI dan rapih)
-      if (finalY > pageHeight - 38) {
+      // Signature section (Hormat kami di sebelah KIRI dan rapih & simetris)
+      if (finalY > pageHeight - 45) {
         pdf.addPage();
         finalY = 20;
       }
@@ -752,19 +826,40 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       pdf.setFont("helvetica", "bold");
       pdf.text(compName, sigX, finalY + 4.5);
 
+      const signerName = (qPreparedBy || "ALEXSANDER").toUpperCase();
+      const signerTitle = qPreparedByTitle || "Direktur";
+      const nameW = pdf.getTextWidth(signerName);
+      const compW = pdf.getTextWidth(compName);
+      const blockW = Math.max(nameW, compW, 46);
+
       if (qDigitalSigUrl) {
         try {
           let sigFormat = "PNG";
           if (qDigitalSigUrl.includes("image/jpeg") || qDigitalSigUrl.includes("image/jpg")) {
             sigFormat = "JPEG";
           }
-          // Area gambar tanda tangan di tengah-tengah kolom tanda tangan, rapih dan tidak mepet
-          const sigColW = 55;
-          const sigImgW = 38;
-          const sigImgH = 18;
-          const sigImgX = sigX + (sigColW - sigImgW) / 2;
+          const sigDim = await getImageDimensions(qDigitalSigUrl);
+          const ratio = sigDim.ratio; // width / height
+
+          // Proportional bounding box based on sigSize (preserves exact natural aspect ratio)
+          const maxSigW = sigSize === "large" ? 52 : sigSize === "compact" ? 36 : 44;
+          const maxSigH = sigSize === "large" ? 26 : sigSize === "compact" ? 17 : 21;
+
+          let sigImgW = maxSigW;
+          let sigImgH = maxSigW / ratio;
+          if (sigImgH > maxSigH) {
+            sigImgH = maxSigH;
+            sigImgW = maxSigH * ratio;
+          }
+
+          // Positioning: perfectly aligned flush with left margin sigX (or centered if sigAlign === "center")
+          let sigImgX = sigX;
+          if (sigAlign === "center") {
+            sigImgX = sigX + Math.max(0, (blockW - sigImgW) / 2);
+          }
+
           pdf.addImage(qDigitalSigUrl, sigFormat, sigImgX, finalY + 6.5, sigImgW, sigImgH, undefined, "FAST");
-          finalY += 6.5 + sigImgH + 3.5;
+          finalY += 6.5 + sigImgH + 3;
         } catch (err) {
           console.error("Error drawing signature in PDF:", err);
           finalY += 22;
@@ -772,37 +867,42 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       } else if (showDigitalStamp) {
         pdf.setDrawColor(203, 213, 225);
         pdf.setFillColor(248, 250, 252);
-        pdf.roundedRect(sigX, finalY + 7, 48, 13, 1, 1, "FD");
+        const stampW = 46;
+        const stampH = 14;
+        const stampX = sigAlign === "center" ? sigX + Math.max(0, (blockW - stampW) / 2) : sigX;
+        pdf.roundedRect(stampX, finalY + 7, stampW, stampH, 1, 1, "FD");
         pdf.setFontSize(7);
         pdf.setFont("helvetica", "bold");
         pdf.setTextColor(30, 58, 138);
-        pdf.text("VERIFIED SIGNATURE", sigX + 24, finalY + 11.5, { align: "center" });
+        pdf.text("VERIFIED SIGNATURE", stampX + stampW / 2, finalY + 11.5, { align: "center" });
         pdf.setFontSize(6);
         pdf.setFont("helvetica", "italic");
         pdf.setTextColor(100, 116, 139);
-        pdf.text(`Authorized by ${compName}`, sigX + 24, finalY + 16, { align: "center" });
-        finalY += 16;
+        pdf.text(`Authorized by ${compName}`, stampX + stampW / 2, finalY + 16, { align: "center" });
+        finalY += 17;
       } else {
         finalY += 18;
       }
 
-      const signerName = (qPreparedBy || "ALEXSANDER").toUpperCase();
-      const signerTitle = qPreparedByTitle || "Direktur";
-
       pdf.setFontSize(8.5);
       pdf.setFont("helvetica", "bold");
       pdf.setTextColor(15, 23, 42);
-      pdf.text(signerName, sigX, finalY + 4);
 
-      const nameW = pdf.getTextWidth(signerName);
+      const signerX = sigAlign === "center" ? sigX + (blockW - nameW) / 2 : sigX;
+      pdf.text(signerName, signerX, finalY + 4);
+
       pdf.setDrawColor(51, 65, 85);
       pdf.setLineWidth(0.4);
-      pdf.line(sigX, finalY + 5.2, sigX + Math.max(nameW, 35), finalY + 5.2);
+      const lineStartX = sigAlign === "center" ? signerX : sigX;
+      const lineEndX = sigAlign === "center" ? signerX + nameW : sigX + Math.max(nameW, 38);
+      pdf.line(lineStartX, finalY + 5.2, lineEndX, finalY + 5.2);
 
       pdf.setFontSize(8);
       pdf.setFont("helvetica", "normal");
       pdf.setTextColor(71, 85, 105);
-      pdf.text(signerTitle, sigX, finalY + 9.5);
+      const titleW = pdf.getTextWidth(signerTitle);
+      const titleX = sigAlign === "center" ? sigX + (blockW - titleW) / 2 : sigX;
+      pdf.text(signerTitle, titleX, finalY + 9.5);
 
       // PAGE 2: CONNECTED BOQ (If present)
       if (connectedBoqId && currentBoqItemsToUse.length > 0) {
@@ -907,6 +1007,8 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           compEmail,
           compOffice,
           compLogoUrl,
+          digitalSignatureUrl: qDigitalSigUrl,
+          items: qItems,
           tax: qTax,
           grandTotal: qGrandTotal
         };
@@ -1119,32 +1221,114 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                     Opsi Visual Output PDF
                   </h4>
 
-                  <div className="grid grid-cols-1 gap-2.5">
-                    <label className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-xl border border-slate-800 text-[11px] font-bold text-slate-300 cursor-pointer hover:bg-slate-900 transition-all">
-                      <span className="flex items-center gap-2">
-                        <FileText size={14} className="text-slate-400" />
-                        Tampilkan KOP & Logo Perusahaan
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={showCompanyLogo}
-                        onChange={(e) => setShowCompanyLogo(e.target.checked)}
-                        className="w-4 h-4 rounded text-indigo-600 border-slate-700 bg-slate-800 text-white focus:ring-0 focus:ring-offset-0"
-                      />
-                    </label>
+                  <div className="grid grid-cols-1 gap-3">
+                    {/* TOGGLE & UKURAN KOP LOGO */}
+                    <div className="p-2.5 bg-slate-900/50 rounded-xl border border-slate-800 space-y-2">
+                      <label className="flex items-center justify-between text-[11px] font-bold text-slate-300 cursor-pointer">
+                        <span className="flex items-center gap-2">
+                          <FileText size={14} className="text-slate-400" />
+                          Tampilkan KOP & Logo Perusahaan
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={showCompanyLogo}
+                          onChange={(e) => setShowCompanyLogo(e.target.checked)}
+                          className="w-4 h-4 rounded text-indigo-600 border-slate-700 bg-slate-800 text-white focus:ring-0 focus:ring-offset-0"
+                        />
+                      </label>
+                      {showCompanyLogo && (
+                        <div className="pt-1.5 border-t border-slate-800/80 flex items-center justify-between">
+                          <span className="text-[9px] font-bold text-slate-400 uppercase">Proporsi Logo:</span>
+                          <div className="flex gap-1">
+                            {[
+                              { id: "compact", label: "Kompak" },
+                              { id: "standard", label: "Standar" },
+                              { id: "large", label: "Besar" },
+                            ].map((sz) => (
+                              <button
+                                key={sz.id}
+                                type="button"
+                                onClick={() => setLogoSize(sz.id as any)}
+                                className={`px-2 py-0.5 rounded text-[8px] font-black uppercase transition-all ${
+                                  logoSize === sz.id
+                                    ? "bg-indigo-600 text-white"
+                                    : "bg-slate-800 text-slate-400 hover:text-slate-200"
+                                }`}
+                              >
+                                {sz.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
-                    <label className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-xl border border-slate-800 text-[11px] font-bold text-slate-300 cursor-pointer hover:bg-slate-900 transition-all">
-                      <span className="flex items-center gap-2">
-                        <CheckCircle2 size={14} className="text-slate-400" />
-                        Tampilkan Tanda Tangan & Stempel Resmi
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={showDigitalStamp}
-                        onChange={(e) => setShowDigitalStamp(e.target.checked)}
-                        className="w-4 h-4 rounded text-indigo-600 border-slate-700 bg-slate-800 text-white focus:ring-0 focus:ring-offset-0"
-                      />
-                    </label>
+                    {/* TOGGLE & UKURAN + PERATAAN TANDA TANGAN */}
+                    <div className="p-2.5 bg-slate-900/50 rounded-xl border border-slate-800 space-y-2.5">
+                      <label className="flex items-center justify-between text-[11px] font-bold text-slate-300 cursor-pointer">
+                        <span className="flex items-center gap-2">
+                          <CheckCircle2 size={14} className="text-slate-400" />
+                          Tampilkan Tanda Tangan & Stempel Resmi
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={showDigitalStamp}
+                          onChange={(e) => setShowDigitalStamp(e.target.checked)}
+                          className="w-4 h-4 rounded text-indigo-600 border-slate-700 bg-slate-800 text-white focus:ring-0 focus:ring-offset-0"
+                        />
+                      </label>
+
+                      {showDigitalStamp && (
+                        <div className="pt-2 border-t border-slate-800/80 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase">Posisi TTD:</span>
+                            <div className="flex gap-1">
+                              {[
+                                { id: "left", label: "Rata Kiri (Sejajar)" },
+                                { id: "center", label: "Rata Tengah" },
+                              ].map((al) => (
+                                <button
+                                  key={al.id}
+                                  type="button"
+                                  onClick={() => setSigAlign(al.id as any)}
+                                  className={`px-2 py-0.5 rounded text-[8px] font-black uppercase transition-all ${
+                                    sigAlign === al.id
+                                      ? "bg-indigo-600 text-white"
+                                      : "bg-slate-800 text-slate-400 hover:text-slate-200"
+                                  }`}
+                                >
+                                  {al.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] font-bold text-slate-400 uppercase">Ukuran TTD:</span>
+                            <div className="flex gap-1">
+                              {[
+                                { id: "compact", label: "Kompak" },
+                                { id: "standard", label: "Standar (Simetris)" },
+                                { id: "large", label: "Besar" },
+                              ].map((sz) => (
+                                <button
+                                  key={sz.id}
+                                  type="button"
+                                  onClick={() => setSigSize(sz.id as any)}
+                                  className={`px-2 py-0.5 rounded text-[8px] font-black uppercase transition-all ${
+                                    sigSize === sz.id
+                                      ? "bg-indigo-600 text-white"
+                                      : "bg-slate-800 text-slate-400 hover:text-slate-200"
+                                  }`}
+                                >
+                                  {sz.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
                     <label className="flex items-center justify-between p-2.5 bg-slate-900/50 rounded-xl border border-slate-800 text-[11px] font-bold text-slate-300 cursor-pointer hover:bg-slate-900 transition-all">
                       <span className="flex items-center gap-2">
@@ -1317,9 +1501,44 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                   <div className="space-y-3 font-sans text-xs">
                     {/* Logo Upload Block */}
                     <div className="space-y-1.5">
-                      <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Logo Perusahaan</label>
+                      <div className="flex justify-between items-center">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Logo Perusahaan (Kop)</label>
+                        <button
+                          type="button"
+                          onClick={() => setShowLogoRepoPicker(!showLogoRepoPicker)}
+                          className="text-[8px] font-black uppercase text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2 py-0.5 rounded transition-all cursor-pointer"
+                        >
+                          <FolderOpen size={10} /> Penampung Logo ({imageRepositoryService.getSavedImages().filter(x => x.category === "logo").length})
+                        </button>
+                      </div>
+
+                      {showLogoRepoPicker && (
+                        <div className="p-2 bg-slate-900 border border-indigo-500/30 rounded-xl space-y-1.5 animate-in fade-in duration-200">
+                          <p className="text-[8px] font-bold text-slate-400">Pilih logo dari riwayat penampung:</p>
+                          <div className="flex gap-2 overflow-x-auto pb-1 max-h-24">
+                            {imageRepositoryService.getSavedImages().filter(x => x.category === "logo").map((saved) => (
+                              <div
+                                key={saved.id}
+                                onClick={() => {
+                                  setCompLogoUrl(saved.dataUrl);
+                                  setShowLogoRepoPicker(false);
+                                }}
+                                className="w-16 h-14 bg-slate-950 border border-slate-700 hover:border-indigo-400 rounded-lg p-1 flex flex-col items-center justify-center cursor-pointer shrink-0 transition-all hover:scale-105"
+                                title={saved.title}
+                              >
+                                <img src={saved.dataUrl} alt={saved.title} className="max-h-8 max-w-full object-contain" />
+                                <span className="text-[6.5px] text-slate-400 font-bold truncate max-w-full mt-0.5">{saved.title}</span>
+                              </div>
+                            ))}
+                            {imageRepositoryService.getSavedImages().filter(x => x.category === "logo").length === 0 && (
+                              <p className="text-[8px] text-slate-500 italic py-1">Belum ada logo tersimpan di penampung.</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       <div className="flex items-center gap-3">
-                        <div className="w-14 h-14 bg-slate-900 rounded-xl border border-slate-800 flex items-center justify-center overflow-hidden shrink-0">
+                        <div className="w-16 h-14 bg-slate-900 rounded-xl border border-slate-800 flex items-center justify-center overflow-hidden shrink-0 p-1">
                           {compLogoUrl ? (
                             <img src={compLogoUrl} alt="Logo" className="w-full h-full object-contain" />
                           ) : (
@@ -1337,7 +1556,9 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                                   const reader = new FileReader();
                                   reader.onload = (ev) => {
                                     if (ev.target?.result) {
-                                      setCompLogoUrl(ev.target.result as string);
+                                      const res = ev.target.result as string;
+                                      setCompLogoUrl(res);
+                                      imageRepositoryService.saveImage(res, "logo", file.name.replace(/\.[^/.]+$/, ""));
                                     }
                                   };
                                   reader.readAsDataURL(file);
@@ -1363,7 +1584,98 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                             )}
                           </div>
                           <p className="text-[8px] text-slate-500 italic font-medium leading-tight">
-                            Format PNG/JPEG disarankan.
+                            Format PNG/JPEG (akan otomatis disesuaikan proporsi aslinya).
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Signature & Stamp Upload Block */}
+                    <div className="space-y-1.5 pt-3 border-t border-slate-800/80">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[9px] font-extrabold text-slate-500 uppercase tracking-wider pl-0.5">Tanda Tangan & Stempel Resmi</label>
+                        <button
+                          type="button"
+                          onClick={() => setShowSigRepoPicker(!showSigRepoPicker)}
+                          className="text-[8px] font-black uppercase text-indigo-400 hover:text-indigo-300 flex items-center gap-1 bg-indigo-500/10 px-2 py-0.5 rounded transition-all cursor-pointer"
+                        >
+                          <FolderOpen size={10} /> Penampung TTD ({imageRepositoryService.getSavedImages().filter(x => x.category === "signature").length})
+                        </button>
+                      </div>
+
+                      {showSigRepoPicker && (
+                        <div className="p-2 bg-slate-900 border border-indigo-500/30 rounded-xl space-y-1.5 animate-in fade-in duration-200">
+                          <p className="text-[8px] font-bold text-slate-400">Pilih tanda tangan dari riwayat penampung:</p>
+                          <div className="flex gap-2 overflow-x-auto pb-1 max-h-24">
+                            {imageRepositoryService.getSavedImages().filter(x => x.category === "signature").map((saved) => (
+                              <div
+                                key={saved.id}
+                                onClick={() => {
+                                  setQDigitalSigUrl(saved.dataUrl);
+                                  setShowSigRepoPicker(false);
+                                }}
+                                className="w-16 h-14 bg-slate-950 border border-slate-700 hover:border-indigo-400 rounded-lg p-1 flex flex-col items-center justify-center cursor-pointer shrink-0 transition-all hover:scale-105"
+                                title={saved.title}
+                              >
+                                <img src={saved.dataUrl} alt={saved.title} className="max-h-8 max-w-full object-contain" />
+                                <span className="text-[6.5px] text-slate-400 font-bold truncate max-w-full mt-0.5">{saved.title}</span>
+                              </div>
+                            ))}
+                            {imageRepositoryService.getSavedImages().filter(x => x.category === "signature").length === 0 && (
+                              <p className="text-[8px] text-slate-500 italic py-1">Belum ada tanda tangan di penampung.</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="flex items-center gap-3">
+                        <div className="w-16 h-14 bg-slate-900 rounded-xl border border-slate-800 flex items-center justify-center overflow-hidden shrink-0 p-1">
+                          {qDigitalSigUrl ? (
+                            <img src={qDigitalSigUrl} alt="TTD" className="w-full h-full object-contain" />
+                          ) : (
+                            <span className="text-[8px] text-slate-600 font-extrabold uppercase select-none text-center">No TTD</span>
+                          )}
+                        </div>
+                        <div className="flex-1 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  const reader = new FileReader();
+                                  reader.onload = (ev) => {
+                                    if (ev.target?.result) {
+                                      const res = ev.target.result as string;
+                                      setQDigitalSigUrl(res);
+                                      imageRepositoryService.saveImage(res, "signature", file.name.replace(/\.[^/.]+$/, ""));
+                                    }
+                                  };
+                                  reader.readAsDataURL(file);
+                                }
+                              }}
+                              className="hidden"
+                              id="signature-file-picker-config"
+                            />
+                            <label
+                              htmlFor="signature-file-picker-config"
+                              className="inline-flex items-center gap-1 px-3 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 hover:text-white rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                            >
+                              <Upload size={10} /> Upload TTD
+                            </label>
+                            {qDigitalSigUrl && (
+                              <button
+                                type="button"
+                                onClick={() => setQDigitalSigUrl("")}
+                                className="inline-flex items-center px-3 py-1.5 bg-slate-900 border border-red-500/30 text-rose-400 hover:text-rose-300 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all cursor-pointer"
+                              >
+                                Hapus
+                              </button>
+                            )}
+                          </div>
+                          <p className="text-[8px] text-slate-500 italic font-medium leading-tight">
+                            Gambar TTD & Stempel akan diletakkan simetris dan proporsional.
                           </p>
                         </div>
                       </div>
@@ -1775,7 +2087,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                       <div className="flex items-center gap-2">
                         {showCompanyLogo && (
                           compLogoUrl ? (
-                            <img src={compLogoUrl} alt="Logo" className="w-10 h-10 object-contain rounded border border-slate-200" />
+                            <img
+                              src={compLogoUrl}
+                              alt="Logo"
+                              className={`object-contain transition-all ${
+                                logoSize === "large" ? "max-h-16 max-w-[170px]" : logoSize === "compact" ? "max-h-10 max-w-[110px]" : "max-h-13 max-w-[140px]"
+                              }`}
+                            />
                           ) : (
                             <div className="w-10 h-10 bg-slate-700 text-white rounded font-black flex items-center justify-center text-xs">
                               {compName.substring(0, 2).toUpperCase()}
@@ -1866,7 +2184,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                           <tr key={idx} className="hover:bg-slate-50 transition-colors align-top">
                             <td className="px-2 py-1.5 text-center border-r border-slate-300 font-bold text-slate-900">{idx + 1}</td>
                             <td className="px-2 py-1.5 border-r border-slate-300 text-slate-900">
-                              <div className="font-extrabold text-slate-900">{item.description}</div>
+                              <div className="font-black text-slate-900 text-[8.5px] uppercase">{item.description}</div>
                               {item.specifications && (() => {
                                 let specs: { key: string; value: string }[] = [];
                                 if (Array.isArray(item.specifications)) {
@@ -1880,15 +2198,17 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                                 const validSpecs = specs.filter(s => s && (s.key || s.value));
                                 if (validSpecs.length === 0) return null;
                                 return (
-                                  <div className="mt-1.5 space-y-0.5 text-[7px] text-slate-600 font-mono pl-1">
+                                  <div className="mt-1 space-y-0.5 text-[7px] text-slate-600 font-mono pl-0.5">
                                     {validSpecs.map((sp: any, sIdx: number) => {
-                                      const k = (sp.key || "").trim().toUpperCase();
+                                      const rawKey = (sp.key || "").trim();
+                                      const hasKey = rawKey && rawKey !== "-";
+                                      const k = hasKey ? rawKey.toUpperCase() : "";
                                       const v = (sp.value || "").trim();
                                       return (
-                                        <div key={sIdx} className="grid grid-cols-[75px_10px_1fr] items-baseline">
-                                          <span className="font-semibold text-slate-600">{k}</span>
-                                          <span className="font-bold text-slate-800">:</span>
-                                          <span className="font-medium text-slate-900">{v}</span>
+                                        <div key={sIdx} className="grid grid-cols-[75px_10px_1fr] items-baseline font-normal">
+                                          <span className="font-normal text-slate-700">{hasKey ? k : ""}</span>
+                                          <span className="font-normal text-slate-500">{hasKey ? ":" : ""}</span>
+                                          <span className="font-normal text-slate-900">{v}</span>
                                         </div>
                                       );
                                     })}
@@ -1971,26 +2291,26 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                     Demikian penawaran ini kami sampaikan. Atas perhatian dan kerjasamanya kami ucapkan terimakasih.
                   </p>
 
-                  {/* Signature Section (Hormat kami di sebelah KIRI dan rapih) */}
+                  {/* Signature Section (Hormat kami di sebelah KIRI dan rapih & simetris) */}
                   <div className="flex justify-start pt-4 text-left">
-                    <div className="space-y-1.5 w-56">
+                    <div className={`space-y-1.5 ${sigAlign === "center" ? "text-center" : "text-left"} max-w-sm`}>
                       <div className="space-y-0.5 text-[9px]">
                         <p className="text-slate-600 font-medium">Hormat Kami,</p>
                         <p className="font-bold text-slate-900 uppercase">{compName}</p>
                       </div>
 
                       {qDigitalSigUrl ? (
-                        <div className="py-1">
-                          <div className="w-48 h-20 bg-slate-50/70 border border-slate-200/90 rounded-xl flex items-center justify-center p-2 shadow-xs">
-                            <img
-                              src={qDigitalSigUrl}
-                              alt="Tanda Tangan"
-                              className="max-h-full max-w-full object-contain mx-auto"
-                            />
-                          </div>
+                        <div className={`py-1.5 flex ${sigAlign === "center" ? "justify-center" : "justify-start"}`}>
+                          <img
+                            src={qDigitalSigUrl}
+                            alt="Tanda Tangan & Stempel"
+                            className={`object-contain transition-all ${
+                              sigSize === "large" ? "max-h-24 max-w-[210px]" : sigSize === "compact" ? "max-h-16 max-w-[140px]" : "max-h-20 max-w-[175px]"
+                            }`}
+                          />
                         </div>
                       ) : showDigitalStamp ? (
-                        <div className="py-1">
+                        <div className={`py-1 flex ${sigAlign === "center" ? "justify-center" : "justify-start"}`}>
                           <div className="bg-slate-50 border border-slate-300 px-3 py-1.5 rounded flex flex-col items-center justify-center text-[7px] text-slate-700 w-44 text-center">
                             <span className="font-black uppercase tracking-wider text-[#1e3a8a]">VERIFIED SIGNATURE</span>
                             <span className="font-medium text-slate-500 mt-0.5 truncate max-w-full text-center" title={compName}>{compName}</span>
@@ -2001,7 +2321,9 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                       )}
 
                       <div className="space-y-0.5 pt-1 text-[9px]">
-                        <p className="font-black text-slate-900 inline-block border-b-2 border-slate-800 pb-0.5 tracking-wider">{qPreparedBy.toUpperCase()}</p>
+                        <p className="font-black text-slate-900 inline-block border-b-2 border-slate-800 pb-0.5 tracking-wider">
+                          {(qPreparedBy || "ALEXSANDER").toUpperCase()}
+                        </p>
                         <p className="text-slate-600 font-medium text-[8px]">{qPreparedByTitle || "Direktur"}</p>
                       </div>
                     </div>

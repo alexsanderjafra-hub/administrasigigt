@@ -24,8 +24,8 @@ export enum OperationType {
 }
 
 // Firestore write quota check with persistent session & local storage circuit breaker.
-let isFirestoreWriteQuotaExhausted = true;
-let quotaExhaustedUntil = Date.now() + 12 * 60 * 60 * 1000;
+let isFirestoreWriteQuotaExhausted = false;
+let quotaExhaustedUntil = 0;
 
 try {
   if (typeof window !== "undefined") {
@@ -35,11 +35,11 @@ try {
       const until = Number(stored);
       if (Date.now() < until) {
         quotaExhaustedUntil = until;
+        isFirestoreWriteQuotaExhausted = true;
+      } else {
+        window.localStorage?.removeItem("firestore_write_quota_exhausted_until");
+        window.sessionStorage?.removeItem("firestore_write_quota_exhausted_until");
       }
-    } else {
-      // First boot on quota exceeded: record 12-hour circuit breaker
-      window.localStorage?.setItem("firestore_write_quota_exhausted_until", String(quotaExhaustedUntil));
-      window.sessionStorage?.setItem("firestore_write_quota_exhausted_until", String(quotaExhaustedUntil));
     }
   }
 } catch (e) {}
