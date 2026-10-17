@@ -334,3 +334,37 @@ export const removeDebtOverride = (idOrCustomId: string): void => {
     console.warn("[FinancialStorage] Failed to remove debt override:", err);
   }
 };
+
+const POST_LOCK_TRANSACTIONS_KEY = "workflow_pro_post_lock_transaction_ids";
+let inMemoryPostLockIds: Set<string> | null = null;
+
+export const getPostLockTransactionIds = (): Set<string> => {
+  if (inMemoryPostLockIds) return inMemoryPostLockIds;
+  try {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(POST_LOCK_TRANSACTIONS_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          inMemoryPostLockIds = new Set(arr.map((k) => String(k).trim().toUpperCase()));
+          return inMemoryPostLockIds;
+        }
+      }
+    }
+  } catch (_) {}
+  inMemoryPostLockIds = new Set();
+  return inMemoryPostLockIds;
+};
+
+export const recordPostLockTransactionId = (idOrCustomId: string): void => {
+  if (!idOrCustomId) return;
+  const key = String(idOrCustomId).trim().toUpperCase();
+  if (!key) return;
+  try {
+    const set = getPostLockTransactionIds();
+    set.add(key);
+    safeSetLocalStorage(POST_LOCK_TRANSACTIONS_KEY, JSON.stringify(Array.from(set)));
+  } catch (err) {
+    console.warn("[FinancialStorage] Failed to record post-lock transaction ID:", err);
+  }
+};
