@@ -316,6 +316,7 @@ export interface FinancialRecord {
   refPiutang?: string; // Reference client receivable link
   refHutang?: string; // Reference supplier debt link
   linkedDebtId?: string; // Explicitly stored reference to the linked debt/receivable ID
+  isUserCreated?: boolean;
   debtAllocations?: {
     debtId: string;
     customId?: string;

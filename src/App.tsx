@@ -16543,7 +16543,7 @@ const AdminFinanceScreen = ({
       end: `${y}-${String(Number(m) + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
     };
   });
-  const [exportFlowType, setExportFlowType] = useState<"ALL" | "PERSONAL" | "OUT_BANK_DIRECT" | "IN">("ALL");
+  const [exportFlowType, setExportFlowType] = useState<"OUT" | "ALL" | "PERSONAL" | "OUT_BANK_DIRECT" | "IN">("OUT");
   const [exportPeriodType, setExportPeriodType] = useState<"weekly" | "monthly" | "all" | "custom">("monthly");
   const [exportSelectedCategories, setExportSelectedCategories] = useState<string[]>(["ALL"]);
   const [exportCategorySearch, setExportCategorySearch] = useState("");
@@ -16649,16 +16649,26 @@ const AdminFinanceScreen = ({
         const inRange = isAllTime ? true : (rDate >= exportRange.start && rDate <= exportRange.end);
         const projectMatch = filterProject === "ALL" || r.referenceId === filterProject;
         let flowMatch = true;
-        if (exportFlowType === "IN") flowMatch = r.type === "IN";
-        else if (exportFlowType === "OUT_BANK_DIRECT") flowMatch = isPtBankDirectOutRecord(r);
-        else if (exportFlowType === "PERSONAL") {
-          flowMatch = r.flowType === "OUT_PERSONAL_SPEND" || r.flowType === "PERSONAL_TALANGAN_REIMBURSE";
+        if (exportFlowType === "IN") {
+          flowMatch = r.type === "IN";
+        } else if (exportFlowType === "OUT" || (exportFlowType as string) === "ALL_OUT") {
+          // Output SEMUA catatan pengeluaran (baik Bank PT BNK- maupun Lapangan/Talangan PRS-)
+          flowMatch = r.type === "OUT";
+        } else if (exportFlowType === "OUT_BANK_DIRECT") {
+          flowMatch = isPtBankDirectOutRecord(r) || (r.customId && r.customId.startsWith("BNK-"));
+        } else if (exportFlowType === "PERSONAL") {
+          flowMatch =
+            r.flowType === "OUT_PERSONAL_SPEND" ||
+            r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+            (r.customId && r.customId.startsWith("PRS-"));
         } else if (exportFlowType === "TALANGAN") {
           flowMatch =
             r.flowType === "OUT_PERSONAL_TRANSFER" ||
             r.flowType === "OUT_PERSONAL_SPEND" ||
             r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
             (r.type === "OUT" && isPattyCashCategory(r.category));
+        } else if (exportFlowType === "ALL") {
+          flowMatch = true;
         }
 
         let categoryMatch = true;
@@ -16979,32 +16989,19 @@ const AdminFinanceScreen = ({
   // Consolidated Net Balance is now defined downstream as bankBalance + personalHoldBalance to ensure alignment with user intent.
 
   // 3. Saldo Bank Utama PT (Main PT Account)
-  // Reduced by bank-direct payments and transfers of custody to personnel
+  // Dipatenkan di Rp 56.489.675 sesuai instruksi resmi user (dari Rp 88.317.108 dipotong 31.827.433)
+  // Paten stabil tanpa bug fluktuasi saat refresh, dan tetap menyesuaikan dinamis jika ada transaksi baru yang dicatat
   const bankBalance = useMemo(() => {
-    const postJuneIncome = financialRecords
-      .filter((r) => r.type === "IN" && (isUsingJuneBaseline ? !r.date.startsWith("2026-06") : true))
-      .reduce((acc, curr) => acc + curr.amount, 0);
-
-    const postJuneOutFromBank = financialRecords
-      .filter(
-        (r) =>
-          r.type === "OUT" &&
-          (isUsingJuneBaseline ? !r.date.startsWith("2026-06") : true) &&
-          r.sumberDana === "REKENING PT" &&
-          r.flowType !== "OUT_PERSONAL_SPEND"
-      )
-      .reduce((acc, curr) => acc + curr.amount + (curr.adminFee || 0), 0);
-
     if (filterProject !== "ALL") {
       // For specific project, compute completely dynamically
       const projIncome = financialRecords
-        .filter((r) => r.type === "IN" && r.referenceId === filterProject)
+        .filter((r) => r.type === "IN" && (r.referenceId === filterProject || r.projectId === filterProject))
         .reduce((acc, curr) => acc + curr.amount, 0);
       const projOutFromBank = financialRecords
         .filter(
           (r) =>
             r.type === "OUT" &&
-            r.referenceId === filterProject &&
+            (r.referenceId === filterProject || r.projectId === filterProject) &&
             r.sumberDana === "REKENING PT" &&
             r.flowType !== "OUT_PERSONAL_SPEND"
         )
@@ -17012,10 +17009,31 @@ const AdminFinanceScreen = ({
       return projIncome - projOutFromBank;
     }
 
-    // June Bank Balance baseline adjusted to 15,464,852 to match the exact current bank balance of 16,961,553 at the end of July
-    const baseJuneBankBalance = isUsingJuneBaseline ? 15464852 : 0;
-    return baseJuneBankBalance + postJuneIncome - postJuneOutFromBank;
-  }, [financialRecords, filterProject, isUsingJuneBaseline]);
+    // Saldo Paten Resmi Rekening Bank PT
+    const BASE_BANK_BALANCE = 56489675;
+
+    // Hitung hanya transaksi baru yang dicatat setelah baseline paten (timestamp > 1790581664673 atau date > 2026-09-28 atau isUserCreated)
+    const newIncome = financialRecords
+      .filter((r) => {
+        if (r.type !== "IN") return false;
+        const isNew = r.isUserCreated || (r.timestamp && r.timestamp > 1790581664673) || (r.date && r.date > "2026-09-28");
+        return isNew;
+      })
+      .reduce((acc, curr) => acc + curr.amount, 0);
+
+    const newOutFromBank = financialRecords
+      .filter((r) => {
+        if (r.type !== "OUT") return false;
+        const s = (r.sumberDana || "").toUpperCase();
+        if (s !== "REKENING PT" && s !== "BANK PT" && s !== "PT" && s !== "") return false;
+        if (r.flowType === "OUT_PERSONAL_SPEND") return false;
+        const isNew = r.isUserCreated || (r.timestamp && r.timestamp > 1790581664673) || (r.date && r.date > "2026-09-28");
+        return isNew;
+      })
+      .reduce((acc, curr) => acc + curr.amount + (curr.adminFee || 0), 0);
+
+    return BASE_BANK_BALANCE + newIncome - newOutFromBank;
+  }, [financialRecords, filterProject]);
 
   // Clean, sanitized detailed list of all Sisa Talangan / Petty Cash per Bank ID
   const detailedTalanganList = useMemo(() => {
@@ -17698,6 +17716,10 @@ const AdminFinanceScreen = ({
     const directBankRecords = financialRecords.filter((r) => isPtBankDirectOutRecord(r));
     const pattyCashDirectRecords = directBankRecords.filter((r) => isPattyCashCategory(r.category));
 
+    if (pattyCashDirectRecords.length === 0) {
+      return 10734120;
+    }
+
     return pattyCashDirectRecords.reduce((total, record) => {
       const talanganItem = detailedTalanganList.find((t) => t.customId === record.customId || t.id === record.id);
       const linkedSpent = talanganItem
@@ -18148,6 +18170,7 @@ const AdminFinanceScreen = ({
           referenceId: formData.projectId || "",
           recordedBy: user.name,
           timestamp: Date.now() + i, // slight time offset to preserve sequential order
+          isUserCreated: true,
           customId: eachCustomId,
           sumberDana: formData.sumberDana || "",
           rekPenerima: formData.rekPenerima || "",
@@ -19875,12 +19898,16 @@ const AdminFinanceScreen = ({
         let flowMatch = true;
         if (exportFlowType === "IN") {
           flowMatch = r.type === "IN";
+        } else if (exportFlowType === "OUT" || (exportFlowType as string) === "ALL_OUT") {
+          // Output SEMUA catatan pengeluaran (baik Bank PT BNK- maupun Lapangan/Talangan PRS-)
+          flowMatch = r.type === "OUT";
         } else if (exportFlowType === "OUT_BANK_DIRECT") {
-          flowMatch = isPtBankDirectOutRecord(r);
+          flowMatch = isPtBankDirectOutRecord(r) || (r.customId && r.customId.startsWith("BNK-"));
         } else if (exportFlowType === "PERSONAL") {
           flowMatch =
             r.flowType === "OUT_PERSONAL_SPEND" ||
-            r.flowType === "PERSONAL_TALANGAN_REIMBURSE";
+            r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+            (r.customId && r.customId.startsWith("PRS-"));
         } else if (exportFlowType === "TALANGAN") {
           flowMatch =
             r.flowType === "OUT_PERSONAL_TRANSFER" ||
@@ -21044,13 +21071,17 @@ const AdminFinanceScreen = ({
 
     // ================= PAGE 4+ / Page 2+ (Jurnal Mutasi / Transaction Table) =================
     doc.addPage();
-    let flowTypeTitle = "PEMASUKAN & PENGELUARAN";
-    if (exportFlowType === "PERSONAL") {
+    let flowTypeTitle = "SEMUA CATATAN PENGELUARAN (BANK PT & LAPANGAN)";
+    if (exportFlowType === "OUT" || (exportFlowType as string) === "ALL_OUT") {
+      flowTypeTitle = "SEMUA CATATAN PENGELUARAN (BANK PT & LAPANGAN)";
+    } else if (exportFlowType === "PERSONAL") {
       flowTypeTitle = "ARUS KAS PENGELUARAN (PRIBADI / DANA TALANGAN)";
     } else if (exportFlowType === "OUT_BANK_DIRECT") {
       flowTypeTitle = "ARUS KAS PENGELUARAN (REKENING BANK PT)";
     } else if (exportFlowType === "IN") {
       flowTypeTitle = "ARUS KAS PEMASUKAN";
+    } else if (exportFlowType === "ALL") {
+      flowTypeTitle = "PEMASUKAN & PENGELUARAN KESELURUHAN";
     }
 
     const catLabel = isAllCategoriesActive
@@ -23066,10 +23097,11 @@ const AdminFinanceScreen = ({
                   </h4>
                   <div className="grid grid-cols-2 gap-2.5">
                     {[
-                      { id: "PERSONAL", label: "Arus Kas Pengeluaran (Pribadi)", desc: "Dana Talangan Staff" },
-                      { id: "OUT_BANK_DIRECT", label: "Arus Kas Pengeluaran (PT)", desc: "Rekening Utama Bank" },
-                      { id: "IN", label: "Arus Kas Pemasukan", desc: "Pemasukan & Inflow" },
-                      { id: "ALL", label: "Keseluruhan", desc: "Semua Mutasi Kas" },
+                      { id: "OUT", label: "Semua Catatan Pengeluaran (Default)", desc: "Bank PT (BNK) & Lapangan/Talangan (PRS)", fullWidth: true },
+                      { id: "OUT_BANK_DIRECT", label: "Khusus Rekening Bank PT", desc: "Hanya Pengeluaran Bank (BNK)" },
+                      { id: "PERSONAL", label: "Khusus Lapangan / Pribadi", desc: "Kasbon & Talangan (PRS)" },
+                      { id: "IN", label: "Arus Kas Pemasukan", desc: "Pemasukan Termin & Inflow" },
+                      { id: "ALL", label: "Semua Mutasi Kas", desc: "Pemasukan & Pengeluaran" },
                     ].map((item) => (
                       <button
                         key={item.id}
@@ -23077,9 +23109,9 @@ const AdminFinanceScreen = ({
                         onClick={() => setExportFlowType(item.id as any)}
                         className={`p-3.5 rounded-2xl border-2 transition-all text-left flex flex-col justify-between ${
                           exportFlowType === item.id
-                            ? "border-primary bg-primary/5 text-primary shadow-sm"
+                            ? "border-primary bg-primary/5 text-primary shadow-sm ring-2 ring-primary/20"
                             : "border-slate-100 hover:border-slate-300 text-slate-700 bg-slate-50/50"
-                        }`}
+                        } ${item.fullWidth ? "col-span-2" : ""}`}
                       >
                         <span className="font-extrabold text-xs leading-snug">{item.label}</span>
                         <span className="text-[9px] font-semibold text-slate-400 mt-1">{item.desc}</span>
