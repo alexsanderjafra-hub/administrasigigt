@@ -443,7 +443,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
 
       pdf.setDrawColor(75, 85, 99);
       pdf.setLineWidth(0.4);
-      pdf.line(pageWidth / 2 - 35, 55, pageWidth / 2 + 35, 55);
+      pdf.line(pageWidth / 2 - 35, 55.8, pageWidth / 2 + 35, 55.8);
 
       // Box for quotation metadata
       pdf.setDrawColor(203, 213, 225);
@@ -509,8 +509,23 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       );
 
       const tableHeaders = ["NO", "URAIAN PEKERJAAN", "VOL", "SATUAN", "HARGA SATUAN", "TOTAL BIAYA"];
-      const qTableRows = qItems.map((item, index) => {
-        let descText = item.description || "";
+      
+      // Column width distribution (total width: pageWidth - 2 * marginSize = 180mm)
+      const col0W = 10;
+      const col2W = 13;
+      const col3W = 18;
+      const col4W = 27;
+      const col5W = 28;
+      const col1W = (pageWidth - marginSize * 2) - (col0W + col2W + col3W + col4W + col5W); // 84mm
+
+      // Precompute precise text wrapping and height for each item to guarantee NO TEXT IS CUT OFF BY TABLE BORDERS / LINES
+      const parsedItemRows = qItems.map((item) => {
+        const itemTitle = (item.description || "").trim();
+        // Title measured at 8pt bold font
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(8);
+        const titleLines: string[] = itemTitle ? pdf.splitTextToSize(itemTitle, col1W - 6) : ["-"];
+
         let specs: { key: string; value: string }[] = [];
         if (item.specifications) {
           if (Array.isArray(item.specifications)) {
@@ -522,15 +537,49 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
               return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
             });
           }
-          const validSpecs = specs.filter(s => s && (s.key || s.value));
-          if (validSpecs.length > 0) {
-            // Add spacer lines so autoTable expands cell height for specs
-            descText += "\n" + validSpecs.map(() => " ").join("\n");
-          }
         }
+        const validSpecs = specs.filter(s => s && (s.key || s.value));
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(7);
+        const parsedSpecs = validSpecs.map(sp => {
+          const rawKey = (sp.key || "").trim();
+          const hasKey = Boolean(rawKey && rawKey !== "-");
+          const k = hasKey ? rawKey.toUpperCase() : "";
+          const v = (sp.value || "").trim();
+          const valMaxWidth = col1W - 28;
+          const valLines: string[] = v ? pdf.splitTextToSize(v, valMaxWidth) : [""];
+          return {
+            hasKey,
+            key: k,
+            valLines
+          };
+        });
+
+        // Calculate exact heights with generous padding so lines NEVER cut off text!
+        const titleH = titleLines.length * 3.4;
+        let specsH = 0;
+        if (parsedSpecs.length > 0) {
+          specsH = 1.6; // Clean gap between title and specs
+          parsedSpecs.forEach(ps => {
+            specsH += Math.max(1, ps.valLines.length) * 3.0 + 0.6;
+          });
+        }
+        const topPadding = 2.5;
+        const bottomPadding = 3.5; // Guarantees 3.5mm safe breathing room before bottom border line
+        const totalHeight = topPadding + titleH + specsH + bottomPadding;
+
+        return {
+          titleLines,
+          parsedSpecs,
+          totalHeight: Math.max(9, totalHeight)
+        };
+      });
+
+      const qTableRows = qItems.map((item, index) => {
         return [
           String(index + 1),
-          descText,
+          "", // Left empty; drawn custom with precise font styles & exact padding in didDrawCell
           String(item.vol || item.quantity || 1),
           item.unit || "Unit",
           `Rp ${Number(item.unitPrice || 0).toLocaleString("id-ID")}`,
@@ -633,15 +682,15 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         body: qTableRows,
         foot: footRows,
         startY: 91,
-        margin: { left: marginSize, right: marginSize, bottom: 20 },
+        margin: { left: marginSize, right: marginSize, bottom: 15 },
         theme: "grid",
         styles: {
           fontSize: 8,
-          cellPadding: 2,
+          cellPadding: { top: 2.2, bottom: 2.2, left: 2, right: 2 },
           textColor: [15, 23, 42],
           lineColor: [203, 213, 225],
           lineWidth: 0.1,
-          valign: "middle"
+          valign: "top"
         },
         headStyles: {
           fillColor: [30, 58, 138], // Biru Navy
@@ -654,87 +703,84 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           cellPadding: 2.5
         },
         footStyles: {
-          fillColor: [248, 250, 252], // Neutral light gray (abu-abu, no tosca!)
+          fillColor: [248, 250, 252], // Neutral light gray
           textColor: [15, 23, 42],
           fontStyle: "bold",
           lineColor: [203, 213, 225],
-          lineWidth: 0.1
+          lineWidth: 0.1,
+          cellPadding: { top: 2.2, bottom: 2.2, left: 2, right: 2 }
         },
         columnStyles: {
-          0: { halign: "center", cellWidth: 12, fontStyle: "bold" },
-          1: { halign: "left" },
-          2: { halign: "center", cellWidth: 14 },
-          3: { halign: "center", cellWidth: 20 },
-          4: { halign: "right", cellWidth: 27 },
-          5: { halign: "right", cellWidth: 28 }
+          0: { halign: "center", cellWidth: col0W, fontStyle: "bold", valign: "top" },
+          1: { halign: "left", cellWidth: col1W, valign: "top" },
+          2: { halign: "center", cellWidth: col2W, valign: "top" },
+          3: { halign: "center", cellWidth: col3W, valign: "top" },
+          4: { halign: "right", cellWidth: col4W, valign: "top" },
+          5: { halign: "right", cellWidth: col5W, valign: "top" }
         },
         alternateRowStyles: {
           fillColor: [248, 250, 252]
         },
+        didParseCell: (data) => {
+          if (data.section === "body") {
+            const parsed = parsedItemRows[data.row.index];
+            if (parsed) {
+              data.cell.styles.minCellHeight = parsed.totalHeight;
+            }
+            if (data.column.index === 1) {
+              // Empty autoTable's default text so it doesn't draw unbolded text underneath
+              data.cell.text = [];
+            }
+          }
+        },
         didDrawCell: (data) => {
           if (data.section === "body" && data.column.index === 1) {
-            const item = qItems[data.row.index];
-            if (item) {
+            const parsed = parsedItemRows[data.row.index];
+            if (parsed) {
+              let curY = data.cell.y + 2.5; // Top padding
+
               // 1. Draw Item Name / Description in BOLD (hanya nama barang yang di-bold)
-              const itemTitle = (item.description || "").trim();
-              if (itemTitle) {
-                // Clear the default unbolded first line background cleanly
-                const isEven = data.row.index % 2 === 0;
-                pdf.setFillColor(isEven ? 255 : 248, isEven ? 255 : 250, isEven ? 255 : 252);
-                pdf.rect(data.cell.x + 0.4, data.cell.y + 0.4, data.cell.width - 0.8, 5.6, "F");
-                
-                pdf.setFont("helvetica", "bold");
-                pdf.setFontSize(8);
-                pdf.setTextColor(15, 23, 42);
-                pdf.text(itemTitle, data.cell.x + 3, data.cell.y + 4.2, { maxWidth: data.cell.width - 6 });
-              }
+              pdf.setFont("helvetica", "bold");
+              pdf.setFontSize(8);
+              pdf.setTextColor(15, 23, 42);
+              parsed.titleLines.forEach((tLine: string) => {
+                curY += 2.8;
+                pdf.text(tLine, data.cell.x + 3, curY);
+                curY += 0.6;
+              });
 
               // 2. Draw specifications in NORMAL font (Spesifikasi TIDAK di-bold)
-              if (item.specifications) {
-                let specs: { key: string; value: string }[] = [];
-                if (Array.isArray(item.specifications)) {
-                  specs = item.specifications;
-                } else if (typeof item.specifications === "string") {
-                  const lines = item.specifications.split("\n").filter(Boolean);
-                  specs = lines.map(l => {
-                    const parts = l.split(":");
-                    return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
-                  });
-                }
-                const validSpecs = specs.filter(s => s && (s.key || s.value));
-                if (validSpecs.length > 0) {
-                  let curY = data.cell.y + 7.8;
-                  validSpecs.forEach(sp => {
-                    const rawKey = (sp.key || "").trim();
-                    const hasKey = rawKey && rawKey !== "-";
-                    const k = hasKey ? rawKey.toUpperCase() : "";
-                    const v = (sp.value || "").trim();
-                    pdf.setFontSize(7);
-                    pdf.setFont("helvetica", "normal"); // Pas spesifikasi TIDAK di-bold!
+              if (parsed.parsedSpecs.length > 0) {
+                curY += 1.6; // Clean gap between title and specifications
+                pdf.setFont("helvetica", "normal");
+                pdf.setFontSize(7);
 
-                    if (hasKey) {
-                      pdf.setTextColor(71, 85, 105);
-                      pdf.text(k, data.cell.x + 3, curY);
-                      pdf.text(":", data.cell.x + 24, curY);
-                      pdf.setTextColor(15, 23, 42);
-                      pdf.text(v, data.cell.x + 27, curY, { maxWidth: data.cell.width - 30 });
-                    } else {
-                      // Kotak kiri kosong: tidak ada strip '-' dan tidak ada ':', nilai diletakkan sejajar
-                      pdf.setTextColor(15, 23, 42);
-                      pdf.text(v, data.cell.x + 27, curY, { maxWidth: data.cell.width - 30 });
-                    }
-                    curY += 3.6;
+                parsed.parsedSpecs.forEach((sp) => {
+                  const specLineStartY = curY + 2.4;
+                  if (sp.hasKey) {
+                    pdf.setTextColor(71, 85, 105);
+                    pdf.text(sp.key, data.cell.x + 3, specLineStartY);
+                    pdf.text(":", data.cell.x + 23, specLineStartY);
+                  }
+                  pdf.setTextColor(15, 23, 42);
+                  sp.valLines.forEach((vl: string, vlIdx: number) => {
+                    const lineY = specLineStartY + (vlIdx * 3.0);
+                    pdf.text(vl, data.cell.x + 26, lineY);
                   });
-                }
+                  curY += Math.max(1, sp.valLines.length) * 3.0 + 0.6;
+                });
               }
+              // Notice: Due to totalHeight reserving generous bottomPadding (3.5mm),
+              // curY finishes cleanly above data.cell.y + data.cell.height, NEVER CUT BY BOTTOM BORDER!
             }
           }
         }
       });
 
-      let finalY = (pdf as any).lastAutoTable.finalY + 7;
+      let finalY = (pdf as any).lastAutoTable.finalY + 6;
       
-      if (finalY > pageHeight - 75) {
+      // Page break check calibrated for A4 (297mm height, safe printable area up to ~282mm)
+      if (finalY > 240) {
         pdf.addPage();
         finalY = 20;
       }
@@ -743,7 +789,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       pdf.setFontSize(8);
       pdf.setTextColor(51, 65, 85);
       pdf.text(`*Terbilang : ${numberToWordsID(qGrandTotal)} rupiah`, marginSize, finalY);
-      finalY += 6;
+      finalY += 5;
 
       const contentWidth = pageWidth - (marginSize * 2);
 
@@ -752,7 +798,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       const hasTerms = qPaymentTerms && qPaymentTerms.trim();
 
       if (hasNotes || hasTerms) {
-        if (finalY > pageHeight - 65) {
+        if (finalY > 245) {
           pdf.addPage();
           finalY = 20;
         }
@@ -762,7 +808,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           pdf.setFontSize(8);
           pdf.setTextColor(30, 41, 59);
           pdf.text("Catatan / Notes:", marginSize, finalY);
-          finalY += 4;
+          finalY += 3.8;
           
           pdf.setFont("helvetica", "normal");
           pdf.setFontSize(7.5);
@@ -770,9 +816,9 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           const notesLines = pdf.splitTextToSize(qNotes.trim(), contentWidth);
           notesLines.forEach((line: string) => {
             pdf.text(line, marginSize, finalY);
-            finalY += 3.6;
+            finalY += 3.4;
           });
-          finalY += 2;
+          finalY += 1.5;
         }
 
         if (hasTerms) {
@@ -780,7 +826,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           pdf.setFontSize(8);
           pdf.setTextColor(30, 41, 59);
           pdf.text("Term of Payment:", marginSize, finalY);
-          finalY += 4;
+          finalY += 3.8;
           
           pdf.setFont("helvetica", "normal");
           pdf.setFontSize(7.5);
@@ -788,14 +834,15 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           const topLines = pdf.splitTextToSize(qPaymentTerms.trim(), contentWidth);
           topLines.forEach((line: string) => {
             pdf.text(line, marginSize, finalY);
-            finalY += 3.6;
+            finalY += 3.4;
           });
-          finalY += 2;
+          finalY += 1.5;
         }
       }
 
       finalY += 2;
-      if (finalY > pageHeight - 45) {
+      // Closing + signature block requires ~40mm
+      if (finalY > 240) {
         pdf.addPage();
         finalY = 20;
       }
@@ -809,14 +856,9 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         marginSize,
         finalY
       );
-      finalY += 8;
+      finalY += 6;
 
       // Signature section (Hormat kami di sebelah KIRI dan rapih & simetris)
-      if (finalY > pageHeight - 45) {
-        pdf.addPage();
-        finalY = 20;
-      }
-
       const sigX = marginSize;
       
       pdf.setFont("helvetica", "normal");
@@ -824,7 +866,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       pdf.setTextColor(0, 0, 0);
       pdf.text("Hormat kami,", sigX, finalY);
       pdf.setFont("helvetica", "bold");
-      pdf.text(compName, sigX, finalY + 4.5);
+      pdf.text(compName, sigX, finalY + 4.2);
 
       const signerName = (qPreparedBy || "ALEXSANDER").toUpperCase();
       const signerTitle = qPreparedByTitle || "Direktur";
@@ -841,9 +883,9 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           const sigDim = await getImageDimensions(qDigitalSigUrl);
           const ratio = sigDim.ratio; // width / height
 
-          // Proportional bounding box based on sigSize (preserves exact natural aspect ratio)
-          const maxSigW = sigSize === "large" ? 52 : sigSize === "compact" ? 36 : 44;
-          const maxSigH = sigSize === "large" ? 26 : sigSize === "compact" ? 17 : 21;
+          // Symmetrical and compact bounds so the entire quotation fits cleanly on 1 sheet
+          const maxSigW = sigSize === "large" ? 44 : sigSize === "compact" ? 28 : 34;
+          const maxSigH = sigSize === "large" ? 18 : sigSize === "compact" ? 12 : 15;
 
           let sigImgW = maxSigW;
           let sigImgH = maxSigW / ratio;
@@ -858,30 +900,30 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
             sigImgX = sigX + Math.max(0, (blockW - sigImgW) / 2);
           }
 
-          pdf.addImage(qDigitalSigUrl, sigFormat, sigImgX, finalY + 6.5, sigImgW, sigImgH, undefined, "FAST");
-          finalY += 6.5 + sigImgH + 3;
+          pdf.addImage(qDigitalSigUrl, sigFormat, sigImgX, finalY + 5.5, sigImgW, sigImgH, undefined, "FAST");
+          finalY += 5.5 + sigImgH + 2.5;
         } catch (err) {
           console.error("Error drawing signature in PDF:", err);
-          finalY += 22;
+          finalY += 15;
         }
       } else if (showDigitalStamp) {
         pdf.setDrawColor(203, 213, 225);
         pdf.setFillColor(248, 250, 252);
-        const stampW = 46;
-        const stampH = 14;
+        const stampW = 40;
+        const stampH = 12;
         const stampX = sigAlign === "center" ? sigX + Math.max(0, (blockW - stampW) / 2) : sigX;
-        pdf.roundedRect(stampX, finalY + 7, stampW, stampH, 1, 1, "FD");
-        pdf.setFontSize(7);
+        pdf.roundedRect(stampX, finalY + 5.5, stampW, stampH, 1, 1, "FD");
+        pdf.setFontSize(6.5);
         pdf.setFont("helvetica", "bold");
         pdf.setTextColor(30, 58, 138);
-        pdf.text("VERIFIED SIGNATURE", stampX + stampW / 2, finalY + 11.5, { align: "center" });
-        pdf.setFontSize(6);
+        pdf.text("VERIFIED SIGNATURE", stampX + stampW / 2, finalY + 9.5, { align: "center" });
+        pdf.setFontSize(5.5);
         pdf.setFont("helvetica", "italic");
         pdf.setTextColor(100, 116, 139);
-        pdf.text(`Authorized by ${compName}`, stampX + stampW / 2, finalY + 16, { align: "center" });
-        finalY += 17;
+        pdf.text(`Authorized by ${compName}`, stampX + stampW / 2, finalY + 14, { align: "center" });
+        finalY += 16;
       } else {
-        finalY += 18;
+        finalY += 14;
       }
 
       pdf.setFontSize(8.5);
@@ -889,20 +931,21 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       pdf.setTextColor(15, 23, 42);
 
       const signerX = sigAlign === "center" ? sigX + (blockW - nameW) / 2 : sigX;
-      pdf.text(signerName, signerX, finalY + 4);
+      pdf.text(signerName, signerX, finalY + 3.5);
 
       pdf.setDrawColor(51, 65, 85);
       pdf.setLineWidth(0.4);
       const lineStartX = sigAlign === "center" ? signerX : sigX;
       const lineEndX = sigAlign === "center" ? signerX + nameW : sigX + Math.max(nameW, 38);
-      pdf.line(lineStartX, finalY + 5.2, lineEndX, finalY + 5.2);
+      // Clean safe distance below baseline: 5.8mm ensures NO COLLISION with letters or descenders
+      pdf.line(lineStartX, finalY + 5.8, lineEndX, finalY + 5.8);
 
       pdf.setFontSize(8);
       pdf.setFont("helvetica", "normal");
       pdf.setTextColor(71, 85, 105);
       const titleW = pdf.getTextWidth(signerTitle);
       const titleX = sigAlign === "center" ? sigX + (blockW - titleW) / 2 : sigX;
-      pdf.text(signerTitle, titleX, finalY + 9.5);
+      pdf.text(signerTitle, titleX, finalY + 10);
 
       // PAGE 2: CONNECTED BOQ (If present)
       if (connectedBoqId && currentBoqItemsToUse.length > 0) {
@@ -2300,28 +2343,28 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                       </div>
 
                       {qDigitalSigUrl ? (
-                        <div className={`py-1.5 flex ${sigAlign === "center" ? "justify-center" : "justify-start"}`}>
+                        <div className={`py-1 flex ${sigAlign === "center" ? "justify-center" : "justify-start"}`}>
                           <img
                             src={qDigitalSigUrl}
                             alt="Tanda Tangan & Stempel"
                             className={`object-contain transition-all ${
-                              sigSize === "large" ? "max-h-24 max-w-[210px]" : sigSize === "compact" ? "max-h-16 max-w-[140px]" : "max-h-20 max-w-[175px]"
+                              sigSize === "large" ? "max-h-20 max-w-[170px]" : sigSize === "compact" ? "max-h-12 max-w-[110px]" : "max-h-16 max-w-[140px]"
                             }`}
                           />
                         </div>
                       ) : showDigitalStamp ? (
                         <div className={`py-1 flex ${sigAlign === "center" ? "justify-center" : "justify-start"}`}>
-                          <div className="bg-slate-50 border border-slate-300 px-3 py-1.5 rounded flex flex-col items-center justify-center text-[7px] text-slate-700 w-44 text-center">
+                          <div className="bg-slate-50 border border-slate-300 px-3 py-1 rounded flex flex-col items-center justify-center text-[7px] text-slate-700 w-40 text-center">
                             <span className="font-black uppercase tracking-wider text-[#1e3a8a]">VERIFIED SIGNATURE</span>
                             <span className="font-medium text-slate-500 mt-0.5 truncate max-w-full text-center" title={compName}>{compName}</span>
                           </div>
                         </div>
                       ) : (
-                        <div className="h-16" />
+                        <div className="h-12" />
                       )}
 
                       <div className="space-y-0.5 pt-1 text-[9px]">
-                        <p className="font-black text-slate-900 inline-block border-b-2 border-slate-800 pb-0.5 tracking-wider">
+                        <p className="font-black text-slate-900 inline-block border-b border-slate-800 pb-1 tracking-wider">
                           {(qPreparedBy || "ALEXSANDER").toUpperCase()}
                         </p>
                         <p className="text-slate-600 font-medium text-[8px]">{qPreparedByTitle || "Direktur"}</p>
