@@ -22,9 +22,10 @@ export interface CatalogItem {
   subCategory: string;
   type: 'barang' | 'jasa';
   brand: string;
-  priceItem: number; // Harga barang
+  priceItem: number; // Harga barang / jual
   priceService: number; // Harga jasa
   priceInstallation: number; // Harga instalasi
+  costPrice?: number; // Harga modal / HPP
   unit: string; // Satuan (pcs, set, lot, lot/meter, etc.)
   description: string;
   specifications: string; // Full specifications (newline list or serialized text)
@@ -2167,44 +2168,29 @@ export const EKatalog: React.FC<{
     }
   };
 
-  // Realtime load from Firestore using `onCollectionSnapshot` with robust hybrid in-memory merging
+  // Realtime load from Firestore using `onCollectionSnapshot`
   useEffect(() => {
     setLoading(true);
 
     const mergeDataWithPresets = (firestoreData: CatalogItem[]) => {
-      const itemMap = new Map<string, CatalogItem>();
-      
-      // 1. Establish robust fallback defaults by loading all PRESET_CATALOGS in memory
-      for (const preset of PRESET_CATALOGS) {
-        itemMap.set(preset.id, preset);
-      }
-      
-      // 2. Overwrite / merge with live Firestore database entries (including user modifications or custom products)
-      for (const fsItem of firestoreData) {
-        itemMap.set(fsItem.id, fsItem);
-      }
-      
-      return Array.from(itemMap.values());
+      // Exclude legacy mock items if any exist so catalog starts completely clean from user entries
+      const cleanData = (firestoreData || []).filter(
+        item => item && !item.id?.startsWith('md-eq-') && !item.id?.startsWith('preset-') && item.id !== 'pompa-001'
+      );
+      return cleanData;
     };
 
     const unsubscribe = dbService.onCollectionSnapshot<CatalogItem>(
       'catalog',
       (data) => {
-        if (data.length === 0) {
-          // If Firestore collection is empty, merge & display the preset records gracefully
-          console.log('Firestore is empty or non-populated for catalog. Displaying default master presets.');
-          setItems(PRESET_CATALOGS);
-        } else {
-          // Merge dynamic Firestore data with our core master preset catalogs in memory
-          const mergedList = mergeDataWithPresets(data);
-          setItems(mergedList);
-        }
+        const mergedList = mergeDataWithPresets(data);
+        setItems(mergedList);
         setLoading(false);
       },
       [],
       (error) => {
-        console.warn('Silent Firestore load failure (Quota/Auth). Falling back to comprehensive in-memory catalogs.', error);
-        setItems(PRESET_CATALOGS);
+        console.warn('Firestore load warning for catalog:', error);
+        setItems([]);
         setLoading(false);
       }
     );
@@ -2268,6 +2254,29 @@ export const EKatalog: React.FC<{
         console.error('Error deleting catalog item', err);
         alert('Tidak dapat menghapus item: ' + String(err));
       }
+    }
+  };
+
+  // Kosongkan seluruh item katalog untuk mulai dari awal (Request 4)
+  const handleClearAllCatalog = async () => {
+    if (!window.confirm('Kosongkan semua data E-Katalog untuk mulai dari awal? Semua item STP, WWTP, WTP, tangki, dan equipment lama di database akan dibersihkan.')) {
+      return;
+    }
+    try {
+      setLoading(true);
+      for (const it of items) {
+        if (it.id) {
+          await dbService.deleteDocument('catalog', it.id);
+        }
+      }
+      setItems([]);
+      setSelectedItem(null);
+      alert('Data E-Katalog telah berhasil dikosongkan. Anda dapat mulai membuat penawaran baru yang otomatis tersimpan ke E-Katalog!');
+    } catch (err) {
+      console.error('Gagal mengosongkan katalog:', err);
+      alert('Gagal mengosongkan: ' + String(err));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -2617,12 +2626,24 @@ export const EKatalog: React.FC<{
                 </button>
 
                 {user?.role === 'admin' && (
-                  <button
-                    onClick={handleOpenCreateForm}
-                    className="px-5 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-sm transition active:scale-95"
-                  >
-                    <Plus size={16} /> Tambah Item
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {items.length > 0 && (
+                      <button
+                        onClick={handleClearAllCatalog}
+                        type="button"
+                        className="px-4 py-3.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition active:scale-95"
+                        title="Kosongkan seluruh data katalog untuk mulai dari awal"
+                      >
+                        <Trash2 size={15} /> Kosongkan Katalog
+                      </button>
+                    )}
+                    <button
+                      onClick={handleOpenCreateForm}
+                      className="px-5 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-sm transition active:scale-95"
+                    >
+                      <Plus size={16} /> Tambah Item
+                    </button>
+                  </div>
                 )}
               </div>
             </div>

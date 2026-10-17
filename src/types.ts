@@ -203,6 +203,7 @@ export interface QuotationItem {
   vol: number;
   unit: string;
   unitPrice: number;
+  costPrice?: number;
   total: number;
   specifications?: { key: string; value: string }[] | string;
 }
@@ -229,6 +230,7 @@ export interface Quotation {
   quotationType?: 'Barang dan Jasa' | 'Barang' | 'Jasa';
   includeShipping?: boolean;
   shippingCost?: number;
+  shippingLabel?: string;
   includeServiceFee?: boolean;
   serviceFee?: number;
   includePPN?: boolean;

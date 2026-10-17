@@ -24,6 +24,7 @@ import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
 import { PurchaseOrder, PurchaseOrderItem, ScreenId } from "../types";
 import { dbService } from "../services/db";
+import { DocumentPreviewModal } from "./DocumentPreviewModal";
 
 interface AdminPurchaseOrderScreenProps {
   onNavigate: (s: ScreenId) => void;
@@ -62,8 +63,16 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
   const [signerName, setSignerName] = useState("Jidan Ramadhan");
   const [signerRole, setSignerRole] = useState("Direktur / Menyetujui");
   const [ppnPercent, setPpnPercent] = useState<number>(11);
+  const [includePPN, setIncludePPN] = useState(true);
   const [status, setStatus] = useState<"DRAFT" | "SENT" | "COMPLETED" | "CANCELLED">("DRAFT");
   
+  // Ongkir / Pengiriman fleksibel (Request 2) & Preview (Request 3)
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [includeShipping, setIncludeShipping] = useState(false);
+  const [shippingLabel, setShippingLabel] = useState("ONGKOS PENGIRIMAN SUPPLIER");
+  const [shippingCost, setShippingCost] = useState(0);
+  const [logoImage, setLogoImage] = useState<string | null>(null);
+
   const [ketentuan, setKetentuan] = useState<string[]>([
     "Pembayaran : Pelunasan 100% saat barang diterima dan dokumentasi penagihan dokumentasi penagihan diterima dengan baik, lengkap diterima dengan baik, lengkap dan benar oleh PT. GARDA INOVASI GLOBALTECH",
     "Dokumentasi Penagihan :\n- Invoice Asli Bermaterai Jika Tagihan diatas Rp. 5.000.000,-\n- Copy PO yang sudah ditandatangani dan stampel oleh Supplier\n- Surat Jalan",
@@ -80,6 +89,24 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
   const [toastType, setToastType] = useState<"success" | "error" | "info">("success");
 
   const previewRef = useRef<HTMLDivElement>(null);
+
+  // Helper Terbilang
+  const numberToWordsID = (num: number): string => {
+    const values = ["", "satu", "dua", "tiga", "empat", "lima", "enam", "tujuh", "delapan", "sembilan", "sepuluh", "sebelas"];
+    const toWords = (n: number): string => {
+      if (n < 12) return values[n];
+      if (n < 20) return `${toWords(n - 10)} belas`;
+      if (n < 100) return `${toWords(Math.floor(n / 10))} puluh ${toWords(n % 10)}`.trim();
+      if (n < 200) return `seratus ${toWords(n - 100)}`.trim();
+      if (n < 1000) return `${toWords(Math.floor(n / 100))} ratus ${toWords(n % 100)}`.trim();
+      if (n < 2000) return `seribu ${toWords(n - 1000)}`.trim();
+      if (n < 1000000) return `${toWords(Math.floor(n / 1000))} ribu ${toWords(n % 1000)}`.trim();
+      if (n < 1000000000) return `${toWords(Math.floor(n / 1000000))} juta ${toWords(n % 1000000)}`.trim();
+      return `${toWords(Math.floor(n / 1000000000))} milyar ${toWords(n % 1000000000)}`.trim();
+    };
+    if (num <= 0) return "nol rupiah";
+    return `${toWords(Math.floor(num))} rupiah`.toUpperCase();
+  };
 
   // Trigger Toast Helper
   const triggerToast = (message: string, type: "success" | "error" | "info" = "success") => {
@@ -128,6 +155,10 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
     setSignerName("Jidan Ramadhan");
     setSignerRole("Direktur / Menyetujui");
     setPpnPercent(11);
+    setIncludePPN(true);
+    setIncludeShipping(false);
+    setShippingLabel("ONGKOS PENGIRIMAN SUPPLIER");
+    setShippingCost(0);
     setStatus("DRAFT");
     setKetentuan([
       "Pembayaran : Pelunasan 100% saat barang diterima dan dokumentasi penagihan dokumentasi penagihan diterima dengan baik, lengkap diterima dengan baik, lengkap dan benar oleh PT. GARDA INOVASI GLOBALTECH",
@@ -135,7 +166,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
       "Segala Bentuk Kehilangan dan Kerusakan Barang sebelum serah terima pada tujuan akhir menjadi tanggungjawab pihak Suplier"
     ]);
     setItems([
-      { no: 1, description: "", qty: 1, unit: "Kg", price: 0, total: 0 }
+      { no: 1, description: "", qty: 1, unit: "Pcs", price: 0, total: 0 }
     ]);
     setSelectedPO(null);
     setView("form");
@@ -156,16 +187,41 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
     setSignerName(po.signerName || "Jidan Ramadhan");
     setSignerRole(po.signerRole || "Direktur / Menyetujui");
     setPpnPercent(po.ppnPercent !== undefined ? po.ppnPercent : 11);
+    setIncludePPN(po.ppnPercent !== undefined ? po.ppnPercent > 0 : true);
+    setIncludeShipping((po as any).includeShipping || false);
+    setShippingLabel((po as any).shippingLabel || "ONGKOS PENGIRIMAN SUPPLIER");
+    setShippingCost((po as any).shippingCost || 0);
+    if ((po as any).logoImage) setLogoImage((po as any).logoImage);
     setStatus(po.status || "DRAFT");
     setKetentuan(po.ketentuan || []);
     setItems(po.items || []);
     setView("form");
   };
 
-  // View Preview
+  // View Preview in DocumentPreviewModal (Request 1 & 3)
   const handlePreview = (po: PurchaseOrder) => {
     setSelectedPO(po);
-    setView("preview");
+    setPoNo(po.poNo);
+    setDate(po.date);
+    setVendorName(po.vendorName);
+    setVendorAddress(po.vendorAddress);
+    setBuyerName(po.buyerName || "PT. GARDA INOVASI GLOBALTECH");
+    setBuyerAddress(po.buyerAddress || "");
+    setBuyerEmail(po.buyerEmail || "");
+    setBuyerPhone(po.buyerPhone || "");
+    setNote(po.note || "");
+    setSignerName(po.signerName || "Jidan Ramadhan");
+    setSignerRole(po.signerRole || "Direktur / Menyetujui");
+    setPpnPercent(po.ppnPercent !== undefined ? po.ppnPercent : 11);
+    setIncludePPN(po.ppnPercent !== undefined ? po.ppnPercent > 0 : true);
+    setIncludeShipping((po as any).includeShipping || false);
+    setShippingLabel((po as any).shippingLabel || "ONGKOS PENGIRIMAN SUPPLIER");
+    setShippingCost((po as any).shippingCost || 0);
+    if ((po as any).logoImage) setLogoImage((po as any).logoImage);
+    setStatus(po.status || "DRAFT");
+    setKetentuan(po.ketentuan || []);
+    setItems(po.items || []);
+    setIsPreviewOpen(true);
   };
 
   // Delete PO
@@ -238,12 +294,13 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
 
   // Calculations
   const totalPrice = items.reduce((sum, item) => sum + (item.total || 0), 0);
-  const ppnAmount = Math.round((totalPrice * ppnPercent) / 100);
-  const grandTotal = totalPrice + ppnAmount;
+  const ppnAmount = includePPN ? Math.round((totalPrice * ppnPercent) / 100) : 0;
+  const shippingAmount = includeShipping ? Number(shippingCost || 0) : 0;
+  const grandTotal = totalPrice + ppnAmount + shippingAmount;
 
   // Save Form
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSave = async (e?: React.FormEvent, openPreview: boolean = false) => {
+    if (e) e.preventDefault();
     if (!poNo || !date || !vendorName || !vendorAddress) {
       triggerToast("Mohon lengkapi semua field utama (No PO, Tanggal, Nama & Alamat Vendor)!", "error");
       return;
@@ -256,7 +313,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
       return;
     }
 
-    const payload: Omit<PurchaseOrder, "id"> = {
+    const payload: any = {
       poNo,
       date,
       vendorName,
@@ -271,10 +328,14 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
       signerName,
       signerRole,
       totalPrice,
-      ppnPercent,
+      ppnPercent: includePPN ? ppnPercent : 0,
       ppnAmount,
+      includeShipping,
+      shippingLabel,
+      shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
       grandTotal,
       status,
+      logoImage,
       timestamp: Date.now()
     };
 
@@ -292,7 +353,9 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
         }
       } else {
         // Create
-        await dbService.createDocument("purchaseOrders", payload);
+        const docRef = await dbService.createDocument("purchaseOrders", payload);
+        const newId = typeof docRef === "string" ? docRef : (docRef as any)?.id || `po-${Date.now()}`;
+        setSelectedPO({ ...payload, id: newId });
         triggerToast(`PO No. ${poNo} berhasil disimpan!`, "success");
         if (logActivity) {
           await logActivity(
@@ -302,7 +365,11 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
           );
         }
       }
-      setView("list");
+      if (openPreview) {
+        setIsPreviewOpen(true);
+      } else {
+        setView("list");
+      }
     } catch (err) {
       triggerToast("Gagal menyimpan Purchase Order ke database", "error");
     }
@@ -649,399 +716,512 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
             )}
           </motion.div>
         ) : view === "form" ? (
-          <motion.form
-            onSubmit={handleSave}
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -15 }}
-            className="bg-white rounded-[32px] border border-slate-100 p-8 shadow-sm space-y-8"
-          >
-            <div className="flex items-center gap-2 pb-4 border-b border-slate-100">
-              <Building2 className="w-5 h-5 text-primary" />
-              <h2 className="text-xl font-black text-slate-900 tracking-tight uppercase">
-                {selectedPO ? "Edit Purchase Order" : "Pembuat Purchase Order Baru"}
-              </h2>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* PO Number */}
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                  No. PO
-                </label>
-                <input
-                  type="text"
-                  value={poNo}
-                  onChange={(e) => setPoNo(e.target.value)}
-                  placeholder="Contoh: 20/PO-GIGT/VII/2026"
-                  className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/5 focus:bg-white transition-all"
-                  required
-                />
-              </div>
-
-              {/* PO Date */}
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                  Tanggal PO
-                </label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/5 focus:bg-white transition-all"
-                  required
-                />
-              </div>
-
-              {/* Status */}
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                  Status PO
-                </label>
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as any)}
-                  className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/5 focus:bg-white transition-all cursor-pointer"
+          <div className="space-y-6 pb-20">
+            {/* Top Command Action bar */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm max-w-5xl mx-auto">
+              <button
+                type="button"
+                onClick={() => setView("list")}
+                className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-all font-black text-xs uppercase tracking-wider cursor-pointer"
+              >
+                <ChevronLeft size={16} /> Kembali ke Daftar PO
+              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => handleSave(undefined, false)}
+                  className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:bg-slate-800 transition-all cursor-pointer flex items-center gap-2"
                 >
-                  <option value="DRAFT">DRAFT</option>
-                  <option value="SENT">TERKIRIM</option>
-                  <option value="COMPLETED">SELESAI</option>
-                  <option value="CANCELLED">BATAL</option>
-                </select>
+                  <CheckCircle size={14} />
+                  <span>Simpan PO</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSave(undefined, true)}
+                  className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:bg-indigo-700 transition-all cursor-pointer flex items-center gap-2"
+                >
+                  <Eye size={14} />
+                  <span>Simpan & Format PDF</span>
+                </button>
               </div>
             </div>
 
-            {/* Buyer and Vendor Details */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {/* Supplier/Vendor Details */}
-              <div className="space-y-4 p-6 bg-slate-50/50 border border-slate-100 rounded-3xl">
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest border-b border-slate-100 pb-2">
-                  KEPADA / VENDOR (SUPPLIER)
-                </h3>
-                
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                    Nama Perusahaan / Supplier
-                  </label>
+            {/* DOKUMEN UTAMA: LAYOUT FORM INPUT PERSIS SEPERTI PENAWARAN (SPH) */}
+            <form onSubmit={(e) => handleSave(e, true)} className="bg-white rounded-3xl border-2 border-slate-300 shadow-xl p-5 sm:p-8 md:p-10 space-y-7 text-left font-sans text-slate-900 max-w-5xl mx-auto">
+              
+              {/* 1. KOP SURAT (ATAS): LOGO (KIRI) & PROFIL BUYER (KANAN) */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start pb-5 border-b-2 border-slate-200">
+                {/* Upload Logo Box */}
+                <div className="md:col-span-4 space-y-2">
                   <input
-                    type="text"
-                    value={vendorName}
-                    onChange={(e) => setVendorName(e.target.value)}
-                    placeholder="Contoh: PT. Toolmate Enviro Indonesia"
-                    className="w-full px-5 py-3 bg-white border border-slate-100 rounded-xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all"
-                    required
+                    type="file"
+                    id="po-comp-logo-input"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const reader = new FileReader();
+                        reader.onloadend = () => {
+                          setLogoImage(reader.result as string);
+                        };
+                        reader.readAsDataURL(file);
+                      }
+                    }}
                   />
+                  <label
+                    htmlFor="po-comp-logo-input"
+                    className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50 hover:bg-slate-100 cursor-pointer transition-all group min-h-[120px]"
+                  >
+                    {logoImage ? (
+                      <div className="flex flex-col items-center gap-1.5">
+                        <img src={logoImage} alt="Logo" className="max-h-20 object-contain" />
+                        <span className="text-[10px] font-black text-indigo-600 group-hover:underline">Ganti Logo</span>
+                      </div>
+                    ) : (
+                      <div className="text-center space-y-1">
+                        <Building2 size={24} className="text-slate-400 mx-auto" />
+                        <span className="text-xs font-black text-slate-700 block uppercase tracking-wider">Upload Logo</span>
+                        <span className="text-[9px] text-slate-400 block font-semibold">Klik untuk memilih file logo (.png/.jpg)</span>
+                      </div>
+                    )}
+                  </label>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                    Alamat Vendor lengkap
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={vendorAddress}
-                    onChange={(e) => setVendorAddress(e.target.value)}
-                    placeholder="Contoh: Ruko Mutiara Taman Palem Blok C No.822, Cengkareng, Jakarta Barat."
-                    className="w-full px-5 py-3 bg-white border border-slate-100 rounded-xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all resize-none"
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* Company / Buyer Details */}
-              <div className="space-y-4 p-6 bg-slate-50/50 border border-slate-100 rounded-3xl">
-                <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest border-b border-slate-100 pb-2">
-                  DARI / PEMESAN (BUYER)
-                </h3>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                    Nama Perusahaan Pembeli
-                  </label>
+                {/* Profil Buyer (Kanan) */}
+                <div className="md:col-span-8 space-y-2 text-right">
                   <input
                     type="text"
                     value={buyerName}
                     onChange={(e) => setBuyerName(e.target.value)}
-                    className="w-full px-5 py-3 bg-white border border-slate-100 rounded-xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all"
-                    required
+                    placeholder="Nama Perusahaan Pembeli"
+                    className="w-full text-right font-black text-base md:text-lg text-slate-900 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none pb-1"
                   />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                    Alamat Perusahaan Pembeli
-                  </label>
                   <textarea
-                    rows={3}
+                    rows={2}
                     value={buyerAddress}
                     onChange={(e) => setBuyerAddress(e.target.value)}
-                    className="w-full px-5 py-3 bg-white border border-slate-100 rounded-xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all resize-none"
-                    required
+                    placeholder="Alamat Perusahaan Pembeli"
+                    className="w-full text-right text-xs font-semibold text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none resize-none leading-relaxed"
                   />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                      Email
-                    </label>
-                    <input
-                      type="email"
-                      value={buyerEmail}
-                      onChange={(e) => setBuyerEmail(e.target.value)}
-                      className="w-full px-5 py-3 bg-white border border-slate-100 rounded-xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                      No. Telp
-                    </label>
+                  <div className="flex flex-col sm:flex-row sm:justify-end gap-2 text-xs font-bold text-slate-500">
                     <input
                       type="text"
                       value={buyerPhone}
                       onChange={(e) => setBuyerPhone(e.target.value)}
-                      className="w-full px-5 py-3 bg-white border border-slate-100 rounded-xl text-sm font-bold outline-none focus:ring-4 focus:ring-primary/5 transition-all"
+                      placeholder="Telp: 0888-1687-794"
+                      className="text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none text-xs"
+                    />
+                    <input
+                      type="text"
+                      value={buyerEmail}
+                      onChange={(e) => setBuyerEmail(e.target.value)}
+                      placeholder="Email: pt.gigt@gmail.com"
+                      className="text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none text-xs text-indigo-600"
                     />
                   </div>
                 </div>
               </div>
-            </div>
 
-            {/* Dynamic Items Table */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">
-                  DAFTAR ITEM BARANG / JASA
-                </h3>
-                <button
-                  type="button"
-                  onClick={handleAddItemRow}
-                  className="flex items-center gap-1 text-xs font-black text-primary hover:text-primary/80 uppercase tracking-widest"
-                >
-                  <PlusCircle className="w-4 h-4" />
-                  Tambah Baris Item
-                </button>
+              {/* 2. BOX JUDUL DOKUMEN PERSIS SEPERTI GAMBAR */}
+              <div className="flex justify-center my-2">
+                <div className="bg-slate-900 text-white font-black px-8 py-2 rounded-2xl text-center uppercase tracking-widest text-sm shadow-md">
+                  PURCHASE ORDER (PO)
+                </div>
               </div>
 
-              <div className="border border-slate-100 rounded-2xl overflow-hidden shadow-sm overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="bg-slate-50 text-slate-500 uppercase text-[10px] font-black tracking-widest text-left border-b border-slate-100">
-                      <th className="py-4 px-4 w-12 text-center">No</th>
-                      <th className="py-4 px-4">Deskripsi Barang</th>
-                      <th className="py-4 px-4 w-24">QTY</th>
-                      <th className="py-4 px-4 w-28">Satuan</th>
-                      <th className="py-4 px-4 w-44">Harga Satuan (Rp)</th>
-                      <th className="py-4 px-4 w-44 text-right">Jumlah Harga</th>
-                      <th className="py-4 px-4 w-16 text-center">Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {items.map((item, index) => (
-                      <tr key={index} className="hover:bg-slate-50/40">
-                        <td className="py-3 px-4 text-center font-bold text-slate-500 text-sm">
-                          {item.no}
-                        </td>
-                        <td className="py-3 px-4">
-                          <input
-                            type="text"
-                            value={item.description}
-                            onChange={(e) => handleItemChange(index, "description", e.target.value)}
-                            placeholder="Contoh: Biological treatment bacteria 'biology genesys'"
-                            className="w-full px-3 py-2 border border-slate-100 rounded-lg text-sm font-bold outline-none focus:border-primary transition-colors"
-                            required
-                          />
-                        </td>
-                        <td className="py-3 px-4">
-                          <input
-                            type="number"
-                            min="1"
-                            value={item.qty}
-                            onChange={(e) => handleItemChange(index, "qty", e.target.value)}
-                            className="w-full px-3 py-2 border border-slate-100 rounded-lg text-sm font-bold outline-none focus:border-primary transition-colors text-center"
-                            required
-                          />
-                        </td>
-                        <td className="py-3 px-4">
-                          <input
-                            type="text"
-                            value={item.unit}
-                            onChange={(e) => handleItemChange(index, "unit", e.target.value)}
-                            placeholder="Kg, Pcs, etc."
-                            className="w-full px-3 py-2 border border-slate-100 rounded-lg text-sm font-bold outline-none focus:border-primary transition-colors text-center"
-                            required
-                          />
-                        </td>
-                        <td className="py-3 px-4">
-                          <input
-                            type="number"
-                            min="0"
-                            value={item.price}
-                            onChange={(e) => handleItemChange(index, "price", e.target.value)}
-                            className="w-full px-3 py-2 border border-slate-100 rounded-lg text-sm font-bold outline-none focus:border-primary transition-colors text-right"
-                            required
-                          />
-                        </td>
-                        <td className="py-3 px-4 text-right font-black text-slate-700 text-sm">
-                          Rp {(item.total || 0).toLocaleString("id-ID")}
-                        </td>
-                        <td className="py-3 px-4 text-center">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveItemRow(index)}
-                            className="text-rose-500 hover:text-rose-600 p-1"
-                          >
-                            <MinusCircle className="w-5 h-5" />
-                          </button>
-                        </td>
+              {/* 3. METADATA DUA KOLOM: KIRI (VENDOR SUPPLIER) & KANAN (DETAIL PO) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Kolom Kiri: Vendor / Supplier */}
+                <div className="space-y-2.5 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                      SUPPLIER / VENDOR
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={vendorName}
+                      onChange={(e) => setVendorName(e.target.value)}
+                      placeholder="Contoh: PT. Toolmate Enviro Indonesia"
+                      className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                    />
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-start gap-2">
+                    <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0 pt-2">
+                      ALAMAT VENDOR
+                    </span>
+                    <textarea
+                      rows={2}
+                      required
+                      value={vendorAddress}
+                      onChange={(e) => setVendorAddress(e.target.value)}
+                      placeholder="Alamat lengkap supplier / vendor..."
+                      className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400 resize-none leading-relaxed"
+                    />
+                  </div>
+                </div>
+
+                {/* Kolom Kanan: Nomor PO, Tanggal, Status */}
+                <div className="space-y-2.5 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                      NOMOR PO
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={poNo}
+                      onChange={(e) => setPoNo(e.target.value)}
+                      placeholder="20/PO-GIGT/VII/2026"
+                      className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-mono font-black text-slate-900 focus:border-slate-800 outline-none transition-all"
+                    />
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                      TANGGAL
+                    </span>
+                    <input
+                      type="date"
+                      required
+                      value={date}
+                      onChange={(e) => setDate(e.target.value)}
+                      className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:border-slate-800 outline-none transition-all"
+                    />
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                      STATUS PO
+                    </span>
+                    <select
+                      value={status}
+                      onChange={(e) => setStatus(e.target.value as any)}
+                      className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none cursor-pointer"
+                    >
+                      <option value="DRAFT">DRAFT</option>
+                      <option value="SENT">TERKIRIM (SENT)</option>
+                      <option value="COMPLETED">SELESAI (COMPLETED)</option>
+                      <option value="CANCELLED">BATAL (CANCELLED)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4. TABEL ITEM BARANG / PESANAN (PERSIS SEPERTI GAMBAR PENAWARAN) */}
+              <div className="space-y-3">
+                <div className="overflow-x-auto border-2 border-slate-300 rounded-2xl bg-white shadow-xs">
+                  <table className="w-full text-left border-collapse font-sans text-xs">
+                    <thead>
+                      <tr className="bg-slate-100 border-b-2 border-slate-300 font-black text-slate-900 text-center uppercase tracking-wider text-[11px]">
+                        <th className="py-3 px-2 border-r-2 border-slate-300 w-12">NO</th>
+                        <th className="py-3 px-3 border-r-2 border-slate-300">DESKRIPSI BARANG</th>
+                        <th className="py-3 px-2 border-r-2 border-slate-300 w-24">QTY</th>
+                        <th className="py-3 px-2 border-r-2 border-slate-300 w-24">SATUAN</th>
+                        <th className="py-3 px-3 border-r-2 border-slate-300 w-40">HARGA SATUAN</th>
+                        <th className="py-3 px-3 w-40">JUMLAH HARGA</th>
+                        <th className="py-3 px-2 w-10"></th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                    </thead>
+                    <tbody className="divide-y-2 divide-slate-200">
+                      {items.map((item, idx) => {
+                        const itemTotal = (Number(item.qty) || 0) * (Number(item.price) || 0);
+                        return (
+                          <tr key={idx} className="align-top hover:bg-slate-50/50 transition-colors">
+                            <td className="py-3 px-2 text-center font-black text-slate-800 border-r-2 border-slate-300 text-xs">
+                              {idx + 1}
+                            </td>
+                            <td className="py-2.5 px-3 border-r-2 border-slate-300">
+                              <input
+                                type="text"
+                                required
+                                value={item.description}
+                                onChange={(e) => handleItemChange(idx, "description", e.target.value)}
+                                placeholder="Nama barang / deskripsi produk yang dipesan"
+                                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-slate-800 outline-none"
+                              />
+                            </td>
+                            <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
+                              <input
+                                type="number"
+                                min={1}
+                                required
+                                value={item.qty}
+                                onChange={(e) => handleItemChange(idx, "qty", e.target.value)}
+                                className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none font-mono"
+                              />
+                            </td>
+                            <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
+                              <input
+                                type="text"
+                                required
+                                value={item.unit}
+                                onChange={(e) => handleItemChange(idx, "unit", e.target.value)}
+                                placeholder="Pcs/Unit"
+                                className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none"
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 border-r-2 border-slate-300 text-right">
+                              <input
+                                type="number"
+                                min={0}
+                                required
+                                value={item.price}
+                                onChange={(e) => handleItemChange(idx, "price", e.target.value)}
+                                className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-right text-slate-900 focus:border-slate-800 outline-none"
+                              />
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-mono font-black text-slate-900 text-xs">
+                              Rp {itemTotal.toLocaleString("id-ID")}
+                            </td>
+                            <td className="py-2.5 px-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveItemRow(idx)}
+                                disabled={items.length <= 1}
+                                className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg disabled:opacity-20 cursor-pointer"
+                                title="Hapus Baris"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-            {/* Pricing Summary Block & PPN Input */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                    Catatan PO (Note)
-                  </label>
+                {/* BUTTON + Kolom DI BAWAH KANAN TABEL */}
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={handleAddItemRow}
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <span>+ Kolom</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* 5. BAGIAN BAWAH DUA KOLOM: KIRI (TERBILANG, CATATAN, KETENTUAN) & KANAN (TOTAL & CHECKLISTS) */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-6 md:gap-8 pt-3 items-start border-t-2 border-slate-200">
+                
+                {/* SISI KIRI: TERBILANG, CATATAN, KETENTUAN */}
+                <div className="md:col-span-7 space-y-4">
+                  {/* TERBILANG BOX */}
+                  <div className="space-y-1">
+                    <div className="inline-block px-3 py-1 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest">
+                      TERBILANG
+                    </div>
+                    <div className="p-3 bg-slate-50 border-2 border-slate-300 rounded-xl text-xs font-black text-slate-800 italic leading-relaxed">
+                      {numberToWordsID(grandTotal)}
+                    </div>
+                  </div>
+
+                  {/* CATATAN PO BOX */}
+                  <div className="space-y-1">
+                    <div className="inline-block px-3 py-1 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest">
+                      CATATAN PO (NOTE)
+                    </div>
+                    <input
+                      type="text"
+                      value={note}
+                      onChange={(e) => setNote(e.target.value)}
+                      placeholder="Contoh: - Harga sudah termasuk ongkos pengiriman"
+                      className="w-full p-3 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none"
+                    />
+                  </div>
+
+                  {/* KETENTUAN PO BOX */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="inline-block px-3 py-1 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest">
+                        KETENTUAN PO (SYARAT & KETENTUAN)
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleAddKetentuanRow}
+                        className="px-2.5 py-0.5 bg-slate-200 hover:bg-slate-300 text-slate-800 rounded-md text-[10px] font-black uppercase cursor-pointer"
+                      >
+                        + Ketentuan
+                      </button>
+                    </div>
+                    <div className="space-y-2">
+                      {ketentuan.map((k, kIdx) => (
+                        <div key={kIdx} className="flex gap-2 items-start">
+                          <span className="text-xs font-bold text-slate-500 pt-2">{kIdx + 1}.</span>
+                          <textarea
+                            rows={2}
+                            value={k}
+                            onChange={(e) => handleKetentuanChange(kIdx, e.target.value)}
+                            placeholder="Tulis butir ketentuan..."
+                            className="flex-1 p-2.5 bg-white border-2 border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:border-slate-800 outline-none resize-none leading-relaxed"
+                          />
+                          {ketentuan.length > 1 && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveKetentuanRow(kIdx)}
+                              className="text-rose-500 hover:text-rose-700 p-2 cursor-pointer"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* SISI KANAN: TOTAL, CHECKLIST PPN, CHECKLIST ONGKIR (REQUEST 2), GRAND TOTAL */}
+                <div className="md:col-span-5 bg-slate-50 p-4 sm:p-5 rounded-2xl border-2 border-slate-300 space-y-3 font-sans">
+                  {/* ROW: TOTAL */}
+                  <div className="flex items-center justify-between pb-2 border-b-2 border-slate-200">
+                    <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                      TOTAL HARGA BARANG
+                    </span>
+                    <span className="text-sm font-mono font-black text-slate-900 bg-white px-3 py-1.5 rounded-lg border border-slate-300">
+                      Rp {totalPrice.toLocaleString("id-ID")}
+                    </span>
+                  </div>
+
+                  {/* ROW: CHECKLIST PPN */}
+                  <div className="p-3 bg-white rounded-xl border border-slate-300 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={includePPN}
+                          onChange={(e) => setIncludePPN(e.target.checked)}
+                          className="w-5 h-5 rounded accent-slate-900 cursor-pointer"
+                        />
+                        <span className="text-xs font-black text-slate-800">
+                          PPN ({ppnPercent}%)
+                        </span>
+                      </label>
+                      <span className="text-xs font-mono font-black text-slate-900">
+                        Rp {includePPN ? ppnAmount.toLocaleString("id-ID") : "0"}
+                      </span>
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-semibold">
+                      {includePPN ? `OTOMATIS * ${ppnPercent}%` : "(Tidak diceklis - Di PDF nominal Rp 0)"}
+                    </div>
+                  </div>
+
+                  {/* ROW: CHECKLIST ONGKIR / BIAYA PENGIRIMAN SUPPLIER (REQUEST 2) */}
+                  <div className="p-3 bg-white rounded-xl border border-slate-300 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={includeShipping}
+                          onChange={(e) => setIncludeShipping(e.target.checked)}
+                          className="w-5 h-5 rounded accent-slate-900 cursor-pointer"
+                        />
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                          {includeShipping ? "TAMPILKAN:" : "MUNCULKAN:"}
+                        </span>
+                      </label>
+                      <input
+                        type="text"
+                        value={shippingLabel}
+                        onChange={(e) => setShippingLabel(e.target.value)}
+                        placeholder="ONGKOS PENGIRIMAN SUPPLIER"
+                        className="flex-1 px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg text-xs font-black text-slate-900 outline-none focus:border-slate-800 focus:bg-white transition-all"
+                        title="Klik untuk mengubah nama/tulisan biaya ini (contoh: ONGKIR, BIAYA EXPEDISI, dll.)"
+                      />
+                      <span className="text-xs font-mono font-black text-slate-900 shrink-0">
+                        Rp {includeShipping ? Number(shippingCost || 0).toLocaleString("id-ID") : "0"}
+                      </span>
+                    </div>
+                    {includeShipping ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-500 font-bold shrink-0">Nominal (Rp):</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={shippingCost || ""}
+                          placeholder="0 (Jika tidak diisi tertulis Rp 0)"
+                          onChange={(e) => setShippingCost(Math.max(0, parseFloat(e.target.value) || 0))}
+                          className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none focus:border-slate-800 focus:bg-white"
+                        />
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-slate-400 font-semibold italic">
+                        (Tidak diceklis - Di PDF baris biaya ini TIDAK AKAN MUNCUL)
+                      </div>
+                    )}
+                  </div>
+
+                  {/* ROW: GRAND TOTAL */}
+                  <div className="p-3.5 bg-slate-900 text-white rounded-xl flex items-center justify-between shadow-md">
+                    <span className="text-xs font-black uppercase tracking-wider text-slate-300">
+                      GRAND TOTAL
+                    </span>
+                    <span className="text-base font-mono font-black text-emerald-400">
+                      Rp {grandTotal.toLocaleString("id-ID")}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 6. TANDA TANGAN (PERSIS SEPERTI GAMBAR PENAWARAN) */}
+              <div className="pt-4 border-t-2 border-slate-200 flex flex-col sm:flex-row justify-between items-end gap-6">
+                <div className="text-xs text-slate-400 font-bold">
+                  * PO ini sah dan berkekuatan hukum saat disetujui & dicap basah / digital oleh Direksi.
+                </div>
+                <div className="w-64 space-y-2 text-center bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                  <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                    MENYETUJUI / PEMESAN
+                  </div>
+                  <div className="h-16 flex items-center justify-center">
+                    <span className="text-[10px] text-slate-300 italic">(Tanda Tangan & Cap PT)</span>
+                  </div>
                   <input
                     type="text"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    placeholder="Contoh: - Harga sudah termasuk ongkos pengiriman"
-                    className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:bg-white transition-all"
+                    required
+                    value={signerName}
+                    onChange={(e) => setSignerName(e.target.value)}
+                    placeholder="Nama Penandatangan"
+                    className="w-full px-2.5 py-1 text-center font-black text-xs text-slate-900 bg-white border border-slate-300 rounded-lg outline-none"
+                  />
+                  <input
+                    type="text"
+                    value={signerRole}
+                    onChange={(e) => setSignerRole(e.target.value)}
+                    placeholder="Jabatan (e.g. Direktur)"
+                    className="w-full px-2.5 py-1 text-center font-bold text-[10px] text-slate-500 bg-white border border-slate-200 rounded-lg outline-none"
                   />
                 </div>
-
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between border-b border-slate-100 pb-1">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                      Ketentuan PO (Bisa Multi-line)
-                    </label>
-                    <button
-                      type="button"
-                      onClick={handleAddKetentuanRow}
-                      className="text-[10px] font-black text-primary uppercase tracking-wider hover:underline"
-                    >
-                      + Ketentuan
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    {ketentuan.map((k, idx) => (
-                      <div key={idx} className="flex gap-2 items-start">
-                        <span className="text-xs font-bold text-slate-500 pt-3">{idx + 1}.</span>
-                        <textarea
-                          rows={2}
-                          value={k}
-                          onChange={(e) => handleKetentuanChange(idx, e.target.value)}
-                          placeholder="Tulis ketentuan..."
-                          className="flex-1 px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold outline-none focus:bg-white resize-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveKetentuanRow(idx)}
-                          className="text-slate-400 hover:text-rose-500 pt-3"
-                        >
-                          <MinusCircle className="w-4 h-4" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
               </div>
 
-              <div className="bg-slate-50/50 border border-slate-100 rounded-3xl p-6 space-y-4 self-start">
-                <h4 className="text-xs font-black text-slate-900 uppercase tracking-widest border-b border-slate-100 pb-2">
-                  REKAPITULASI BIAYA
-                </h4>
-
-                <div className="flex justify-between items-center text-sm font-bold text-slate-600">
-                  <span>Total Harga Barang</span>
-                  <span className="text-slate-800">Rp {totalPrice.toLocaleString("id-ID")}</span>
-                </div>
-
-                <div className="flex justify-between items-center text-sm font-bold text-slate-600">
-                  <div className="flex items-center gap-2">
-                    <span>PPN (%)</span>
-                    <input
-                      type="number"
-                      value={ppnPercent}
-                      onChange={(e) => setPpnPercent(Math.max(0, Number(e.target.value) || 0))}
-                      className="w-16 px-2 py-1 bg-white border border-slate-200 rounded-lg text-center text-xs font-black"
-                    />
-                  </div>
-                  <span className="text-slate-800">Rp {ppnAmount.toLocaleString("id-ID")}</span>
-                </div>
-
-                <div className="h-px bg-slate-200 my-2" />
-
-                <div className="flex justify-between items-center">
-                  <div>
-                    <span className="text-xs font-black text-slate-500 uppercase tracking-widest block leading-none mb-1">
-                      Grand Total Nilai PO
-                    </span>
-                    <span className="text-lg font-black text-slate-900 italic uppercase">
-                      Grand Total
-                    </span>
-                  </div>
-                  <span className="text-2xl font-black text-primary">
-                    Rp {grandTotal.toLocaleString("id-ID")}
-                  </span>
-                </div>
+              {/* 7. ACTION BUTTONS BOTTOM */}
+              <div className="flex flex-col sm:flex-row justify-end gap-3 pt-4 border-t-2 border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setView("list")}
+                  className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSave(undefined, false)}
+                  className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <CheckCircle size={14} />
+                  <span>Simpan PO</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSave(undefined, true)}
+                  className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
+                >
+                  <Eye size={14} />
+                  <span>Simpan & Format PDF</span>
+                </button>
               </div>
-            </div>
-
-            {/* Signer Block details */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-4 border-t border-slate-100">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                  Nama Penandatangan (Menyetujui)
-                </label>
-                <input
-                  type="text"
-                  value={signerName}
-                  onChange={(e) => setSignerName(e.target.value)}
-                  placeholder="Contoh: Jidan Ramadhan"
-                  className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:bg-white transition-all"
-                  required
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">
-                  Jabatan Penandatangan
-                </label>
-                <input
-                  type="text"
-                  value={signerRole}
-                  onChange={(e) => setSignerRole(e.target.value)}
-                  placeholder="Contoh: Direktur"
-                  className="w-full px-5 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:bg-white transition-all"
-                />
-              </div>
-            </div>
-
-            {/* Action Buttons */}
-            <div className="flex justify-end gap-4 pt-6 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => setView("list")}
-                className="px-6 py-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs uppercase tracking-widest rounded-2xl transition-all"
-              >
-                Batal
-              </button>
-              <button
-                type="submit"
-                className="px-8 py-4 bg-primary text-white font-black text-xs uppercase tracking-widest rounded-2xl shadow-lg shadow-primary/15 hover:scale-[1.02] active:scale-95 transition-all"
-              >
-                Simpan PO
-              </button>
-            </div>
-          </motion.form>
+            </form>
+          </div>
         ) : view === "preview" && selectedPO ? (
           <motion.div
             initial={{ opacity: 0, y: 15 }}
@@ -1301,6 +1481,46 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      {/* Interactive PDF Preview Modal (Request 1 & 3) */}
+      <AnimatePresence>
+        {isPreviewOpen && (
+          <DocumentPreviewModal
+            isOpen={isPreviewOpen}
+            onClose={() => setIsPreviewOpen(false)}
+            type="po"
+            initialPoData={{
+              poNo,
+              date,
+              vendorName,
+              vendorAddress,
+              vendorPhone: "",
+              buyerName,
+              buyerAddress,
+              buyerEmail,
+              buyerPhone,
+              items,
+              note,
+              ketentuan,
+              signerName,
+              signerRole,
+              ppnPercent: includePPN ? ppnPercent : 0,
+              includeShipping,
+              shippingLabel,
+              shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+              total: grandTotal,
+              logoImage
+            }}
+            onSavePo={async (updatedData) => {
+              if (selectedPO?.id) {
+                await dbService.updateDocument("purchaseOrders", selectedPO.id, updatedData);
+                triggerToast("Perubahan PO berhasil diperbarui", "success");
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
+
     </div>
   );
 };

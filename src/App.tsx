@@ -1211,6 +1211,14 @@ const AdminInvoicesScreen = ({
   const [signatoryName, setSignatoryName] = useState("JIDAN RAMADHAN");
   const [overrideTerbilang, setOverrideTerbilang] = useState("");
 
+  // Preview & Flexible Ongkir / Diskon (Request 1, 2, 3)
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [includeShipping, setIncludeShipping] = useState(false);
+  const [shippingLabel, setShippingLabel] = useState("BIAYA PENGIRIMAN / ONGKIR");
+  const [shippingCost, setShippingCost] = useState(0);
+  const [includeDiscount, setIncludeDiscount] = useState(false);
+  const [discountVal, setDiscountVal] = useState(0);
+
   // Indonesian spelling of numbers (Terbilang)
   const numberToTerbilang = (num: number): string => {
     if (num === 0) return "nol";
@@ -1263,8 +1271,11 @@ const AdminInvoicesScreen = ({
     return acc + q * p;
   }, 0);
 
-  const taxAmount = enablePPN ? Math.round((subTotal * taxPercentage) / 100) : 0;
-  const grandTotal = subTotal + taxAmount;
+  const discAmount = includeDiscount ? discountVal : 0;
+  const baseAfterDisc = Math.max(0, subTotal - discAmount);
+  const shippingAmount = includeShipping ? Number(shippingCost || 0) : 0;
+  const taxAmount = enablePPN ? Math.round((baseAfterDisc * taxPercentage) / 100) : 0;
+  const grandTotal = baseAfterDisc + shippingAmount + taxAmount;
   const computedTerbilang = numberToTerbilang(grandTotal);
 
   // File structure helpers
@@ -1342,6 +1353,11 @@ const AdminInvoicesScreen = ({
     setBankAccountNumber(inv.bankAccountNumber || "1550014117173");
     setSignatoryName(inv.signatoryName || "JIDAN RAMADHAN");
     setOverrideTerbilang(inv.overrideTerbilang || "");
+    setIncludeShipping(inv.includeShipping || false);
+    setShippingLabel(inv.shippingLabel || "BIAYA PENGIRIMAN / ONGKIR");
+    setShippingCost(inv.shippingCost || 0);
+    setIncludeDiscount(inv.discountVal ? inv.discountVal > 0 : false);
+    setDiscountVal(inv.discountVal || 0);
 
     setView("build");
   };
@@ -1369,10 +1385,15 @@ const AdminInvoicesScreen = ({
     setBankAccountNumber("1550014117173");
     setSignatoryName("JIDAN RAMADHAN");
     setOverrideTerbilang("");
+    setIncludeShipping(false);
+    setShippingLabel("BIAYA PENGIRIMAN / ONGKIR");
+    setShippingCost(0);
+    setIncludeDiscount(false);
+    setDiscountVal(0);
     setView("build");
   };
 
-  const handleSaveInvoice = async () => {
+  const handleSaveInvoice = async (openPreview: boolean = false) => {
     if (!recipientName) {
       alert("Masukkan nama penerima / klien.");
       return;
@@ -1403,8 +1424,14 @@ const AdminInvoicesScreen = ({
       recipientUp,
       invoiceDate,
       jobName,
+      enablePPN,
       taxPercentage: enablePPN ? taxPercentage : 0,
+      includeShipping,
+      shippingLabel,
+      shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+      discountVal: includeDiscount ? discountVal : 0,
       itemsJson: JSON.stringify(items),
+      items,
       bankName,
       bankAccountName,
       bankAccountNumber,
@@ -1430,7 +1457,11 @@ const AdminInvoicesScreen = ({
         );
         alert("Invoice baru berhasil disimpan!");
       }
-      setView("list");
+      if (openPreview) {
+        setIsPreviewOpen(true);
+      } else {
+        setView("list");
+      }
     } catch (e) {
       console.error(e);
       alert("Gagal menyimpan invoice.");
@@ -1720,131 +1751,125 @@ const AdminInvoicesScreen = ({
           </div>
         </div>
       ) : (
-        /* Builder View (Dual Pane) */
-        <div className="space-y-6 pb-28">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                /* Builder View: Form Input Berbentuk Persis Penawaran / SPH (Request 3) */
+        <div className="space-y-6 pb-20">
+          {/* Top Bar Navigation & Actions */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm max-w-5xl mx-auto">
             <button
               onClick={() => setView("list")}
-              className="flex items-center gap-2 text-slate-400 hover:text-slate-900 transition-all font-black text-[10px] uppercase tracking-widest hover:translate-x-[-2px]"
+              className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-all font-black text-xs uppercase tracking-wider cursor-pointer"
             >
               <ChevronLeft size={16} /> Kembali ke Daftar Invoice
             </button>
             <div className="flex items-center gap-3">
               <button
-                onClick={handleSaveInvoice}
-                className="bg-emerald-500 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-emerald-600 transition-all"
+                type="button"
+                onClick={() => handleSaveInvoice(false)}
+                className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:bg-slate-800 transition-all cursor-pointer flex items-center gap-2"
               >
-                <Save size={16} />
+                <Save size={14} />
                 <span>Simpan di Aplikasi</span>
               </button>
               <button
-                onClick={exportPDF}
-                disabled={isExporting}
-                className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-slate-800 transition-all disabled:opacity-50"
+                type="button"
+                onClick={() => handleSaveInvoice(true)}
+                className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:bg-indigo-700 transition-all cursor-pointer flex items-center gap-2"
               >
-                {isExporting ? <RefreshCw className="animate-spin" size={16} /> : <Printer size={16} />}
-                <span>Download PDF Invoice</span>
+                <Eye size={14} />
+                <span>Simpan & Format PDF</span>
               </button>
             </div>
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-10">
-            {/* Editor Pane */}
-            <div className="space-y-8">
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <h3 className="text-lg font-black text-slate-900">1. Profil Pengirim & Logo</h3>
-                
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Logo Perusahaan
-                    </label>
-                    <div className="relative group">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleLogoUpload}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                      />
-                      <div className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold flex items-center gap-3 transition-all group-hover:bg-slate-100">
-                        <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
-                          {logoImage ? (
-                            <img src={logoImage} alt="Logo" className="w-full h-full object-contain" />
-                          ) : (
-                            <Plus size={16} className="text-slate-400" />
-                          )}
-                        </div>
-                        <span className="text-slate-500 truncate">
-                          {logoImage ? "Ganti Logo" : "Upload Logo (.png, .jpg)"}
-                        </span>
-                      </div>
+          {/* DOKUMEN UTAMA: LAYOUT FORM INPUT PERSIS SEPERTI PENAWARAN (SPH) */}
+          <form onSubmit={(e) => { e.preventDefault(); handleSaveInvoice(true); }} className="bg-white rounded-3xl border-2 border-slate-300 shadow-xl p-5 sm:p-8 md:p-10 space-y-7 text-left font-sans text-slate-900 max-w-5xl mx-auto">
+            
+            {/* 1. KOP SURAT (ATAS): UPLOAD LOGO (KIRI) & PROFIL PT PENGIRIM (KANAN) */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start pb-5 border-b-2 border-slate-200">
+              {/* Logo Box */}
+              <div className="md:col-span-4 space-y-2">
+                <input
+                  type="file"
+                  id="inv-comp-logo-input"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleLogoUpload}
+                />
+                <label
+                  htmlFor="inv-comp-logo-input"
+                  className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50 hover:bg-slate-100 cursor-pointer transition-all group min-h-[120px]"
+                >
+                  {logoImage ? (
+                    <div className="flex flex-col items-center gap-1.5">
+                      <img src={logoImage} alt="Logo" className="max-h-20 object-contain" />
+                      <span className="text-[10px] font-black text-indigo-600 group-hover:underline">Ganti Logo</span>
                     </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nama Perusahaan Pengirim
-                    </label>
-                    <input
-                      type="text"
-                      value={companyName}
-                      onChange={(e) => setCompanyName(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Alamat Lengkap Pengirim (Kop Surat Kanan)
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={companyAddress}
-                    onChange={(e) => setCompanyAddress(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-3xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                  />
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nomor Telepon
-                    </label>
-                    <input
-                      type="text"
-                      value={companyPhone}
-                      onChange={(e) => setCompanyPhone(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Email Bisnis
-                    </label>
-                    <input
-                      type="text"
-                      value={companyEmail}
-                      onChange={(e) => setCompanyEmail(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
+                  ) : (
+                    <div className="text-center space-y-1">
+                      <Building2 size={24} className="text-slate-400 mx-auto" />
+                      <span className="text-xs font-black text-slate-700 block uppercase tracking-wider">Upload Logo</span>
+                      <span className="text-[9px] text-slate-400 block font-semibold">Klik untuk memilih file logo (.png/.jpg)</span>
+                    </div>
+                  )}
+                </label>
               </div>
 
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <h3 className="text-lg font-black text-slate-900">2. Detail Penerima & Pekerjaan</h3>
+              {/* Info PT Pengirim */}
+              <div className="md:col-span-8 space-y-2 text-right">
+                <input
+                  type="text"
+                  value={companyName}
+                  onChange={(e) => setCompanyName(e.target.value)}
+                  placeholder="Nama Perusahaan Pengirim"
+                  className="w-full text-right font-black text-base md:text-lg text-slate-900 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none pb-1"
+                />
+                <textarea
+                  rows={2}
+                  value={companyAddress}
+                  onChange={(e) => setCompanyAddress(e.target.value)}
+                  placeholder="Alamat Perusahaan Pengirim"
+                  className="w-full text-right text-xs font-semibold text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none resize-none leading-relaxed"
+                />
+                <div className="flex flex-col sm:flex-row sm:justify-end gap-2 text-xs font-bold text-slate-500">
+                  <input
+                    type="text"
+                    value={companyPhone}
+                    onChange={(e) => setCompanyPhone(e.target.value)}
+                    placeholder="Telp: 0888-1687-794"
+                    className="text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none text-xs"
+                  />
+                  <input
+                    type="text"
+                    value={companyEmail}
+                    onChange={(e) => setCompanyEmail(e.target.value)}
+                    placeholder="Email: info@gardainovasiglobaltech.id"
+                    className="text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none text-xs text-indigo-600"
+                  />
+                </div>
+              </div>
+            </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Hubungkan dengan Klien Terdaftar (Opsional)
-                  </label>
+            {/* 2. BOX JUDUL DOKUMEN PERSIS SEPERTI GAMBAR PENAWARAN */}
+            <div className="flex justify-center my-2">
+              <div className="bg-slate-900 text-white font-black px-8 py-2 rounded-2xl text-center uppercase tracking-widest text-sm shadow-md">
+                INVOICE / FAKTUR PENAGIHAN
+              </div>
+            </div>
+
+            {/* 3. METADATA DUA KOLOM: KIRI (KEPADA YTH) & KANAN (DETAIL INVOICE) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Kolom Kiri: Kepada Yth */}
+              <div className="space-y-2.5 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
+                <div className="flex items-center gap-2">
+                  <span className="w-20 text-[10px] font-black text-slate-500 uppercase tracking-wider shrink-0">
+                    PILIH KLIEN:
+                  </span>
                   <select
                     value={clientId}
                     onChange={(e) => handleClientChange(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
+                    className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none cursor-pointer"
                   >
-                    <option value="">Pilih Klien</option>
+                    <option value="">-- Pilih dari Klien Terdaftar (Opsional) --</option>
                     {clients.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.company || c.name} ({c.name})
@@ -1853,624 +1878,464 @@ const AdminInvoicesScreen = ({
                   </select>
                 </div>
 
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Kepada (Instansi / Nama Klien)
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Puskesmas Sindang Jaya"
-                      value={recipientName}
-                      onChange={(e) => setRecipientName(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Up (Nama Jabatan / Penerima)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Kepala Puskesmas Sindang Jaya"
-                      value={recipientUp}
-                      onChange={(e) => setRecipientUp(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    KEPADA
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={recipientName}
+                    onChange={(e) => setRecipientName(e.target.value)}
+                    placeholder="Nama Instansi / Perusahaan Klien"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                  />
                 </div>
-
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nomor Surat Invoice
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. 17/INV/GIGT/VI/2026"
-                      value={invoiceNumber}
-                      onChange={(e) => setInvoiceNumber(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nama Pekerjaan / Projek
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Pemeliharaan IPAL"
-                      value={jobName}
-                      onChange={(e) => setJobName(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Tanggal Cetak
-                    </label>
-                    <input
-                      type="date"
-                      value={invoiceDate}
-                      onChange={(e) => setInvoiceDate(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-[18px] text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Tanggal Jatuh Tempo (Due Date)
-                    </label>
-                    <input
-                      type="date"
-                      value={dueDate}
-                      onChange={(e) => setDueDate(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-[18px] text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Status Dokumen (Database)
-                  </label>
-                  <select
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value as any)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                  >
-                    <option value="PENDING">PENDING (Beli / Belum Bayar)</option>
-                    <option value="PAID">PAID (Lunas)</option>
-                    <option value="OVERDUE">OVERDUE (Terlambat)</option>
-                  </select>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    UP
+                  </span>
+                  <input
+                    type="text"
+                    value={recipientUp}
+                    onChange={(e) => setRecipientUp(e.target.value)}
+                    placeholder="Nama Penerima / Jabatan PIC"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                  />
                 </div>
               </div>
 
-              {/* Rincian item */}
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-black text-slate-900">3. Rincian Pekerjaan / Item</h3>
-                  <button
-                    onClick={addItem}
-                    className="flex items-center gap-1.5 text-[10px] font-black text-emerald-500 uppercase tracking-widest bg-emerald-50 px-3 py-1.5 rounded-full hover:bg-emerald-100 transition-all"
-                  >
-                    <Plus size={14} /> Add Item
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  {items.map((item, idx) => (
-                    <div key={idx} className="p-4 bg-slate-50/50 rounded-3xl border border-slate-100 space-y-3 relative group">
-                      <button
-                        onClick={() => removeItem(idx)}
-                        disabled={items.length === 1}
-                        className="absolute top-2 right-2 p-1.5 text-slate-300 hover:text-rose-500 disabled:opacity-0 transition-all rounded-lg"
-                        title="Hapus baris"
-                      >
-                        <Trash2 size={16} />
-                      </button>
-
-                      <div className="space-y-1">
-                        <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider pl-1 font-sans">
-                          Uraian Pekerjaan / Deskripsi
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={item.description}
-                          placeholder="Nama Barang atau Jenis Pekerjaan"
-                          onChange={(e) => updateItem(idx, "description", e.target.value)}
-                          className="w-full px-4 py-2.5 bg-white border border-slate-150 rounded-xl text-xs font-bold outline-none"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider pl-1">
-                            Vol / Qty
-                          </label>
-                          <input
-                            type="number"
-                            value={item.qty}
-                            onChange={(e) => updateItem(idx, "qty", e.target.value)}
-                            className="w-full px-3 py-2.5 bg-white border border-slate-150 rounded-xl text-xs font-bold text-center outline-none"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider pl-1 font-sans">
-                            Satuan
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="Set / ls / Pcs"
-                            value={item.unit}
-                            onChange={(e) => updateItem(idx, "unit", e.target.value)}
-                            className="w-full px-3 py-2.5 bg-white border border-slate-150 rounded-xl text-xs font-bold text-center outline-none"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-[9px] font-black text-slate-400 uppercase tracking-wider pl-1">
-                            Harga Satuan (Rp)
-                          </label>
-                          <input
-                            type="number"
-                            value={item.price}
-                            onChange={(e) => updateItem(idx, "price", e.target.value)}
-                            className="w-full px-3 py-2.5 bg-white border border-slate-150 rounded-xl text-xs font-bold text-center outline-none font-mono"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Pajak & Bank */}
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <h3 className="text-lg font-black text-slate-900">4. Pajak & Rekening Pembayaran</h3>
-
-                <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-2xl">
-                  <input
-                    type="checkbox"
-                    id="enable-ppn"
-                    checked={enablePPN}
-                    onChange={(e) => setEnablePPN(e.target.checked)}
-                    className="w-4 h-4 rounded text-emerald-500 focus:ring-emerald-500 border-slate-300"
-                  />
-                  <label htmlFor="enable-ppn" className="text-xs font-bold text-slate-700 cursor-pointer select-none">
-                    Kenakan PPN (Pajak Pertambahan Nilai)
-                  </label>
-                </div>
-
-                {enablePPN && (
-                  <div className="space-y-2 pl-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                      Persentase PPN (%)
-                    </label>
-                    <input
-                      type="number"
-                      value={taxPercentage}
-                      onChange={(e) => setTaxPercentage(Number(e.target.value))}
-                      className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-xl text-xs font-black outline-none"
-                    />
-                  </div>
-                )}
-
-                <div className="grid md:grid-cols-2 gap-6 pt-2">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nama Bank Penerima
-                    </label>
-                    <input
-                      type="text"
-                      value={bankName}
-                      onChange={(e) => setBankName(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Atas Nama Rekening
-                    </label>
-                    <input
-                      type="text"
-                      value={bankAccountName}
-                      onChange={(e) => setBankAccountName(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Nomor Rekening
-                  </label>
+              {/* Kolom Kanan: Nomor Invoice, Tanggal, Jatuh Tempo, Pekerjaan */}
+              <div className="space-y-2 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    NOMOR
+                  </span>
                   <input
                     type="text"
-                    value={bankAccountNumber}
-                    onChange={(e) => setBankAccountNumber(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none font-mono"
+                    required
+                    value={invoiceNumber}
+                    onChange={(e) => setInvoiceNumber(e.target.value)}
+                    placeholder="17/INV/GIGT/VI/2026"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-mono font-black text-slate-900 focus:border-slate-800 outline-none transition-all"
                   />
                 </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Nama Penandatangan (Hormat Kami)
-                  </label>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    TANGGAL
+                  </span>
+                  <input
+                    type="date"
+                    required
+                    value={invoiceDate}
+                    onChange={(e) => setInvoiceDate(e.target.value)}
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:border-slate-800 outline-none transition-all"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    JATUH TEMPO
+                  </span>
+                  <input
+                    type="date"
+                    value={dueDate}
+                    onChange={(e) => setDueDate(e.target.value)}
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:border-slate-800 outline-none transition-all"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    PEKERJAAN
+                  </span>
                   <input
                     type="text"
-                    value={signatoryName}
-                    onChange={(e) => setSignatoryName(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none"
-                  />
-                </div>
-
-                <div className="space-y-2 pt-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Override Teks Terbilang (Kosongkan Untuk Otomatis)
-                  </label>
-                  <textarea
-                    rows={2}
-                    value={overrideTerbilang}
-                    placeholder={computedTerbilang}
-                    onChange={(e) => setOverrideTerbilang(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none italic placeholder:text-slate-300"
+                    value={jobName}
+                    onChange={(e) => setJobName(e.target.value)}
+                    placeholder="Nama Pekerjaan / Projek / Ref PO"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                   />
                 </div>
               </div>
             </div>
 
-            {/* Document Live Preview Pane */}
-            <div className="space-y-6 overflow-hidden">
-              <h2 className="text-xl font-black text-slate-900 tracking-tight text-center">
-                Live Document Preview (A4 format)
-              </h2>
-
-              <div className="w-full overflow-x-auto overflow-y-auto max-h-[850px] flex justify-center bg-slate-200 border border-slate-300 rounded-[32px] p-6 shadow-inner">
-                {/* Simulated A4 document page wrapper */}
-                <div
-                  id="invoice-preview-capture"
-                  className="bg-white"
-                  style={{
-                    width: "210mm",
-                    minHeight: "297mm",
-                    padding: "45px 55px",
-                    backgroundColor: "#ffffff",
-                    color: "#000000",
-                    position: "relative",
-                    fontFamily: "Arial, sans-serif",
-                    margin: "0 auto",
-                    boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
-                    transform:
-                      windowWidth < 768
-                        ? `scale(${Math.min(0.42, (windowWidth - 40) / 794)})`
-                        : windowWidth < 1024
-                          ? `scale(${Math.min(0.7, (windowWidth - 40) / 794)})`
-                          : "scale(1)",
-                    transformOrigin: "top center",
-                  }}
-                >
-                  {/* Kop Surat Header */}
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "flex-start",
-                      borderBottom: "1px solid #1e293b",
-                      paddingBottom: "15px",
-                      marginBottom: "20px",
-                    }}
-                  >
-                    {/* Left: Logo & Logo Text */}
-                    <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                      <div
-                        style={{
-                          width: "80px",
-                          height: "80px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          overflow: "hidden",
-                        }}
-                      >
-                        {logoImage ? (
-                          <img
-                            src={logoImage}
-                            alt="Logo"
-                            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
-                          />
-                        ) : (
-                          <div
-                            style={{
-                              width: "100%",
-                              height: "100%",
-                              border: "1px dashed #cccccc",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              fontSize: "9px",
-                              color: "#888888",
-                              textAlign: "center",
-                            }}
-                          >
-                            Upload Logo
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column" }}>
-                        <p style={{ margin: 0, fontSize: "11px", fontWeight: "bold", color: "#1e3a8a" }}>
-                          PT. GARDA INOVASI GLOBALTECH
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Right: Company Address Details */}
-                    <div style={{ textAlign: "right", maxWidth: "340px" }}>
-                      <h4
-                        style={{
-                          margin: "0 0 4px 0",
-                          fontSize: "12px",
-                          fontWeight: "bold",
-                          letterSpacing: "0.05em",
-                          color: "#0f172a",
-                        }}
-                      >
-                        {companyName}
-                      </h4>
-                      <p
-                        style={{
-                          margin: 0,
-                          fontSize: "9px",
-                          lineHeight: "1.4",
-                          color: "#334155",
-                          whiteSpace: "pre-wrap",
-                        }}
-                      >
-                        {companyAddress}
-                      </p>
-                      <p style={{ margin: "4px 0 0 0", fontSize: "9px", color: "#475569" }}>
-                        Telp: {companyPhone}
-                      </p>
-                      <p style={{ margin: 0, fontSize: "9px", color: "#2563eb", textDecoration: "underline" }}>
-                        {companyEmail}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Title Centered */}
-                  <div style={{ textAlign: "center", margin: "25px 0" }}>
-                    <h2
-                      style={{
-                        margin: 0,
-                        fontSize: "20px",
-                        fontWeight: "bold",
-                        letterSpacing: "0.2em",
-                        textDecoration: "underline",
-                        color: "#000000",
-                      }}
-                    >
-                      INVOICE
-                    </h2>
-                  </div>
-
-                  {/* Dual Column Info Section */}
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontSize: "11px",
-                      marginBottom: "30px",
-                      lineHeight: "1.7",
-                    }}
-                  >
-                    {/* Left Column: Recipient Details */}
-                    <div style={{ width: "45%" }}>
-                      <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                        <tbody>
-                          <tr>
-                            <td style={{ width: "70px", fontWeight: "normal", verticalAlign: "top" }}>Kepada</td>
-                            <td style={{ width: "10px", verticalAlign: "top" }}>:</td>
-                            <td style={{ fontWeight: "bold", verticalAlign: "top" }}>{recipientName || "-"}</td>
-                          </tr>
-                          <tr>
-                            <td style={{ fontWeight: "normal", verticalAlign: "top" }}>Up</td>
-                            <td style={{ verticalAlign: "top" }}>:</td>
-                            <td style={{ verticalAlign: "top" }}>{recipientUp || "-"}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Right Column: Invoicing Metadata */}
-                    <div style={{ width: "45%" }}>
-                      <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                        <tbody>
-                          <tr>
-                            <td style={{ width: "80px", fontWeight: "normal", verticalAlign: "top" }}>Nomor</td>
-                            <td style={{ width: "10px", verticalAlign: "top" }}>:</td>
-                            <td style={{ fontWeight: "bold", verticalAlign: "top" }}>{invoiceNumber || "-"}</td>
-                          </tr>
-                          <tr>
-                            <td style={{ fontWeight: "normal", verticalAlign: "top" }}>Tanggal</td>
-                            <td style={{ verticalAlign: "top" }}>:</td>
-                            <td style={{ verticalAlign: "top" }}>
-                              {invoiceDate
-                                ? new Date(invoiceDate).toLocaleDateString("id-ID", {
-                                    day: "2-digit",
-                                    month: "long",
-                                    year: "numeric"
-                                  })
-                                : "-"}
-                            </td>
-                          </tr>
-                          {dueDate && (
-                            <tr>
-                              <td style={{ fontWeight: "normal", verticalAlign: "top" }}>Jatuh Tempo</td>
-                              <td style={{ verticalAlign: "top" }}>:</td>
-                              <td style={{ verticalAlign: "top" }}>
-                                {new Date(dueDate).toLocaleDateString("id-ID", {
-                                  day: "2-digit",
-                                  month: "long",
-                                  year: "numeric"
-                                })}
-                              </td>
-                            </tr>
-                          )}
-                          <tr>
-                            <td style={{ fontWeight: "normal", verticalAlign: "top" }}>Pekerjaan</td>
-                            <td style={{ verticalAlign: "top" }}>:</td>
-                            <td style={{ verticalAlign: "top" }}>{jobName || "-"}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* High Quality Black Bordered Table */}
-                  <table
-                    style={{
-                      width: "100%",
-                      borderCollapse: "collapse",
-                      fontSize: "11px",
-                      marginBottom: "20px",
-                    }}
-                  >
-                    <thead>
-                      <tr style={{ borderTop: "2px solid #000000", borderBottom: "2px solid #000000" }}>
-                        <th style={{ padding: "8px 5px", borderBottom: "2px solid #000000", textAlign: "center", width: "35px" }}>NO</th>
-                        <th style={{ padding: "8px 10px", borderBottom: "2px solid #000000", textAlign: "left" }}>URAIAN PEKERJAAN</th>
-                        <th style={{ padding: "8px 5px", borderBottom: "2px solid #000000", textAlign: "center", width: "50px" }}>VOL</th>
-                        <th style={{ padding: "8px 5px", borderBottom: "2px solid #000000", textAlign: "center", width: "60px" }}>SATUAN</th>
-                        <th style={{ padding: "8px 10px", borderBottom: "2px solid #000000", textAlign: "right", width: "115px" }}>HARGA SATUAN</th>
-                        <th style={{ padding: "8px 10px", borderBottom: "2px solid #000000", textAlign: "right", width: "120px" }}>JUMLAH</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((item, idx) => {
-                        const amount = (Number(item.qty) || 0) * (Number(item.price) || 0);
-                        return (
-                          <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                            <td style={{ padding: "8px 5px", textAlign: "center", verticalAlign: "top" }}>{idx + 1}</td>
-                            <td style={{ padding: "8px 10px", textAlign: "left", verticalAlign: "top", whiteSpace: "pre-line" }}>
-                              {item.description || "-"}
-                            </td>
-                            <td style={{ padding: "8px 5px", textAlign: "center", verticalAlign: "top" }}>{item.qty}</td>
-                            <td style={{ padding: "8px 5px", textAlign: "center", verticalAlign: "top" }}>{item.unit || "-"}</td>
-                            <td style={{ padding: "8px 10px", textAlign: "right", verticalAlign: "top" }}>
-                              Rp {(Number(item.price) || 0).toLocaleString("id-ID")}
-                            </td>
-                            <td style={{ padding: "8px 10px", textAlign: "right", verticalAlign: "top", fontWeight: "bold" }}>
-                              Rp {amount.toLocaleString("id-ID")}
-                            </td>
-                          </tr>
-                        );
-                      })}
-
-                      {/* Summary Section Rows */}
-                      <tr style={{ borderTop: "2px solid #000000" }}>
-                        <td colSpan={4} style={{ border: "none" }}></td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "bold" }}>SUB TOTAL</td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "bold" }}>
-                          Rp {subTotal.toLocaleString("id-ID")}
-                        </td>
-                      </tr>
-                      {enablePPN && (
-                        <tr>
-                          <td colSpan={4} style={{ border: "none" }}></td>
-                          <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "bold" }}>PPN {taxPercentage}%</td>
-                          <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "bold" }}>
-                            Rp {taxAmount.toLocaleString("id-ID")}
+            {/* 4. TABEL ITEM PEKERJAAN (PERSIS SEPERTI GAMBAR PENAWARAN) */}
+            <div className="space-y-3">
+              <div className="overflow-x-auto border-2 border-slate-300 rounded-2xl bg-white shadow-xs">
+                <table className="w-full text-left border-collapse font-sans text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 border-b-2 border-slate-300 font-black text-slate-900 text-center uppercase tracking-wider text-[11px]">
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-12">NO</th>
+                      <th className="py-3 px-3 border-r-2 border-slate-300">URAIAN PEKERJAAN / BARANG</th>
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-24">QTY</th>
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-24">SATUAN</th>
+                      <th className="py-3 px-3 border-r-2 border-slate-300 w-40">HARGA SATUAN</th>
+                      <th className="py-3 px-3 w-40">JUMLAH</th>
+                      <th className="py-3 px-2 w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y-2 divide-slate-200">
+                    {items.map((item, idx) => {
+                      const itemTotal = (Number(item.qty) || 0) * (Number(item.price) || 0);
+                      return (
+                        <tr key={idx} className="align-top hover:bg-slate-50/50 transition-colors">
+                          <td className="py-3 px-2 text-center font-black text-slate-800 border-r-2 border-slate-300 text-xs">
+                            {idx + 1}
+                          </td>
+                          <td className="py-2.5 px-3 border-r-2 border-slate-300">
+                            <input
+                              type="text"
+                              required
+                              value={item.description}
+                              onChange={(e) => updateItem(idx, "description", e.target.value)}
+                              placeholder="Deskripsi pekerjaan / nama barang tagihan"
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-slate-800 outline-none"
+                            />
+                          </td>
+                          <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
+                            <input
+                              type="number"
+                              min={1}
+                              required
+                              value={item.qty}
+                              onChange={(e) => updateItem(idx, "qty", e.target.value)}
+                              className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none font-mono"
+                            />
+                          </td>
+                          <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
+                            <input
+                              type="text"
+                              required
+                              value={item.unit}
+                              onChange={(e) => updateItem(idx, "unit", e.target.value)}
+                              placeholder="Unit/Set/ls"
+                              className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none"
+                            />
+                          </td>
+                          <td className="py-2.5 px-3 border-r-2 border-slate-300 text-right">
+                            <input
+                              type="number"
+                              min={0}
+                              required
+                              value={item.price}
+                              onChange={(e) => updateItem(idx, "price", e.target.value)}
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-right text-slate-900 focus:border-slate-800 outline-none"
+                            />
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-black text-slate-900 text-xs">
+                            Rp {itemTotal.toLocaleString("id-ID")}
+                          </td>
+                          <td className="py-2.5 px-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => removeItem(idx)}
+                              disabled={items.length <= 1}
+                              className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg disabled:opacity-20 cursor-pointer"
+                              title="Hapus Baris"
+                            >
+                              <Trash2 size={14} />
+                            </button>
                           </td>
                         </tr>
-                      )}
-                      <tr>
-                        <td colSpan={4} style={{ border: "none" }}></td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "bold", borderTop: "1px solid #000000", borderBottom: "2px solid #000000" }}>
-                          GRAND TOTAL
-                        </td>
-                        <td style={{ padding: "8px 10px", textAlign: "right", fontWeight: "black", borderTop: "1px solid #000000", borderBottom: "2px solid #000000", fontSize: "12px", backgroundColor: "#f8fafc" }}>
-                          Rp {grandTotal.toLocaleString("id-ID")}
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
 
-                  {/* Terbilang block */}
-                  <div style={{ margin: "25px 0", fontSize: "11px", fontStyle: "italic", fontWeight: "bold" }}>
-                    *Terbilang : {overrideTerbilang || computedTerbilang}
+              {/* BUTTON + Kolom DI BAWAH KANAN TABEL */}
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={addItem}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>+ Kolom</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 5. BAGIAN BAWAH DUA KOLOM: KIRI (TERBILANG, REKENING) & KANAN (TOTAL & CHECKLISTS) */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-6 md:gap-8 pt-3 items-start border-t-2 border-slate-200">
+              
+              {/* SISI KIRI: TERBILANG, REKENING BANK */}
+              <div className="md:col-span-7 space-y-4">
+                {/* TERBILANG BOX */}
+                <div className="space-y-1">
+                  <div className="inline-block px-3 py-1 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest">
+                    TERBILANG
                   </div>
-
-                  {/* Payment Info */}
-                  <div style={{ margin: "40px 0 20px 0", fontSize: "11px", lineHeight: "1.6" }}>
-                    <p style={{ margin: "0 0 6px 0", fontWeight: "bold", textDecoration: "underline" }}>
-                      Cara Pembayaran Melalui Transfer Ke Rekening
-                    </p>
-                    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "11px" }}>
-                      <tbody>
-                        <tr>
-                          <td style={{ width: "110px", padding: "2px 0" }}>Nama Bank</td>
-                          <td style={{ width: "15px" }}>:</td>
-                          <td style={{ fontWeight: "bold" }}>{bankName}</td>
-                        </tr>
-                        <tr>
-                          <td style={{ padding: "2px 0" }}>Atas nama</td>
-                          <td>:</td>
-                          <td style={{ fontWeight: "bold" }}>{bankAccountName}</td>
-                        </tr>
-                        <tr>
-                          <td style={{ padding: "2px 0" }}>No Rekening</td>
-                          <td>:</td>
-                          <td style={{ fontWeight: "bold", fontFamily: "monospace" }}>{bankAccountNumber}</td>
-                        </tr>
-                      </tbody>
-                    </table>
+                  <div className="p-3 bg-slate-50 border-2 border-slate-300 rounded-xl text-xs font-black text-slate-800 italic leading-relaxed">
+                    {overrideTerbilang || computedTerbilang}
                   </div>
+                </div>
 
-                  {/* Demikian text */}
-                  <p style={{ fontSize: "11px", margin: "30px 0 50px 0", lineHeight: "1.5" }}>
-                    Demikian invoice ini kami sampaikan. Atas perhatian dan kerjasamanya kami ucapkan terimakasih.
-                  </p>
-
-                  {/* Signature Section */}
-                  <div style={{ display: "flex", justifyContent: "flex-end", paddingRight: "30px" }}>
-                    <div style={{ textAlign: "center", width: "200px" }}>
-                      <p style={{ fontSize: "12px", margin: "0 0 70px 0", fontWeight: "normal" }}>
-                        Hormat kami,
-                      </p>
-                      
-                      {/* Interactive Sign Stamp Logo optionally overlaying a little bit of the text */}
-                      <div style={{ position: "relative" }}>
-                        {logoImage && (
-                          <img
-                            src={logoImage}
-                            alt="Stamp"
-                            style={{
-                              position: "absolute",
-                              width: "70px",
-                              height: "70px",
-                              top: "-60px",
-                              left: "65px",
-                              opacity: "0.25",
-                              mixBlendMode: "multiply",
-                            }}
-                          />
-                        )}
-                        <p style={{ fontSize: "12px", margin: 0, fontWeight: "bold", textDecoration: "underline" }}>
-                          {signatoryName}
-                        </p>
-                      </div>
+                {/* REKENING PEMBAYARAN BOX */}
+                <div className="space-y-2.5 bg-slate-50 p-4 rounded-2xl border-2 border-slate-300">
+                  <div className="inline-block px-3 py-1 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest">
+                    REKENING PEMBAYARAN RESMI
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+                    <div>
+                      <span className="text-[10px] font-black text-slate-500 uppercase block mb-1">Nama Bank:</span>
+                      <input
+                        type="text"
+                        value={bankName}
+                        onChange={(e) => setBankName(e.target.value)}
+                        placeholder="Mandiri / BCA"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-black text-slate-900 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black text-slate-500 uppercase block mb-1">Atas Nama:</span>
+                      <input
+                        type="text"
+                        value={bankAccountName}
+                        onChange={(e) => setBankAccountName(e.target.value)}
+                        placeholder="PT Garda Inovasi Globaltech"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black text-slate-500 uppercase block mb-1">Nomor Rekening:</span>
+                      <input
+                        type="text"
+                        value={bankAccountNumber}
+                        onChange={(e) => setBankAccountNumber(e.target.value)}
+                        placeholder="1550014117173"
+                        className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-black text-slate-900 outline-none"
+                      />
                     </div>
                   </div>
                 </div>
               </div>
+
+              {/* SISI KANAN: TOTAL, CHECKLIST DISKON, CHECKLIST PPN, CHECKLIST ONGKIR (REQUEST 2), GRAND TOTAL */}
+              <div className="md:col-span-5 bg-slate-50 p-4 sm:p-5 rounded-2xl border-2 border-slate-300 space-y-3 font-sans">
+                {/* ROW: TOTAL */}
+                <div className="flex items-center justify-between pb-2 border-b-2 border-slate-200">
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                    TOTAL / SUBTOTAL
+                  </span>
+                  <span className="text-sm font-mono font-black text-slate-900 bg-white px-3 py-1.5 rounded-lg border border-slate-300">
+                    Rp {subTotal.toLocaleString("id-ID")}
+                  </span>
+                </div>
+
+                {/* ROW: CHECKLIST DISKON */}
+                <div className="p-3 bg-white rounded-xl border border-slate-300 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includeDiscount}
+                        onChange={(e) => setIncludeDiscount(e.target.checked)}
+                        className="w-5 h-5 rounded accent-slate-900 cursor-pointer"
+                      />
+                      <span className="text-xs font-black text-slate-800">
+                        DISKON
+                      </span>
+                    </label>
+                  </div>
+                  {includeDiscount ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        value={discountVal || ""}
+                        placeholder="Nominal Diskon (Rp)"
+                        onChange={(e) => setDiscountVal(Math.max(0, parseFloat(e.target.value) || 0))}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none"
+                      />
+                      <span className="text-xs font-mono font-bold text-rose-600 shrink-0">
+                        -Rp {discAmount.toLocaleString("id-ID")}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-slate-400 font-semibold italic">
+                      (Tidak diceklis - Di PDF nominal Rp 0)
+                    </div>
+                  )}
+                </div>
+
+                {/* ROW: CHECKLIST PPN */}
+                <div className="p-3 bg-white rounded-xl border border-slate-300 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={enablePPN}
+                        onChange={(e) => setEnablePPN(e.target.checked)}
+                        className="w-5 h-5 rounded accent-slate-900 cursor-pointer"
+                      />
+                      <span className="text-xs font-black text-slate-800">
+                        PPN ({taxPercentage}%)
+                      </span>
+                    </label>
+                    <span className="text-xs font-mono font-black text-slate-900">
+                      Rp {enablePPN ? taxAmount.toLocaleString("id-ID") : "0"}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 font-semibold">
+                    {enablePPN ? `OTOMATIS * ${taxPercentage}%` : "(Tidak diceklis - Di PDF nominal Rp 0)"}
+                  </div>
+                </div>
+
+                {/* ROW: CHECKLIST ONGKIR / BIAYA PENGIRIMAN (REQUEST 2) */}
+                <div className="p-3 bg-white rounded-xl border border-slate-300 space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={includeShipping}
+                        onChange={(e) => setIncludeShipping(e.target.checked)}
+                        className="w-5 h-5 rounded accent-slate-900 cursor-pointer"
+                      />
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                        {includeShipping ? "TAMPILKAN:" : "MUNCULKAN:"}
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={shippingLabel}
+                      onChange={(e) => setShippingLabel(e.target.value)}
+                      placeholder="BIAYA PENGIRIMAN / ONGKIR"
+                      className="flex-1 px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg text-xs font-black text-slate-900 outline-none focus:border-slate-800 focus:bg-white transition-all"
+                      title="Klik untuk mengubah nama/tulisan biaya ini (contoh: ONGKIR, BIAYA EXPEDISI, dll.)"
+                    />
+                    <span className="text-xs font-mono font-black text-slate-900 shrink-0">
+                      Rp {includeShipping ? Number(shippingCost || 0).toLocaleString("id-ID") : "0"}
+                    </span>
+                  </div>
+                  {includeShipping ? (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500 font-bold shrink-0">Nominal (Rp):</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={shippingCost || ""}
+                        placeholder="0 (Jika tidak diisi tertulis Rp 0)"
+                        onChange={(e) => setShippingCost(Math.max(0, parseFloat(e.target.value) || 0))}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none focus:border-slate-800 focus:bg-white"
+                      />
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-slate-400 font-semibold italic">
+                      (Tidak diceklis - Di PDF baris biaya ini TIDAK AKAN MUNCUL)
+                    </div>
+                  )}
+                </div>
+
+                {/* ROW: GRAND TOTAL */}
+                <div className="p-3.5 bg-slate-900 text-white rounded-xl flex items-center justify-between shadow-md">
+                  <span className="text-xs font-black uppercase tracking-wider text-slate-300">
+                    GRAND TOTAL
+                  </span>
+                  <span className="text-base font-mono font-black text-emerald-400">
+                    Rp {grandTotal.toLocaleString("id-ID")}
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
+
+            {/* 6. TANDA TANGAN (PERSIS SEPERTI GAMBAR PENAWARAN) */}
+            <div className="pt-4 border-t-2 border-slate-200 flex flex-col sm:flex-row justify-between items-end gap-6">
+              <div className="text-xs text-slate-400 font-bold">
+                * Demikian invoice ini kami sampaikan. Pembayaran dianggap sah bila telah masuk ke rekening resmi kami.
+              </div>
+              <div className="w-64 space-y-2 text-center bg-slate-50 p-4 rounded-2xl border border-slate-200">
+                <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                  HORMAT KAMI,
+                </div>
+                <div className="h-16 flex items-center justify-center">
+                  <span className="text-[10px] text-slate-300 italic">(Tanda Tangan & Cap PT)</span>
+                </div>
+                <input
+                  type="text"
+                  required
+                  value={signatoryName}
+                  onChange={(e) => setSignatoryName(e.target.value)}
+                  placeholder="Nama Penandatangan"
+                  className="w-full px-2.5 py-1 text-center font-black text-xs text-slate-900 bg-white border border-slate-300 rounded-lg outline-none"
+                />
+              </div>
+            </div>
+
+            {/* 7. ACTION BUTTONS BOTTOM */}
+            <div className="flex flex-col sm:flex-row justify-end gap-3 pt-4 border-t-2 border-slate-200">
+              <button
+                type="button"
+                onClick={() => setView("list")}
+                className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveInvoice(false)}
+                className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Save size={14} />
+                <span>Simpan di Aplikasi</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveInvoice(true)}
+                className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Eye size={14} />
+                <span>Simpan & Format PDF</span>
+              </button>
+            </div>
+          </form>
         </div>
       )}
+
+          {/* Interactive PDF Preview Modal for Invoice (Request 1 & 3) */}
+      <AnimatePresence>
+        {isPreviewOpen && (
+          <DocumentPreviewModal
+            isOpen={isPreviewOpen}
+            onClose={() => setIsPreviewOpen(false)}
+            type="invoice"
+            initialInvoiceData={{
+              invoiceNumber,
+              clientId,
+              clientName: recipientName,
+              recipientName,
+              recipientUp,
+              clientAddress: "",
+              invoiceDate,
+              dueDate,
+              jobName,
+              bankName,
+              bankAccountName,
+              bankAccountNumber,
+              notes: "- Pembayaran via transfer ke rekening di atas.\n- Bukti bayar mohon konfirmasi ke Admin.",
+              items,
+              enablePPN,
+              taxPercentage,
+              includeShipping,
+              shippingLabel,
+              shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+              discountVal: includeDiscount ? discountVal : 0,
+              amount: grandTotal,
+              grandTotal,
+              companyName,
+              companyAddress,
+              companyPhone,
+              companyEmail,
+              logoImage,
+              signatoryName,
+              overrideTerbilang,
+            }}
+            onSaveInvoice={async (updatedData) => {
+              if (editingInvoiceId) {
+                await dbService.updateDocument("invoices", editingInvoiceId, updatedData);
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
     </AdminLayout>
   );
 };
@@ -26915,6 +26780,7 @@ const SuratJalanScreen = ({
   const [logoImage, setLogoImage] = useState<string | null>(null);
   const [receivedByText, setReceivedByText] = useState("………………………");
   const [hormatKamiText, setHormatKamiText] = useState("………………………");
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   // Kop PT details (Matching Invoice/Company standard profile)
   const [ptName, setPtName] = useState("PT. GARDA INOVASI GLOBALTECH");
@@ -27004,7 +26870,7 @@ const SuratJalanScreen = ({
     setView("build");
   };
 
-  const handleSave = async () => {
+  const handleSave = async (openPreview: boolean = false) => {
     if (!recipient) {
       alert("Masukkan nama penerima / klien.");
       return;
@@ -27054,7 +26920,11 @@ const SuratJalanScreen = ({
         );
         alert("Surat Jalan baru berhasil disimpan!");
       }
-      setView("list");
+      if (openPreview) {
+        setIsPreviewOpen(true);
+      } else {
+        setView("list");
+      }
     } catch (e) {
       console.error(e);
       alert("Gagal menyimpan Surat Jalan.");
@@ -27274,130 +27144,118 @@ const SuratJalanScreen = ({
           </div>
         </div>
       ) : (
-        /* Builder View (Dual Pane) */
-        <div className="space-y-6 pb-28">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                /* Builder View: Form Input Berbentuk Persis Penawaran / SPH (Request 3) */
+        <div className="space-y-6 pb-20">
+          {/* Top Bar Navigation & Actions */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm max-w-5xl mx-auto">
             <button
               onClick={() => setView("list")}
-              className="flex items-center gap-2 text-slate-400 hover:text-slate-900 transition-all font-black text-[10px] uppercase tracking-widest hover:translate-x-[-2px]"
+              className="flex items-center gap-2 text-slate-500 hover:text-slate-900 transition-all font-black text-xs uppercase tracking-wider cursor-pointer"
             >
               <ChevronLeft size={16} /> Kembali ke Logistik
             </button>
             <div className="flex items-center gap-3">
               <button
-                onClick={handleSave}
-                className="bg-emerald-500 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-emerald-600 transition-all"
+                type="button"
+                onClick={() => handleSave(false)}
+                className="bg-slate-900 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:bg-slate-800 transition-all cursor-pointer flex items-center gap-2"
               >
-                <Save size={16} />
+                <Save size={14} />
                 <span>Simpan Surat Jalan</span>
               </button>
               <button
-                onClick={exportPDF}
-                disabled={isExporting}
-                className="bg-slate-900 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-slate-800 transition-all disabled:opacity-50"
+                type="button"
+                onClick={() => handleSave(true)}
+                className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:bg-indigo-700 transition-all cursor-pointer flex items-center gap-2"
               >
-                {isExporting ? <RefreshCw className="animate-spin" size={16} /> : <Printer size={16} />}
-                <span>Cetak / Download PDF</span>
+                <Eye size={14} />
+                <span>Simpan & Format PDF</span>
               </button>
             </div>
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-10">
-            {/* Editor Pane */}
-            <div className="space-y-8">
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <h3 className="text-lg font-black text-slate-900">1. Kop Surat & Identitas PT</h3>
-
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Logo Perusahaan
-                    </label>
-                    <div className="relative group">
-                      <input
-                        type="file"
-                        accept="image/*"
-                        onChange={handleLogoUpload}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-                      />
-                      <div className="w-full px-5 py-3.5 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold flex items-center gap-3 transition-all group-hover:bg-slate-100">
-                        <div className="w-8 h-8 rounded-lg bg-white border border-slate-200 flex items-center justify-center overflow-hidden shrink-0">
-                          {logoImage ? (
-                            <img src={logoImage} alt="Logo" className="w-full h-full object-contain" />
-                          ) : (
-                            <Plus size={16} className="text-slate-400" />
-                          )}
-                        </div>
-                        <span className="text-slate-500 truncate">
-                          {logoImage ? "Ganti Logo" : "Upload Logo (.png, .jpg)"}
-                        </span>
-                      </div>
+          {/* DOKUMEN UTAMA: LAYOUT FORM INPUT PERSIS SEPERTI PENAWARAN (SPH) */}
+          <form onSubmit={(e) => { e.preventDefault(); handleSave(true); }} className="bg-white rounded-3xl border-2 border-slate-300 shadow-xl p-5 sm:p-8 md:p-10 space-y-7 text-left font-sans text-slate-900 max-w-5xl mx-auto">
+            
+            {/* 1. KOP SURAT (ATAS): UPLOAD LOGO (KIRI) & PROFIL PT PENGIRIM (KANAN) */}
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start pb-5 border-b-2 border-slate-200">
+              {/* Logo Box */}
+              <div className="md:col-span-4 space-y-2">
+                <input
+                  type="file"
+                  id="sj-comp-logo-input"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleLogoUpload}
+                />
+                <label
+                  htmlFor="sj-comp-logo-input"
+                  className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50 hover:bg-slate-100 cursor-pointer transition-all group min-h-[120px]"
+                >
+                  {logoImage ? (
+                    <div className="flex flex-col items-center gap-1.5">
+                      <img src={logoImage} alt="Logo" className="max-h-20 object-contain" />
+                      <span className="text-[10px] font-black text-indigo-600 group-hover:underline">Ganti Logo</span>
                     </div>
-                  </div>
+                  ) : (
+                    <div className="text-center space-y-1">
+                      <Building2 size={24} className="text-slate-400 mx-auto" />
+                      <span className="text-xs font-black text-slate-700 block uppercase tracking-wider">Upload Logo</span>
+                      <span className="text-[9px] text-slate-400 block font-semibold">Klik untuk memilih file logo (.png/.jpg)</span>
+                    </div>
+                  )}
+                </label>
+              </div>
 
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nama Surat Jalan
-                    </label>
-                    <input
-                      type="text"
-                      value={suratNumber}
-                      onChange={(e) => setSuratNumber(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Nama Perusahaan / Unit Usaha
-                  </label>
-                  <input
-                    type="text"
-                    value={ptName}
-                    onChange={(e) => setPtName(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Alamat Lengkap Kop Surat
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={ptAddress}
-                    onChange={(e) => setPtAddress(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-3xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    No. Telepon / Kantor
-                  </label>
+              {/* Info PT Pengirim */}
+              <div className="md:col-span-8 space-y-2 text-right">
+                <input
+                  type="text"
+                  value={ptName}
+                  onChange={(e) => setPtName(e.target.value)}
+                  placeholder="Nama Perusahaan Pengirim"
+                  className="w-full text-right font-black text-base md:text-lg text-slate-900 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none pb-1"
+                />
+                <textarea
+                  rows={2}
+                  value={ptAddress}
+                  onChange={(e) => setPtAddress(e.target.value)}
+                  placeholder="Alamat Lengkap Perusahaan"
+                  className="w-full text-right text-xs font-semibold text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none resize-none leading-relaxed"
+                />
+                <div className="flex justify-end text-xs font-bold text-slate-500">
                   <input
                     type="text"
                     value={ptPhone}
                     onChange={(e) => setPtPhone(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
+                    placeholder="Telp/WA: 0888-1687-794"
+                    className="text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none text-xs"
                   />
                 </div>
               </div>
+            </div>
 
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <h3 className="text-lg font-black text-slate-900">2. Data Pengiriman & Penerima</h3>
+            {/* 2. BOX JUDUL DOKUMEN PERSIS SEPERTI GAMBAR PENAWARAN */}
+            <div className="flex justify-center my-2">
+              <div className="bg-slate-900 text-white font-black px-8 py-2 rounded-2xl text-center uppercase tracking-widest text-sm shadow-md">
+                SURAT JALAN / PENGIRIMAN LOGISTIK
+              </div>
+            </div>
 
-                <div className="space-y-2 font-sans">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Link-kan dengan Klien Terdaftar (Format Cepat)
-                  </label>
+            {/* 3. METADATA DUA KOLOM: KIRI (PENERIMA) & KANAN (DETAIL KENDARAAN & SURAT JALAN) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Kolom Kiri: Penerima & Alamat Kirim */}
+              <div className="space-y-2.5 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
+                <div className="flex items-center gap-2">
+                  <span className="w-20 text-[10px] font-black text-slate-500 uppercase tracking-wider shrink-0">
+                    PILIH KLIEN:
+                  </span>
                   <select
                     value={clientId}
                     onChange={(e) => handleClientChange(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none cursor-pointer"
+                    className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-800 outline-none cursor-pointer"
                   >
-                    <option value="">Pilih Klien</option>
+                    <option value="">-- Hubungkan Klien (Opsional) --</option>
                     {clients.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.company || c.name} ({c.name})
@@ -27406,438 +27264,291 @@ const SuratJalanScreen = ({
                   </select>
                 </div>
 
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Kepada Yth. (Nama Penerima/Perusahaan)
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="e.g. Bapak Agung Nugroho"
-                      value={recipient}
-                      onChange={(e) => setRecipient(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Tanggal Pengiriman
-                    </label>
-                    <input
-                      type="date"
-                      value={date}
-                      onChange={(e) => setDate(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-[18px] text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Jenis Unit Kendaraan
-                    </label>
-                    <input
-                      type="text"
-                      value={vehicleType}
-                      placeholder="e.g. Pickup Hilux / Box Grandmax"
-                      onChange={(e) => setVehicleType(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nomor Plat Kendaraaan
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. B 9021 GIG"
-                      value={vehiclePlate}
-                      onChange={(e) => setVehiclePlate(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Alamat Tujuan Pengiriman
-                  </label>
-                  <textarea
-                    rows={3}
-                    value={address}
-                    placeholder="Masukkan alamat lengkap tujuan antar"
-                    onChange={(e) => setAddress(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-3xl text-xs font-bold focus:ring-4 focus:ring-primary/10 outline-none"
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    KEPADA YTH
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={recipient}
+                    onChange={(e) => setRecipient(e.target.value)}
+                    placeholder="Nama Penerima / Perusahaan / Proyek Tujuan"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                   />
                 </div>
-              </div>
-
-              {/* Items List */}
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-black text-slate-900">3. Rincian Barang Dimuat</h3>
-                  <button
-                    onClick={addItem}
-                    className="flex items-center gap-1.5 text-[10px] font-black text-emerald-500 uppercase tracking-widest bg-emerald-50 px-3 py-1.5 rounded-full hover:bg-emerald-100 transition-all font-sans"
-                  >
-                    <Plus size={14} /> Tambah Row
-                  </button>
-                </div>
-
-                <div className="space-y-4">
-                  {items.map((item, idx) => (
-                    <div key={idx} className="flex items-center gap-3 bg-slate-50/50 p-4 rounded-2xl border border-slate-100 relative group">
-                      <div className="w-16">
-                        <label className="text-[8px] font-black text-slate-400 uppercase block select-none mb-1 text-center pl-1 font-sans">
-                          Qty
-                        </label>
-                        <input
-                          type="text"
-                          value={item.qty}
-                          onChange={(e) => updateItem(idx, "qty", e.target.value)}
-                          className="w-full px-2 py-2 bg-white border border-slate-150 rounded-xl text-xs font-bold text-center outline-none"
-                        />
-                      </div>
-
-                      <div className="w-20">
-                        <label className="text-[8px] font-black text-slate-400 uppercase block select-none mb-1 text-center pl-1 font-sans">
-                          Unit
-                        </label>
-                        <input
-                          type="text"
-                          value={item.unit}
-                          placeholder="Pcs/Unit"
-                          onChange={(e) => updateItem(idx, "unit", e.target.value)}
-                          className="w-full px-2 py-2 bg-white border border-slate-150 rounded-xl text-xs font-bold text-center outline-none"
-                        />
-                      </div>
-
-                      <div className="flex-1">
-                        <label className="text-[8px] font-black text-slate-400 uppercase block select-none mb-1 pl-1 font-sans">
-                          Nama / Uraian Barang
-                        </label>
-                        <input
-                          type="text"
-                          required
-                          value={item.name}
-                          placeholder="e.g. Pipa PVC 2 Inch, Pompa Shimizu"
-                          onChange={(e) => updateItem(idx, "name", e.target.value)}
-                          className="w-full px-4 py-2 bg-white border border-slate-150 rounded-xl text-xs font-bold outline-none"
-                        />
-                      </div>
-
-                      {items.length > 1 && (
-                        <button
-                          onClick={() => removeItem(idx)}
-                          className="text-slate-300 hover:text-rose-500 pt-5 transition-all"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Tanda Tangan */}
-              <div className="card p-8 bg-white border border-slate-100 shadow-xl rounded-[40px] space-y-6">
-                <h3 className="text-lg font-black text-slate-900">4. Penandatangan & Catatan</h3>
-
-                <div className="grid md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nama Tanda Terima (Kiri)
-                    </label>
-                    <input
-                      type="text"
-                      value={receivedByText}
-                      onChange={(e) => setReceivedByText(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                      Nama Hormat Kami (Kanan)
-                    </label>
-                    <input
-                      type="text"
-                      value={hormatKamiText}
-                      onChange={(e) => setHormatKamiText(e.target.value)}
-                      className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none"
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                    Catatan Status / Insturksi Logistik
-                  </label>
+                <div className="flex flex-col sm:flex-row sm:items-start gap-2">
+                  <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0 pt-2">
+                    ALAMAT TUJUAN
+                  </span>
                   <textarea
                     rows={2}
-                    value={notes}
-                    placeholder="Barang harap dibongkar dengan hati-hati oleh teknisi di lokasi."
-                    onChange={(e) => setNotes(e.target.value)}
-                    className="w-full px-5 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-bold outline-none"
+                    required
+                    value={address}
+                    onChange={(e) => setAddress(e.target.value)}
+                    placeholder="Alamat lengkap tujuan pengiriman barang..."
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400 resize-none leading-relaxed"
+                  />
+                </div>
+              </div>
+
+              {/* Kolom Kanan: Nomor SJ, Tanggal Kirim, Jenis Kendaraan, No. Plat */}
+              <div className="space-y-2 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    NOMOR
+                  </span>
+                  <input
+                    type="text"
+                    required
+                    value={suratNumber}
+                    onChange={(e) => setSuratNumber(e.target.value)}
+                    placeholder="SJ/2026/0129"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-mono font-black text-slate-900 focus:border-slate-800 outline-none transition-all"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    TANGGAL KIRIM
+                  </span>
+                  <input
+                    type="date"
+                    required
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:border-slate-800 outline-none transition-all"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    KENDARAAN
+                  </span>
+                  <input
+                    type="text"
+                    value={vehicleType}
+                    onChange={(e) => setVehicleType(e.target.value)}
+                    placeholder="Pickup / Truk Box / Engkel"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:border-slate-800 outline-none transition-all"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    NO. PLAT
+                  </span>
+                  <input
+                    type="text"
+                    value={vehiclePlate}
+                    onChange={(e) => setVehiclePlate(e.target.value)}
+                    placeholder="B 9021 GIG"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-mono font-black text-slate-900 focus:border-slate-800 outline-none transition-all"
                   />
                 </div>
               </div>
             </div>
 
-            {/* Preview Sheet */}
-            <div className="space-y-6 overflow-hidden">
-              <h2 className="text-xl font-black text-slate-900 tracking-tight text-center">
-                Review Surat Jalan (Print Size)
-              </h2>
-
-              <div className="w-full overflow-x-auto overflow-y-auto max-h-[850px] flex justify-center bg-slate-200 border border-slate-300 rounded-[32px] p-6 shadow-inner">
-                <div
-                  id="surat-jalan-preview"
-                  className="bg-white"
-                  style={{
-                    width: "210mm",
-                    minHeight: "297mm",
-                    padding: "45px 55px",
-                    backgroundColor: "#ffffff",
-                    color: "#000000",
-                    position: "relative",
-                    fontFamily: "Arial, sans-serif",
-                    margin: "0 auto",
-                    boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)",
-                    transform:
-                      windowWidth < 768
-                        ? `scale(${Math.min(0.42, (windowWidth - 40) / 794)})`
-                        : windowWidth < 1024
-                          ? `scale(${Math.min(0.7, (windowWidth - 40) / 794)})`
-                          : "scale(1)",
-                    transformOrigin: "top center",
-                  }}
-                >
-                  {/* Header */}
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "flex-start",
-                      borderBottom: "2px solid #000000",
-                      paddingBottom: "15px",
-                      marginBottom: "20px",
-                    }}
-                  >
-                    {/* Left details */}
-                    <div>
-                      <h3 style={{ margin: "0 0 4px 0", fontSize: "15px", fontWeight: "bold", color: "#1e3a8a" }}>
-                        {ptName}
-                      </h3>
-                      <p style={{ margin: 0, fontSize: "9px", whiteSpace: "pre-wrap", lineHeight: "1.4", color: "#334155", maxWidth: "340px" }}>
-                        {ptAddress}
-                      </p>
-                      <p style={{ margin: "4px 0 0 0", fontSize: "9px", color: "#475569" }}>
-                        Telp/WA: {ptPhone}
-                      </p>
-                    </div>
-
-                    {/* Right logo */}
-                    <div style={{ textAlign: "right" }}>
-                      <div
-                        style={{
-                          width: "80px",
-                          height: "80px",
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          overflow: "hidden",
-                        }}
-                      >
-                        {logoImage ? (
-                          <img src={logoImage} alt="Logo" style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
-                        ) : (
-                          <div style={{ width: "100%", height: "100%", border: "1px dashed #cccccc", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "9px", color: "#888888" }}>
-                            Upload Logo
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Title */}
-                  <div style={{ textAlign: "center", margin: "20px 0" }}>
-                    <h2 style={{ fontSize: "18px", fontWeight: "bold", letterSpacing: "0.15em", textDecoration: "underline", margin: 0 }}>
-                      SURAT JALAN
-                    </h2>
-                    <p style={{ fontSize: "11px", margin: "4px 0 0 0", fontFamily: "monospace" }}>
-                      Nomor: {suratNumber || "-"}
-                    </p>
-                  </div>
-
-                  {/* Delivery details / Metadata column */}
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontSize: "11px",
-                      lineHeight: "1.6",
-                      marginBottom: "25px",
-                    }}
-                  >
-                    <div style={{ width: "50%" }}>
-                      <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                        <tbody>
-                          <tr>
-                            <td style={{ width: "90px", verticalAlign: "top" }}>Kepada Yth.</td>
-                            <td style={{ width: "10px", verticalAlign: "top" }}>:</td>
-                            <td style={{ fontWeight: "bold", verticalAlign: "top" }}>{recipient || "-"}</td>
-                          </tr>
-                          <tr>
-                            <td style={{ verticalAlign: "top" }}>Almat Kirim</td>
-                            <td style={{ verticalAlign: "top" }}>:</td>
-                            <td style={{ verticalAlign: "top", whiteSpace: "pre-wrap" }}>{address || "-"}</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-
-                    <div style={{ width: "45%" }}>
-                      <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                        <tbody>
-                          <tr>
-                            <td style={{ width: "90px", verticalAlign: "top" }}>Tanggal Kirim</td>
-                            <td style={{ width: "10px", verticalAlign: "top" }}>:</td>
-                            <td style={{ verticalAlign: "top" }}>
-                              {date
-                                ? new Date(date).toLocaleDateString("id-ID", {
-                                    day: "2-digit",
-                                    month: "long",
-                                    year: "numeric"
-                                  })
-                                : "-"}
-                            </td>
-                          </tr>
-                          <tr>
-                            <td style={{ verticalAlign: "top" }}>Kendaraan</td>
-                            <td style={{ verticalAlign: "top" }}>:</td>
-                            <td style={{ verticalAlign: "top", fontWeight: "bold" }}>
-                              {vehicleType} {vehiclePlate ? `(${vehiclePlate})` : ""}
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  {/* Intro sentence */}
-                  <p style={{ fontSize: "11px", margin: "0 0 15px 0", lineHeight: "1.5" }}>
-                    Bersama ini kami kirimkan barang-barang logistik di bawah ini dengan kendaraan di atas sesuai pesanan kontrak kerja:
-                  </p>
-
-                  {/* Table Goods */}
-                  <table
-                    style={{
-                      width: "100%",
-                      borderCollapse: "collapse",
-                      fontSize: "11px",
-                      marginBottom: "35px",
-                    }}
-                  >
-                    <thead>
-                      <tr style={{ borderTop: "2px solid #000000", borderBottom: "2px solid #000000" }}>
-                        <th style={{ padding: "8px 5px", textAlign: "center", borderBottom: "2px solid #000000", width: "40px" }}>NO</th>
-                        <th style={{ padding: "8px 10px", textAlign: "center", borderBottom: "2px solid #000000", width: "70px" }}>QTY</th>
-                        <th style={{ padding: "8px 10px", textAlign: "center", borderBottom: "2px solid #000000", width: "70px" }}>SATUAN</th>
-                        <th style={{ padding: "8px 10px", textAlign: "left", borderBottom: "2px solid #000000" }}>URAIAN / NAMA BARANG</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map((item, idx) => (
-                        <tr key={idx} style={{ borderBottom: "1px solid #e2e8f0" }}>
-                          <td style={{ padding: "10px 5px", textAlign: "center", verticalAlign: "top" }}>{idx + 1}</td>
-                          <td style={{ padding: "10px 10px", textAlign: "center", verticalAlign: "top", fontWeight: "bold" }}>
-                            {item.qty || "0"}
-                          </td>
-                          <td style={{ padding: "10px 10px", textAlign: "center", verticalAlign: "top" }}>
-                            {item.unit || "Pcs"}
-                          </td>
-                          <td style={{ padding: "10px 10px", textAlign: "left", verticalAlign: "top" }}>
-                            {item.name || "-"}
-                          </td>
-                        </tr>
-                      ))}
-
-                      {/* Blank fill padding lines to maintain professional look */}
-                      {Array.from({ length: Math.max(0, 8 - items.length) }).map((_, emptyIdx) => (
-                        <tr key={`pad-${emptyIdx}`} style={{ height: "35px", borderBottom: "1px solid #f1f5f9" }}>
-                          <td style={{ padding: "10px 5px" }}></td>
-                          <td style={{ padding: "10px 10px" }}></td>
-                          <td style={{ padding: "10px 10px" }}></td>
-                          <td style={{ padding: "10px 10px" }}></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-
-                  {/* Notes / Catatan */}
-                  {notes && (
-                    <div style={{ padding: "10px 15px", border: "1px dashed #cccccc", borderRadius: "6px", fontSize: "10px", italic: "true", marginBottom: "35px" }}>
-                      <strong>*Catatan Ekspedisi:</strong> {notes}
-                    </div>
-                  )}
-
-                  {/* Closing word */}
-                  <p style={{ fontSize: "10px", margin: "0 0 45px 0", lineHeight: "1.5", color: "#475569" }}>
-                    Harap diperiksa dengan teliti barang-barang tersebut di atas pada waktu terima. Terima kasih.
-                  </p>
-
-                  {/* Dual signature columns */}
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      fontSize: "11px",
-                      padding: "0 30px",
-                    }}
-                  >
-                    {/* Left side: Receiver */}
-                    <div style={{ textAlign: "center", width: "160px" }}>
-                      <p style={{ margin: "0 0 75px 0" }}>Tanda Terima,</p>
-                      <div style={{ position: "relative" }}>
-                        <p style={{ margin: 0, fontWeight: "bold", textDecoration: "underline" }}>
-                          {receivedByText}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Right side: Shipper */}
-                    <div style={{ textAlign: "center", width: "160px" }}>
-                      <p style={{ margin: "0 0 75px 0" }}>Hormat Kami,</p>
-                      <div style={{ position: "relative" }}>
-                        {logoImage && (
-                          <img
-                            src={logoImage}
-                            alt="Stamp"
-                            style={{
-                              position: "absolute",
-                              width: "60px",
-                              height: "60px",
-                              top: "-60px",
-                              left: "50px",
-                              opacity: "0.2",
-                              mixBlendMode: "multiply",
-                            }}
+            {/* 4. TABEL ITEM BARANG DIMUAT (PERSIS SEPERTI GAMBAR PENAWARAN) */}
+            <div className="space-y-3">
+              <div className="overflow-x-auto border-2 border-slate-300 rounded-2xl bg-white shadow-xs">
+                <table className="w-full text-left border-collapse font-sans text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 border-b-2 border-slate-300 font-black text-slate-900 text-center uppercase tracking-wider text-[11px]">
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-12">NO</th>
+                      <th className="py-3 px-3 border-r-2 border-slate-300">NAMA / URAIAN BARANG LOGISTIK</th>
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-28">QTY</th>
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-28">SATUAN</th>
+                      <th className="py-3 px-2 w-10"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y-2 divide-slate-200">
+                    {items.map((item, idx) => (
+                      <tr key={idx} className="align-top hover:bg-slate-50/50 transition-colors">
+                        <td className="py-3 px-2 text-center font-black text-slate-800 border-r-2 border-slate-300 text-xs">
+                          {idx + 1}
+                        </td>
+                        <td className="py-2.5 px-3 border-r-2 border-slate-300">
+                          <input
+                            type="text"
+                            required
+                            value={item.name}
+                            onChange={(e) => updateItem(idx, "name", e.target.value)}
+                            placeholder="Nama atau spesifikasi barang yang dikirim..."
+                            className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-slate-800 outline-none"
                           />
-                        )}
-                        <p style={{ margin: 0, fontWeight: "bold", textDecoration: "underline" }}>
-                          {hormatKamiText}
-                        </p>
-                      </div>
-                    </div>
+                        </td>
+                        <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
+                          <input
+                            type="text"
+                            required
+                            value={item.qty}
+                            onChange={(e) => updateItem(idx, "qty", e.target.value)}
+                            className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none font-mono"
+                          />
+                        </td>
+                        <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
+                          <input
+                            type="text"
+                            required
+                            value={item.unit}
+                            onChange={(e) => updateItem(idx, "unit", e.target.value)}
+                            placeholder="Pcs/Unit"
+                            className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none"
+                          />
+                        </td>
+                        <td className="py-2.5 px-2 text-center">
+                          <button
+                            type="button"
+                            onClick={() => removeItem(idx)}
+                            disabled={items.length <= 1}
+                            className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg disabled:opacity-20 cursor-pointer"
+                            title="Hapus Baris"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* BUTTON + Kolom DI BAWAH KANAN TABEL */}
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={addItem}
+                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                >
+                  <span>+ Kolom</span>
+                </button>
+              </div>
+            </div>
+
+            {/* 5. BAGIAN CATATAN & 3 TANDA TANGAN LOGISTIK */}
+            <div className="space-y-4 pt-3 border-t-2 border-slate-200">
+              <div className="space-y-1">
+                <div className="inline-block px-3 py-1 bg-slate-900 text-white rounded-lg text-[10px] font-black uppercase tracking-widest">
+                  CATATAN PENGIRIMAN & INSTRUKSI LOGISTIK
+                </div>
+                <textarea
+                  rows={2}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Barang harap dibongkar dengan hati-hati dan diperiksa kelengkapannya saat tiba di lokasi..."
+                  className="w-full p-3 bg-white border-2 border-slate-300 rounded-xl text-xs font-semibold text-slate-800 focus:border-slate-800 outline-none resize-none leading-relaxed"
+                />
+              </div>
+
+              {/* 3 KOLOM TANDA TANGAN */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
+                <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-300 text-center space-y-2">
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">
+                    PENERIMA / CUSTOMER
+                  </span>
+                  <div className="h-16 flex items-center justify-center">
+                    <span className="text-[10px] text-slate-300 italic">(Tanda Tangan & Nama Terang)</span>
                   </div>
+                  <input
+                    type="text"
+                    value={receivedByText}
+                    onChange={(e) => setReceivedByText(e.target.value)}
+                    placeholder="Nama Terang Penerima"
+                    className="w-full px-2 py-1 text-center font-bold text-xs text-slate-900 bg-white border border-slate-300 rounded-lg outline-none"
+                  />
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-300 text-center space-y-2">
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">
+                    PENGEMUDI / EKSPEDISI
+                  </span>
+                  <div className="h-16 flex items-center justify-center">
+                    <span className="text-[10px] text-slate-300 italic">(Tanda Tangan Driver)</span>
+                  </div>
+                  <div className="px-2 py-1 text-center font-bold text-xs text-slate-700 bg-white border border-slate-200 rounded-lg">
+                    Sopir Logistik ({vehiclePlate || "Driver"})
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-300 text-center space-y-2">
+                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">
+                    HORMAT KAMI / PENGIRIM
+                  </span>
+                  <div className="h-16 flex items-center justify-center">
+                    <span className="text-[10px] text-slate-300 italic">(Tanda Tangan & Cap PT)</span>
+                  </div>
+                  <input
+                    type="text"
+                    value={hormatKamiText}
+                    onChange={(e) => setHormatKamiText(e.target.value)}
+                    placeholder="Petugas Logistik / Admin"
+                    className="w-full px-2 py-1 text-center font-bold text-xs text-slate-900 bg-white border border-slate-300 rounded-lg outline-none"
+                  />
                 </div>
               </div>
             </div>
-          </div>
+
+            {/* 6. ACTION BUTTONS BOTTOM */}
+            <div className="flex flex-col sm:flex-row justify-end gap-3 pt-4 border-t-2 border-slate-200">
+              <button
+                type="button"
+                onClick={() => setView("list")}
+                className="px-6 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSave(false)}
+                className="px-6 py-3 bg-slate-900 hover:bg-slate-800 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Save size={14} />
+                <span>Simpan Surat Jalan</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSave(true)}
+                className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <Eye size={14} />
+                <span>Simpan & Format PDF</span>
+              </button>
+            </div>
+          </form>
         </div>
       )}
+
+          {/* Interactive PDF Preview Modal for Surat Jalan (Request 1 & 3) */}
+      <AnimatePresence>
+        {isPreviewOpen && (
+          <DocumentPreviewModal
+            isOpen={isPreviewOpen}
+            onClose={() => setIsPreviewOpen(false)}
+            type="surat_jalan"
+            initialSuratJalanData={{
+              number: suratNumber,
+              suratNumber,
+              clientId,
+              recipient,
+              address,
+              date,
+              vehicleType,
+              vehiclePlate,
+              notes,
+              receivedByText,
+              hormatKamiText,
+              logoImage,
+              ptName,
+              ptAddress,
+              ptPhone,
+              items: items.map(item => ({ qty: item.qty, unit: item.unit, name: item.name })),
+            }}
+            onSaveSuratJalan={async (updatedData) => {
+              if (editingId) {
+                await dbService.updateDocument("suratJalan", editingId, updatedData);
+              }
+            }}
+          />
+        )}
+      </AnimatePresence>
     </AdminLayout>
   );
 };
@@ -30938,6 +30649,8 @@ export default function App() {
   const [quoteTaxRate, setQuoteTaxRate] = useState<number>(11);
   const [includeShipping, setIncludeShipping] = useState<boolean>(false);
   const [shippingCost, setShippingCost] = useState<number>(0);
+  const [quoteShippingLabel, setQuoteShippingLabel] = useState<string>("ONGKIR / PENGIRIMAN");
+  const [catalogItemsForQuote, setCatalogItemsForQuote] = useState<any[]>([]);
   const [includeServiceFee, setIncludeServiceFee] = useState<boolean>(false);
   const [serviceFee, setServiceFee] = useState<number>(0);
   const [quoteCompName, setQuoteCompName] = useState<string>("PT. GARDA INOVASI GLOBALTECH");
@@ -31242,6 +30955,7 @@ export default function App() {
         setQuoteType(viewingQuotation.quotationType || "Barang dan Jasa");
         setIncludeShipping(viewingQuotation.includeShipping !== undefined ? viewingQuotation.includeShipping : false);
         setShippingCost(viewingQuotation.shippingCost || 0);
+        setQuoteShippingLabel(viewingQuotation.shippingLabel || "ONGKIR / PENGIRIMAN");
         setIncludeServiceFee(viewingQuotation.includeServiceFee !== undefined ? viewingQuotation.includeServiceFee : false);
         setServiceFee(viewingQuotation.serviceFee || 0);
         setIncludePPN(viewingQuotation.includePPN !== undefined ? viewingQuotation.includePPN : true);
@@ -31292,6 +31006,7 @@ export default function App() {
         setQuoteType("Barang dan Jasa");
         setIncludeShipping(false);
         setShippingCost(0);
+        setQuoteShippingLabel("ONGKIR / PENGIRIMAN");
         setIncludeServiceFee(false);
         setServiceFee(0);
         setIncludePPN(true);
@@ -34551,6 +34266,7 @@ export default function App() {
             vol: item.vol || 0,
             unit: item.unit || "",
             unitPrice: item.unitPrice || 0,
+            costPrice: item.costPrice || 0,
             total: total,
             specifications: item.specifications || [],
           };
@@ -34583,6 +34299,7 @@ export default function App() {
       discountAmount: includeDiscount ? (quoteDiscountType === "percent" ? Math.round(subTotal * (quoteDiscountVal / 100)) : quoteDiscountVal) : 0,
       includeShipping,
       shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+      shippingLabel: quoteShippingLabel || "ONGKIR / PENGIRIMAN",
       includeServiceFee,
       serviceFee: includeServiceFee ? Number(serviceFee || 0) : 0,
       includePPN,
@@ -34614,13 +34331,69 @@ export default function App() {
 
     try {
       await dbService.setDocument("quotations", id, newQuotation);
+
+      // Otomatis sinkronkan item-item penawaran ke E-Katalog (Request 4)
+      for (const item of finalItems) {
+        if (!item.description?.trim()) continue;
+        try {
+          const itemType = quoteType === "Barang" ? "barang" : quoteType === "Jasa" ? "jasa" : "barang";
+          const catCategory = quoteType === "Barang" ? "Barang" : quoteType === "Jasa" ? "Jasa" : "Barang dan Jasa";
+
+          let capacity = "";
+          if (Array.isArray(item.specifications)) {
+            const capSpec = item.specifications.find((s: any) => s.key && s.key.toLowerCase().includes("kapasitas"));
+            if (capSpec) capacity = capSpec.value;
+          }
+          if (!capacity) {
+            const capMatch = (item.description || "").match(/(\d+(?:[.,]\d+)?\s*(?:m3|m³|liter|l|m3\/hari|m3\/jam|m³\/hari|m³\/jam|gpm|watt|hp|pk|bar))/i);
+            if (capMatch) capacity = capMatch[0];
+          }
+
+          const specString = Array.isArray(item.specifications)
+            ? item.specifications.map((s: any) => `${s.key ? `${s.key}: ` : ""}${s.value}`).join("\n")
+            : (item.specifications || "");
+
+          const existing = (catalogItemsForQuote || []).find(
+            (c: any) => c.name?.toLowerCase().trim() === item.description?.toLowerCase().trim()
+          );
+
+          const catalogId = existing?.id || `cat-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+          const catalogPayload = {
+            id: catalogId,
+            name: item.description,
+            sku: existing?.sku || `CAT-${Math.floor(1000 + Math.random() * 9000)}`,
+            category: existing?.category || catCategory,
+            subCategory: existing?.subCategory || quoteType,
+            type: itemType,
+            brand: existing?.brand || "PT. GIG",
+            priceItem: item.unitPrice || 0,
+            costPrice: (item as any).costPrice !== undefined ? (item as any).costPrice : (existing?.costPrice || 0),
+            unit: item.unit || "Unit",
+            description: item.description,
+            specifications: specString,
+            capacity: capacity || existing?.capacity || "",
+            status: "aktif",
+            createdBy: currentUser?.id || "admin",
+            createdByName: currentUser?.name || "ALEXSANDER",
+            createdDate: existing?.createdDate || new Date().toISOString(),
+            lastUpdate: new Date().toISOString(),
+            images: existing?.images || [],
+            views: (existing?.views || 0) + 1,
+          };
+
+          await dbService.setDocument("catalog", catalogId, catalogPayload);
+        } catch (catErr) {
+          console.warn("Auto save to catalog warning:", catErr);
+        }
+      }
+
       setIsQuotationModalOpen(false);
       setViewingQuotation(null);
       setQuotationItems([]);
       setUploadedFileInfo(null);
       setUploadedFileBase64("");
       setAiQuoteText("");
-      setToastMessage("Surat Penawaran berhasil disimpan");
+      setToastMessage("Surat Penawaran & E-Katalog berhasil disimpan");
       setShowToast(true);
       setTimeout(() => setShowToast(false), 2000);
 
@@ -34931,16 +34704,19 @@ export default function App() {
     pdf.text(isDisc && discAmt > 0 ? `-Rp ${fmt(discAmt)}` : "Rp 0", pageWidth - 17, y + 5.2, { align: "right" });
     y += 7;
 
-    // 1. ONGKOS KIRIM / PENGIRIMAN
-    pdf.setFillColor(248, 250, 252);
-    pdf.rect(totalX, y, totalW, 7, "FD");
-    pdf.setFont("helvetica", quotation.includeShipping ? "bold" : "normal");
-    pdf.setTextColor(quotation.includeShipping ? 15 : 100, quotation.includeShipping ? 23 : 116, quotation.includeShipping ? 42 : 139);
-    pdf.text("ONGKOS KIRIM / PENGIRIMAN", totalX - 3, y + 5.2, { align: "right" });
-    pdf.text(quotation.includeShipping && quotation.shippingCost ? `Rp ${fmt(quotation.shippingCost)}` : "Rp 0", pageWidth - 17, y + 5.2, {
-      align: "right",
-    });
-    y += 7;
+    // 1. ONGKOS KIRIM / PENGIRIMAN (Request 2: hanya muncul di PDF jika diceklis)
+    if (quotation.includeShipping) {
+      const shipLabelText = (quotation.shippingLabel || "ONGKOS KIRIM / PENGIRIMAN").toUpperCase();
+      pdf.setFillColor(248, 250, 252);
+      pdf.rect(totalX, y, totalW, 7, "FD");
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(shipLabelText, totalX - 3, y + 5.2, { align: "right" });
+      pdf.text(quotation.shippingCost ? `Rp ${fmt(quotation.shippingCost)}` : "Rp 0", pageWidth - 17, y + 5.2, {
+        align: "right",
+      });
+      y += 7;
+    }
 
     // 2. PPN
     const taxRateLabel = quotation.taxRate ? `PPN ${quotation.taxRate}%` : "PPN 11%";
@@ -35505,12 +35281,78 @@ export default function App() {
     newItems[index] = { ...newItems[index], [field]: value };
     
     // Auto update total item price live
-    if (field === "vol" || field === "unitPrice" || field === "description" || field === "unit") {
+    if (field === "vol" || field === "unitPrice" || field === "description" || field === "unit" || field === "costPrice") {
       const vol = Number(newItems[index].vol) || 0;
       const unitPrice = Number(newItems[index].unitPrice) || 0;
       newItems[index].total = vol * unitPrice;
     }
     setQuotationItems(newItems);
+  };
+
+  const [activeCatalogDropdownIdx, setActiveCatalogDropdownIdx] = useState<number | null>(null);
+  const [selectedCatalogGroup, setSelectedCatalogGroup] = useState<string | null>(null);
+
+  const filteredCatalogList = useMemo(() => {
+    return (catalogItemsForQuote || []).filter((it: any) => {
+      if (!it || !it.name) return false;
+      if (quoteType === "Barang") {
+        return it.type === "barang" || (it.category || "").toLowerCase().includes("barang");
+      }
+      if (quoteType === "Jasa") {
+        return it.type === "jasa" || (it.category || "").toLowerCase().includes("jasa");
+      }
+      return true; // "Barang dan Jasa"
+    });
+  }, [catalogItemsForQuote, quoteType]);
+
+  // Group catalog items by base product name for 2-step drilldown (Barang -> Kapasitas)
+  const catalogGrouped = useMemo(() => {
+    const map = new Map<string, { groupName: string; variants: any[] }>();
+    filteredCatalogList.forEach((it: any) => {
+      const base = it.name.replace(/\s*(?:kapasitas\s*)?\d+(?:[.,]\d+)?\s*(?:m3|m³|liter|l|gpm|watt|hp|pk|bar).*/i, "").trim() || it.name;
+      const key = base.toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, { groupName: base, variants: [] });
+      }
+      map.get(key)!.variants.push(it);
+    });
+    return Array.from(map.values());
+  }, [filteredCatalogList]);
+
+  const handleSelectCatalogItem = (itemIdx: number, catItem: any) => {
+    let nextSpecs: { key: string; value: string }[] = [];
+    if (catItem.specifications) {
+      if (Array.isArray(catItem.specifications)) {
+        nextSpecs = catItem.specifications;
+      } else if (typeof catItem.specifications === "string") {
+        nextSpecs = catItem.specifications
+          .split("\n")
+          .map((line: string) => {
+            const parts = line.split(":");
+            return {
+              key: parts[0]?.trim() || "",
+              value: parts.slice(1).join(":")?.trim() || parts[0]?.trim() || ""
+            };
+          })
+          .filter((s: any) => s.value);
+      }
+    }
+
+    const updated = [...quotationItems];
+    const unitPrice = Number(catItem.priceItem) || Number(catItem.price) || 0;
+    const vol = Number(updated[itemIdx]?.vol) || 1;
+    updated[itemIdx] = {
+      ...updated[itemIdx],
+      description: catItem.name || updated[itemIdx]?.description || "",
+      unit: catItem.unit || updated[itemIdx]?.unit || "Unit",
+      unitPrice: unitPrice,
+      costPrice: catItem.costPrice !== undefined ? Number(catItem.costPrice) : updated[itemIdx]?.costPrice || 0,
+      total: vol * unitPrice,
+      specifications: nextSpecs.length > 0 ? nextSpecs : updated[itemIdx]?.specifications || [],
+    };
+    setQuotationItems(updated);
+    setActiveCatalogDropdownIdx(null);
+    setSelectedCatalogGroup(null);
   };
 
   const handleDeleteQuotation = async (id: string, number: string) => {
@@ -35883,6 +35725,10 @@ export default function App() {
                       <th className="py-3 px-2 border-r-2 border-slate-300 w-20">QTY</th>
                       <th className="py-3 px-2 border-r-2 border-slate-300 w-24">SATUAN</th>
                       <th className="py-3 px-3 border-r-2 border-slate-300 w-36">HARGA SATUAN</th>
+                      <th className="py-3 px-3 border-r-2 border-slate-300 w-36 bg-amber-50/70 text-amber-900">
+                        HARGA MODAL
+                        <span className="block text-[8px] font-bold text-amber-700/80 normal-case">(masuk e-katalog, tdk di pdf)</span>
+                      </th>
                       <th className="py-3 px-3 w-36">JUMLAH</th>
                       <th className="py-3 px-2 w-10"></th>
                     </tr>
@@ -35898,14 +35744,172 @@ export default function App() {
                             {idx + 1}
                           </td>
                           <td className="py-2.5 px-3 border-r-2 border-slate-300 space-y-2">
-                            <input
-                              type="text"
-                              required
-                              value={item.description || ""}
-                              onChange={(e) => updateQuotationItem(idx, "description", e.target.value)}
-                              placeholder="Deskripsi item pekerjaan / barang / jasa"
-                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-slate-800 outline-none"
-                            />
+                            <div className="space-y-1 relative">
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  required
+                                  value={item.description || ""}
+                                  onFocus={() => {
+                                    if (filteredCatalogList.length > 0) {
+                                      setActiveCatalogDropdownIdx(idx);
+                                    }
+                                  }}
+                                  onClick={() => {
+                                    if (filteredCatalogList.length > 0) {
+                                      setActiveCatalogDropdownIdx(idx);
+                                    }
+                                  }}
+                                  onChange={(e) => updateQuotationItem(idx, "description", e.target.value)}
+                                  placeholder="Deskripsi item / nama barang / jasa"
+                                  className="flex-1 px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-slate-800 outline-none"
+                                />
+                                {filteredCatalogList.length > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedCatalogGroup(null);
+                                      setActiveCatalogDropdownIdx(activeCatalogDropdownIdx === idx ? null : idx);
+                                    }}
+                                    className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-[10px] font-black uppercase tracking-wider shrink-0 flex items-center gap-1 cursor-pointer transition-all shadow-xs"
+                                    title="Pilih item yang pernah dibuat dari E-Katalog"
+                                  >
+                                    <span>🏷️ E-Katalog</span>
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Dropdown E-Katalog (Request 4: Klik deskripsi -> Muncul dropdown barang manual -> Klik muncul kapasitas -> Auto input spek, harga, modal) */}
+                              {activeCatalogDropdownIdx === idx && (
+                                <div className="absolute left-0 right-0 top-full mt-1 p-2.5 bg-slate-900 text-white rounded-2xl border border-slate-700 shadow-2xl space-y-2 z-30 max-h-64 overflow-y-auto">
+                                  <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 px-1">
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-300">
+                                      {selectedCatalogGroup ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => setSelectedCatalogGroup(null)}
+                                          className="flex items-center gap-1 hover:text-white transition-colors cursor-pointer"
+                                        >
+                                          ← Kembali ke Daftar Barang
+                                        </button>
+                                      ) : (
+                                        `Pilih Dari E-Katalog (${catalogGrouped.length} Jenis Barang/Jasa)`
+                                      )}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActiveCatalogDropdownIdx(null);
+                                        setSelectedCatalogGroup(null);
+                                      }}
+                                      className="text-slate-400 hover:text-white text-[10px] font-bold cursor-pointer"
+                                    >
+                                      ✕ Tutup
+                                    </button>
+                                  </div>
+
+                                  {/* View 2: Muncul Pilihan Kapasitas untuk Barang Terpilih */}
+                                  {selectedCatalogGroup ? (
+                                    <div className="space-y-1.5">
+                                      <p className="text-[9px] font-black uppercase tracking-wider text-slate-400 px-1">
+                                        Pilih Kapasitas untuk: <span className="text-white font-extrabold">{selectedCatalogGroup}</span>
+                                      </p>
+                                      {catalogGrouped
+                                        .find(g => g.groupName.toLowerCase() === selectedCatalogGroup.toLowerCase())
+                                        ?.variants.map((variant: any, vIdx: number) => (
+                                          <div
+                                            key={vIdx}
+                                            onClick={() => handleSelectCatalogItem(idx, variant)}
+                                            className="p-2.5 rounded-xl bg-slate-800 hover:bg-indigo-900 border border-slate-700 hover:border-indigo-400 cursor-pointer transition-all flex items-center justify-between gap-2 group"
+                                          >
+                                            <div className="min-w-0">
+                                              <p className="text-xs font-black text-white group-hover:text-indigo-200">
+                                                {variant.name}
+                                              </p>
+                                              <div className="flex items-center gap-2 text-[9px] text-slate-400 font-semibold mt-0.5">
+                                                {variant.capacity ? (
+                                                  <span className="bg-emerald-950 text-emerald-300 border border-emerald-800 px-1.5 py-0.5 rounded font-black">
+                                                    Kapasitas: {variant.capacity}
+                                                  </span>
+                                                ) : (
+                                                  <span className="bg-slate-700 text-slate-300 px-1.5 py-0.2 rounded font-bold">
+                                                    Standar
+                                                  </span>
+                                                )}
+                                                <span>Satuan: {variant.unit || "Unit"}</span>
+                                              </div>
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                              <p className="text-xs font-mono font-black text-emerald-400">
+                                                Rp {Number(variant.priceItem || variant.price || 0).toLocaleString("id-ID")}
+                                              </p>
+                                              {variant.costPrice > 0 && (
+                                                <p className="text-[9px] font-mono font-bold text-amber-300">
+                                                  Modal: Rp {Number(variant.costPrice).toLocaleString("id-ID")}
+                                                </p>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ))}
+                                    </div>
+                                  ) : (
+                                    /* View 1: Daftar Barang Manual yang Pernah Dibuat */
+                                    <div className="space-y-1">
+                                      {catalogGrouped.map((group: any, gIdx: number) => {
+                                        const hasMultipleVariants = group.variants.length > 1 || (group.variants[0]?.capacity && group.variants.length >= 1);
+                                        const firstVariant = group.variants[0];
+                                        return (
+                                          <div
+                                            key={gIdx}
+                                            onClick={() => {
+                                              if (hasMultipleVariants) {
+                                                setSelectedCatalogGroup(group.groupName);
+                                              } else {
+                                                handleSelectCatalogItem(idx, firstVariant);
+                                              }
+                                            }}
+                                            className="p-2 rounded-xl bg-slate-800 hover:bg-indigo-950 border border-slate-700/60 hover:border-indigo-400 cursor-pointer transition-all flex items-center justify-between gap-2"
+                                          >
+                                            <div className="min-w-0">
+                                              <p className="text-xs font-black text-white truncate">
+                                                {group.groupName}
+                                              </p>
+                                              <div className="flex items-center gap-1.5 text-[9px] text-slate-400 font-semibold mt-0.5">
+                                                {group.variants.length > 1 ? (
+                                                  <span className="bg-indigo-900/60 text-indigo-300 border border-indigo-700/50 px-1.5 py-0.2 rounded font-bold">
+                                                    {group.variants.length} Pilihan Kapasitas
+                                                  </span>
+                                                ) : firstVariant?.capacity ? (
+                                                  <span className="bg-emerald-950/70 text-emerald-300 border border-emerald-800/40 px-1.5 py-0.2 rounded font-bold">
+                                                    {firstVariant.capacity}
+                                                  </span>
+                                                ) : null}
+                                                <span>{firstVariant?.unit || "Unit"}</span>
+                                              </div>
+                                            </div>
+                                            <div className="text-right shrink-0 flex items-center gap-2">
+                                              <div>
+                                                <p className="text-xs font-mono font-black text-emerald-400">
+                                                  Rp {Number(firstVariant.priceItem || firstVariant.price || 0).toLocaleString("id-ID")}
+                                                </p>
+                                                {firstVariant.costPrice > 0 && (
+                                                  <p className="text-[9px] font-mono font-bold text-amber-300">
+                                                    Modal: Rp {Number(firstVariant.costPrice).toLocaleString("id-ID")}
+                                                  </p>
+                                                )}
+                                              </div>
+                                              {hasMultipleVariants && (
+                                                <span className="text-[10px] text-indigo-400 font-black">▶</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
 
                             {/* SUB ROW SPESIFIKASI PERSIS SEPERTI GAMBAR SKETCH */}
                             <div className="bg-slate-50 p-2.5 rounded-xl border border-dashed border-slate-300 space-y-2 text-[10px]">
@@ -35913,7 +35917,6 @@ export default function App() {
                                 spesifikasi
                               </span>
 
-                              {/* Tampilkan daftar spesifikasi yang sudah ditambahkan */}
                               {/* Tampilkan daftar spesifikasi yang sudah ditambahkan */}
                               {currentSpecs.length > 0 && (
                                 <div className="flex flex-wrap gap-1.5 mb-1.5">
@@ -36005,6 +36008,17 @@ export default function App() {
                               value={item.unitPrice || 0}
                               onChange={(e) => updateQuotationItem(idx, "unitPrice", Math.max(0, parseFloat(e.target.value) || 0))}
                               className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-right text-slate-900 focus:border-slate-800 outline-none"
+                            />
+                          </td>
+                          <td className="py-2.5 px-3 border-r-2 border-slate-300 text-right bg-amber-50/30">
+                            <input
+                              type="number"
+                              min={0}
+                              value={item.costPrice || ""}
+                              placeholder="0"
+                              onChange={(e) => updateQuotationItem(idx, "costPrice" as any, Math.max(0, parseFloat(e.target.value) || 0))}
+                              className="w-full px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-mono font-bold text-right text-amber-900 focus:border-amber-600 outline-none"
+                              title="Harga Modal (tersimpan ke E-Katalog, tidak ditampilkan di cetak PDF)"
                             />
                           </td>
                           <td className="py-2.5 px-3 text-right font-mono font-black text-slate-900 text-xs">
@@ -36194,36 +36208,47 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* ROW: CHECKLIST 3: ONGKIR */}
+                {/* ROW: CHECKLIST 3: ONGKIR / BIAYA PENGIRIMAN (REQUEST 2) */}
                 <div className="p-3 bg-white rounded-xl border border-slate-300 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="flex items-center gap-2 cursor-pointer">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
                       <input
                         type="checkbox"
                         checked={includeShipping}
                         onChange={(e) => setIncludeShipping(e.target.checked)}
                         className="w-5 h-5 rounded accent-slate-900 cursor-pointer"
                       />
-                      <span className="text-xs font-black text-slate-800">
-                        ONGKIR
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">
+                        {includeShipping ? "TAMPILKAN:" : "MUNCULKAN:"}
                       </span>
                     </label>
-                    <span className="text-xs font-mono font-black text-slate-900">
+                    <input
+                      type="text"
+                      value={quoteShippingLabel}
+                      onChange={(e) => setQuoteShippingLabel(e.target.value)}
+                      placeholder="ONGKIR / PENGIRIMAN"
+                      className="flex-1 px-2.5 py-1 bg-slate-50 border border-slate-300 rounded-lg text-xs font-black text-slate-900 outline-none focus:border-slate-800 focus:bg-white transition-all"
+                      title="Klik untuk mengubah nama/tulisan biaya ini (contoh: BIAYA MOBILISASI, ONGKIR, PENGIRIMAN, dll.)"
+                    />
+                    <span className="text-xs font-mono font-black text-slate-900 shrink-0">
                       Rp {includeShipping ? Number(shippingCost || 0).toLocaleString("id-ID") : "0"}
                     </span>
                   </div>
                   {includeShipping ? (
-                    <input
-                      type="number"
-                      min={0}
-                      value={shippingCost || ""}
-                      placeholder="ISI MANUAL ONGKIR"
-                      onChange={(e) => setShippingCost(Math.max(0, parseFloat(e.target.value) || 0))}
-                      className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none"
-                    />
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-500 font-bold shrink-0">Nominal (Rp):</span>
+                      <input
+                        type="number"
+                        min={0}
+                        value={shippingCost || ""}
+                        placeholder="0 (Jika tidak diisi tertulis Rp 0)"
+                        onChange={(e) => setShippingCost(Math.max(0, parseFloat(e.target.value) || 0))}
+                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none focus:border-slate-800 focus:bg-white"
+                      />
+                    </div>
                   ) : (
                     <div className="text-[10px] text-slate-400 font-semibold italic">
-                      (Tidak diceklis - Di PDF nominal Rp 0)
+                      (Tidak diceklis - Di PDF baris biaya ini TIDAK AKAN MUNCUL)
                     </div>
                   )}
                 </div>
@@ -37753,6 +37778,16 @@ export default function App() {
       },
     );
 
+    const unsubscribeCatalog = dbService.onCollectionSnapshot<any>(
+      "catalog",
+      (data) => {
+        const clean = (data || []).filter(
+          (it: any) => it && !it.id?.startsWith("md-eq-") && !it.id?.startsWith("preset-") && it.id !== "pompa-001"
+        );
+        setCatalogItemsForQuote(clean);
+      }
+    );
+
     return () => {
       if (unsubscribeCloudMaster) unsubscribeCloudMaster();
       unsubscribeReports();
@@ -37781,6 +37816,7 @@ export default function App() {
       unsubscribeDeptSettings();
       unsubscribeReminders();
       unsubscribeRoles();
+      if (unsubscribeCatalog) unsubscribeCatalog();
       if (unsubscribeAudit) unsubscribeAudit();
     };
   }, [currentUser]);
