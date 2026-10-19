@@ -1137,21 +1137,27 @@ const AdminClientsScreen = ({
 const AdminInvoicesScreen = ({
   invoices,
   clients,
+  quotations = [],
   onNavigate,
   user,
   roles,
   logActivity,
   selectedInvoiceForEdit,
   setSelectedInvoiceForEdit,
+  selectedQuotationForInvoice,
+  setSelectedQuotationForInvoice,
 }: {
   invoices: Invoice[];
   clients: Client[];
+  quotations?: Quotation[];
   onNavigate: (s: ScreenId) => void;
   user: any;
   roles: RoleConfig[];
   logActivity: (m: string, a: string, d: string) => Promise<void>;
   selectedInvoiceForEdit?: any;
   setSelectedInvoiceForEdit?: (inv: any | null) => void;
+  selectedQuotationForInvoice?: Quotation | null;
+  setSelectedQuotationForInvoice?: (q: Quotation | null) => void;
 }) => {
   const [view, setView] = useState<"list" | "build">("list");
   const [searchTerm, setSearchTerm] = useState("");
@@ -1160,6 +1166,24 @@ const AdminInvoicesScreen = ({
   const [windowWidth, setWindowWidth] = useState(
     typeof window !== "undefined" ? window.innerWidth : 1200,
   );
+
+  // SPH (Surat Penawaran Harga) Import States
+  const [localQuotations, setLocalQuotations] = useState<Quotation[]>(quotations || []);
+  const [isImportSPHModalOpen, setIsImportSPHModalOpen] = useState(false);
+  const [sphSearchTerm, setSphSearchTerm] = useState("");
+  const [sphStatusFilter, setSphStatusFilter] = useState("ALL");
+  const [sphRefNumber, setSphRefNumber] = useState("");
+  const [importedAlert, setImportedAlert] = useState<{ number: string; client: string; count: number } | null>(null);
+
+  useEffect(() => {
+    if (quotations && quotations.length > 0) {
+      setLocalQuotations(quotations);
+    } else {
+      dbService.getCollection<Quotation>("quotations").then((res) => {
+        if (res && res.length > 0) setLocalQuotations(res);
+      }).catch(() => {});
+    }
+  }, [quotations]);
 
   useEffect(() => {
     const handleResize = () => setWindowWidth(window.innerWidth);
@@ -1175,6 +1199,15 @@ const AdminInvoicesScreen = ({
       }
     }
   }, [selectedInvoiceForEdit, setSelectedInvoiceForEdit]);
+
+  useEffect(() => {
+    if (selectedQuotationForInvoice) {
+      handleImportFromQuotation(selectedQuotationForInvoice);
+      if (setSelectedQuotationForInvoice) {
+        setSelectedQuotationForInvoice(null);
+      }
+    }
+  }, [selectedQuotationForInvoice, setSelectedQuotationForInvoice]);
 
   // Builder States
   const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
@@ -1198,10 +1231,28 @@ const AdminInvoicesScreen = ({
 
   // Table items state
   const [items, setItems] = useState<
-    Array<{ description: string; qty: string | number; unit: string; price: string | number }>
+    Array<{
+      description: string;
+      specifications?: Array<{ key: string; value: string }> | string;
+      qty: string | number;
+      unit: string;
+      price: string | number;
+    }>
   >([
-    { description: "Penggantian Pompa Set Submersible", qty: 1, unit: "Set", price: 8000000 },
-    { description: "Perbaikan Water Meter 2 Inch", qty: 1, unit: "ls", price: 1000000 },
+    {
+      description: "Penggantian Pompa Set Submersible",
+      specifications: [{ key: "Spesifikasi", value: "3.7 kW, Submersible Sewage Pump" }],
+      qty: 1,
+      unit: "Set",
+      price: 8000000,
+    },
+    {
+      description: "Perbaikan Water Meter 2 Inch",
+      specifications: [{ key: "Koneksi", value: "Flange 2 Inch SS304" }],
+      qty: 1,
+      unit: "ls",
+      price: 1000000,
+    },
   ]);
 
   // Tax and Bank details states
@@ -1211,6 +1262,10 @@ const AdminInvoicesScreen = ({
   const [bankAccountName, setBankAccountName] = useState("Garda Inovasi Globaltech");
   const [bankAccountNumber, setBankAccountNumber] = useState("1550014117173");
   const [signatoryName, setSignatoryName] = useState("JIDAN RAMADHAN");
+  const [signatoryRole, setSignatoryRole] = useState("Direktur");
+  const [invoiceSignature, setInvoiceSignature] = useState<string>("");
+  const [isImageRepoOpen, setIsImageRepoOpen] = useState(false);
+  const [imageRepoTargetCategory, setImageRepoTargetCategory] = useState<"logo" | "signature">("signature");
   const [overrideTerbilang, setOverrideTerbilang] = useState("");
 
   // Preview & Flexible Ongkir / Diskon (Request 1, 2, 3)
@@ -1282,7 +1337,7 @@ const AdminInvoicesScreen = ({
 
   // File structure helpers
   const addItem = () =>
-    setItems([...items, { description: "", qty: 1, unit: "ls", price: 0 }]);
+    setItems([...items, { description: "", specifications: [], qty: 1, unit: "ls", price: 0 }]);
 
   const removeItem = (index: number) => {
     if (items.length > 1) {
@@ -1317,10 +1372,106 @@ const AdminInvoicesScreen = ({
     }
   };
 
+  // Import data dari Surat Penawaran Harga (SPH)
+  const handleImportFromQuotation = (q: Quotation) => {
+    if (!editingInvoiceId) {
+      const randomSeq = Math.floor(1000 + Math.random() * 9000);
+      setInvoiceNumber(`INV/${new Date().getFullYear()}/${randomSeq}`);
+    }
+
+    setSphRefNumber(q.number || "");
+    setRecipientName(q.recipient || "");
+    setRecipientUp(q.attention || "");
+
+    // Link selected Client if match found in clients list
+    const qRec = (q.recipient || "").toLowerCase().trim();
+    const matched = clients.find((c) => {
+      const comp = (c.company || "").toLowerCase().trim();
+      const nm = (c.name || "").toLowerCase().trim();
+      return (
+        (comp && (qRec.includes(comp) || comp.includes(qRec))) ||
+        (nm && (qRec.includes(nm) || nm.includes(qRec)))
+      );
+    });
+    if (matched) {
+      setClientId(matched.id);
+    }
+
+    setJobName(q.jobDescription || "");
+    setInvoiceDate(new Date().toISOString().split("T")[0]);
+
+    // Set Due Date: 14 days by default
+    const due = new Date();
+    due.setDate(due.getDate() + 14);
+    setDueDate(due.toISOString().split("T")[0]);
+
+    // Items mapping with full specifications
+    let itemCount = 0;
+    if (q.items && q.items.length > 0) {
+      const mapped = q.items.map((it: any) => {
+        let specs: Array<{ key: string; value: string }> = [];
+        if (Array.isArray(it.specifications)) {
+          specs = it.specifications.map((s: any) => ({
+            key: typeof s === "object" && s !== null ? s.key || "" : "",
+            value: typeof s === "object" && s !== null ? s.value || "" : String(s || ""),
+          }));
+        } else if (typeof it.specifications === "string" && it.specifications.trim()) {
+          try {
+            const parsed = JSON.parse(it.specifications);
+            if (Array.isArray(parsed)) {
+              specs = parsed.map((s: any) => ({
+                key: typeof s === "object" && s !== null ? s.key || "" : "",
+                value: typeof s === "object" && s !== null ? s.value || "" : String(s || ""),
+              }));
+            } else {
+              specs = [{ key: "Spesifikasi", value: it.specifications }];
+            }
+          } catch {
+            specs = [{ key: "Spesifikasi", value: it.specifications }];
+          }
+        }
+        return {
+          description: it.description || "",
+          specifications: specs,
+          qty: it.vol !== undefined ? it.vol : (it.qty !== undefined ? it.qty : 1),
+          unit: it.unit || "ls",
+          price: it.unitPrice !== undefined ? it.unitPrice : (it.price !== undefined ? it.price : 0),
+        };
+      });
+      setItems(mapped);
+      itemCount = mapped.length;
+    }
+
+    setEnablePPN(q.includePPN !== undefined ? q.includePPN : true);
+    setTaxPercentage(q.taxRate !== undefined ? Number(q.taxRate) : 11);
+    setIncludeShipping(!!q.includeShipping);
+    setShippingCost(q.shippingCost || 0);
+    setShippingLabel(q.shippingLabel || "BIAYA PENGIRIMAN / ONGKIR");
+    setIncludeDiscount(!!q.includeDiscount);
+    setDiscountVal(q.discountVal || q.discountAmount || 0);
+
+    if (q.compName) setCompanyName(q.compName);
+    if (q.compAddress) setCompanyAddress(q.compAddress);
+    if (q.compLogoUrl) setLogoImage(q.compLogoUrl);
+    if (q.digitalSignatureUrl) setInvoiceSignature(q.digitalSignatureUrl);
+    if (q.preparedBy) setSignatoryName(q.preparedBy);
+    if (q.preparedByTitle) setSignatoryRole(q.preparedByTitle);
+
+    setImportedAlert({
+      number: q.number || "SPH",
+      client: q.recipient || "Klien",
+      count: itemCount,
+    });
+
+    setIsImportSPHModalOpen(false);
+    setView("build");
+  };
+
   // Open invoice editor
   const handleEditInvoice = (inv: any) => {
     setEditingInvoiceId(inv.id);
     setInvoiceNumber(inv.invoiceNumber || "");
+    setSphRefNumber(inv.sphRefNumber || inv.quotationNumber || "");
     setClientId(inv.clientId || "");
     setRecipientName(inv.clientName || "");
     setRecipientUp(inv.recipientUp || "");
@@ -1337,15 +1488,25 @@ const AdminInvoicesScreen = ({
     if (inv.companyAddress) setCompanyAddress(inv.companyAddress);
     if (inv.companyPhone) setCompanyPhone(inv.companyPhone);
     if (inv.companyEmail) setCompanyEmail(inv.companyEmail);
+    if (inv.signatureImage || inv.digitalSignatureUrl) {
+      setInvoiceSignature(inv.signatureImage || inv.digitalSignatureUrl);
+    } else {
+      setInvoiceSignature("");
+    }
+    if (inv.signatoryRole || inv.signatoryTitle) {
+      setSignatoryRole(inv.signatoryRole || inv.signatoryTitle);
+    }
 
     if (inv.itemsJson) {
       try {
         setItems(JSON.parse(inv.itemsJson));
       } catch (e) {
-        setItems([{ description: "", qty: 1, unit: "ls", price: inv.amount || 0 }]);
+        setItems(inv.items || [{ description: "", specifications: [], qty: 1, unit: "ls", price: inv.amount || 0 }]);
       }
+    } else if (inv.items) {
+      setItems(inv.items);
     } else {
-      setItems([{ description: "Uraian Pekerjaan", qty: 1, unit: "ls", price: inv.amount || 0 }]);
+      setItems([{ description: "Uraian Pekerjaan", specifications: [], qty: 1, unit: "ls", price: inv.amount || 0 }]);
     }
 
     setEnablePPN(inv.taxPercentage !== undefined ? Number(inv.taxPercentage) > 0 : true);
@@ -1369,6 +1530,7 @@ const AdminInvoicesScreen = ({
     setInvoiceNumber(
       `INV/${new Date().getFullYear()}/${Math.floor(1000 + Math.random() * 9000)}`
     );
+    setSphRefNumber("");
     setClientId("");
     setRecipientName("");
     setRecipientUp("");
@@ -1377,8 +1539,8 @@ const AdminInvoicesScreen = ({
     setJobName("Pemeliharaan IPAL");
     setStatus("PENDING");
     setItems([
-      { description: "Penggantian Pompa Set Submersible", qty: 1, unit: "Set", price: 8000000 },
-      { description: "Perbaikan Water Meter 2 Inch", qty: 1, unit: "ls", price: 1000000 }
+      { description: "Penggantian Pompa Set Submersible", specifications: [{ key: "Spesifikasi", value: "3.7 kW, Submersible Sewage Pump" }], qty: 1, unit: "Set", price: 8000000 },
+      { description: "Perbaikan Water Meter 2 Inch", specifications: [{ key: "Koneksi", value: "Flange 2 Inch SS304" }], qty: 1, unit: "ls", price: 1000000 }
     ]);
     setEnablePPN(true);
     setTaxPercentage(11);
@@ -1386,6 +1548,8 @@ const AdminInvoicesScreen = ({
     setBankAccountName("Garda Inovasi Globaltech");
     setBankAccountNumber("1550014117173");
     setSignatoryName("JIDAN RAMADHAN");
+    setSignatoryRole("Direktur");
+    setInvoiceSignature("");
     setOverrideTerbilang("");
     setIncludeShipping(false);
     setShippingLabel("BIAYA PENGIRIMAN / ONGKIR");
@@ -1407,6 +1571,8 @@ const AdminInvoicesScreen = ({
 
     const payload = {
       invoiceNumber,
+      sphRefNumber: sphRefNumber || undefined,
+      quotationNumber: sphRefNumber || undefined,
       clientId,
       clientName: recipientName,
       amount: Number(grandTotal),
@@ -1438,6 +1604,10 @@ const AdminInvoicesScreen = ({
       bankAccountName,
       bankAccountNumber,
       signatoryName,
+      signatoryRole,
+      signatoryTitle: signatoryRole,
+      signatureImage: invoiceSignature,
+      digitalSignatureUrl: invoiceSignature,
       overrideTerbilang: overrideTerbilang || computedTerbilang,
     };
 
@@ -1590,12 +1760,27 @@ const AdminInvoicesScreen = ({
                 Kelola invoice klien, cetak format PDF resmi dan status pembayaran.
               </p>
             </div>
-            <button
-              onClick={initNewInvoice}
-              className="bg-emerald-500 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-emerald-600 transition-all active:scale-95 translate-y-[-2px]"
-            >
-              <Plus size={16} /> Buat Invoice Builder
-            </button>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setSphSearchTerm("");
+                  setSphStatusFilter("ALL");
+                  setIsImportSPHModalOpen(true);
+                }}
+                className="bg-indigo-600 text-white px-5 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-indigo-700 transition-all active:scale-95 translate-y-[-2px]"
+                title="Tarik data dari Surat Penawaran Harga (SPH)"
+              >
+                <FileSpreadsheet size={16} />
+                <span>Ambil Data dari SPH</span>
+              </button>
+              <button
+                onClick={initNewInvoice}
+                className="bg-emerald-500 text-white px-6 py-3 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center gap-2 hover:bg-emerald-600 transition-all active:scale-95 translate-y-[-2px]"
+              >
+                <Plus size={16} /> Buat Invoice Builder
+              </button>
+            </div>
           </div>
 
           {/* Quick Metrics */}
@@ -1763,7 +1948,20 @@ const AdminInvoicesScreen = ({
             >
               <ChevronLeft size={16} /> Kembali ke Daftar Invoice
             </button>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setSphSearchTerm("");
+                  setSphStatusFilter("ALL");
+                  setIsImportSPHModalOpen(true);
+                }}
+                className="bg-indigo-50 border-2 border-indigo-200 text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer flex items-center gap-2"
+                title="Ambil data dari Surat Penawaran Harga"
+              >
+                <FileSpreadsheet size={15} className="text-indigo-600" />
+                <span>{sphRefNumber ? "Ganti SPH" : "Ambil Data dari SPH"}</span>
+              </button>
               <button
                 type="button"
                 onClick={() => handleSaveInvoice(false)}
@@ -1785,6 +1983,106 @@ const AdminInvoicesScreen = ({
 
           {/* DOKUMEN UTAMA: LAYOUT FORM INPUT PERSIS SEPERTI PENAWARAN (SPH) */}
           <form onSubmit={(e) => { e.preventDefault(); handleSaveInvoice(true); }} className="bg-white rounded-3xl border-2 border-slate-300 shadow-xl p-5 sm:p-8 md:p-10 space-y-7 text-left font-sans text-slate-900 max-w-5xl mx-auto">
+            
+            {/* Banner Notifikasi jika baru saja Import dari SPH */}
+            {importedAlert && (
+              <div className="bg-emerald-50 border-2 border-emerald-300 rounded-2xl p-4 flex items-center justify-between gap-3 text-emerald-900 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-md">
+                    <CheckCircle2 size={20} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-emerald-200 text-emerald-800">
+                        SPH Terimpor: {importedAlert.number}
+                      </span>
+                      <span className="text-xs font-black">{importedAlert.client}</span>
+                    </div>
+                    <p className="text-[11px] font-medium text-emerald-700 mt-0.5">
+                      Berhasil menyalin {importedAlert.count} rincian item, harga, dan spesifikasi dari Surat Penawaran Harga. Anda tinggal meneruskan dan menyesuaikan nomor invoice serta tanggal jatuh tempo.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setImportedAlert(null)}
+                  className="p-1.5 text-emerald-500 hover:text-emerald-800 hover:bg-emerald-100 rounded-lg transition-all"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            )}
+
+            {/* Quick SPH Action Callout */}
+            {sphRefNumber ? (
+              <div className="bg-gradient-to-r from-indigo-50/90 to-purple-50/90 border-2 border-indigo-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shadow-sm">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-md">
+                    <FileSpreadsheet size={18} />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-700">
+                        Terkait SPH
+                      </span>
+                      <span className="text-xs font-black text-indigo-950 font-mono">{sphRefNumber}</span>
+                    </div>
+                    <p className="text-[11px] font-medium text-slate-600 mt-0.5">
+                      Invoice ini mengambil data dari Surat Penawaran Harga ({sphRefNumber}). Anda dapat langsung meneruskan atau mengedit nilai sesuai kesepakatan final.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSphSearchTerm("");
+                      setSphStatusFilter("ALL");
+                      setIsImportSPHModalOpen(true);
+                    }}
+                    className="px-3 py-1.5 bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all shadow-sm"
+                  >
+                    Ganti SPH
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSphRefNumber("")}
+                    className="px-2.5 py-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-200/50 rounded-lg text-[10px] font-bold uppercase transition-all"
+                    title="Hapus referensi SPH"
+                  >
+                    Hapus Ref
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-slate-50 border border-dashed border-slate-300 rounded-2xl p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                    <FileSpreadsheet size={18} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-black text-slate-800">
+                      Mau buat invoice langsung dari Surat Penawaran Harga (SPH)?
+                    </p>
+                    <p className="text-[10px] font-medium text-slate-500">
+                      Tarik otomatis data klien, uraian barang/jasa, spesifikasi, dan harga dari SPH tanpa ketik ulang.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSphSearchTerm("");
+                    setSphStatusFilter("ALL");
+                    setIsImportSPHModalOpen(true);
+                  }}
+                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider shadow-sm transition-all shrink-0 flex items-center gap-1.5 self-start sm:self-auto"
+                >
+                  <FileSpreadsheet size={13} />
+                  <span>Ambil Data dari SPH</span>
+                </button>
+              </div>
+            )}
             
             {/* 1. KOP SURAT (ATAS): UPLOAD LOGO (KIRI) & PROFIL PT PENGIRIM (KANAN) */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start pb-5 border-b-2 border-slate-200">
@@ -1923,6 +2221,32 @@ const AdminInvoicesScreen = ({
                   />
                 </div>
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-24 text-xs font-black text-indigo-700 uppercase tracking-wider shrink-0 flex items-center gap-1">
+                    <FileSpreadsheet size={12} className="text-indigo-600" /> REF. SPH
+                  </span>
+                  <div className="flex-1 flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={sphRefNumber}
+                      onChange={(e) => setSphRefNumber(e.target.value)}
+                      placeholder="Contoh: 001/SPH/GIGT/2026 (Opsional)"
+                      className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-mono font-bold text-slate-900 focus:border-indigo-600 outline-none transition-all placeholder:text-slate-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSphSearchTerm("");
+                        setSphStatusFilter("ALL");
+                        setIsImportSPHModalOpen(true);
+                      }}
+                      className="px-2.5 py-2 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shrink-0 cursor-pointer"
+                      title="Pilih dari daftar SPH"
+                    >
+                      Pilih SPH
+                    </button>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
                     TANGGAL
                   </span>
@@ -1978,12 +2302,13 @@ const AdminInvoicesScreen = ({
                   <tbody className="divide-y-2 divide-slate-200">
                     {items.map((item, idx) => {
                       const itemTotal = (Number(item.qty) || 0) * (Number(item.price) || 0);
+                      const currentSpecs = Array.isArray(item.specifications) ? item.specifications : [];
                       return (
                         <tr key={idx} className="align-top hover:bg-slate-50/50 transition-colors">
                           <td className="py-3 px-2 text-center font-black text-slate-800 border-r-2 border-slate-300 text-xs">
                             {idx + 1}
                           </td>
-                          <td className="py-2.5 px-3 border-r-2 border-slate-300">
+                          <td className="py-2.5 px-3 border-r-2 border-slate-300 space-y-2">
                             <input
                               type="text"
                               required
@@ -1992,6 +2317,77 @@ const AdminInvoicesScreen = ({
                               placeholder="Deskripsi pekerjaan / nama barang tagihan"
                               className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-slate-800 outline-none"
                             />
+
+                            {/* SUB ROW SPESIFIKASI PERSIS SEPERTI GAMBAR SURAT PENAWARAN HARGA */}
+                            <div className="bg-slate-50 p-2.5 rounded-xl border border-dashed border-slate-300 space-y-2 text-[10px]">
+                              <span className="text-[9px] font-black uppercase text-slate-500 tracking-wider block">
+                                spesifikasi
+                              </span>
+
+                              {/* Tampilkan daftar spesifikasi yang sudah ditambahkan */}
+                              {currentSpecs.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5 mb-1.5">
+                                  {currentSpecs.map((sp: any, sIdx: number) => {
+                                    const rawKey = (sp.key || "").trim();
+                                    const hasKey = rawKey && rawKey !== "-";
+                                    return (
+                                      <span key={sIdx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-300 rounded-md text-[10px] text-slate-700">
+                                        {hasKey ? (
+                                          <span className="font-bold text-slate-700">{rawKey}:</span>
+                                        ) : null}
+                                        <span className="font-medium text-slate-800">{sp.value}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const nextSpecs = [...currentSpecs];
+                                            nextSpecs.splice(sIdx, 1);
+                                            updateItem(idx, "specifications", nextSpecs);
+                                          }}
+                                          className="text-rose-500 hover:text-rose-700 font-black ml-0.5 cursor-pointer"
+                                        >
+                                          ×
+                                        </button>
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Inputs Spesifikasi: [ Label (Bisa Kosong) ] [ Nilai Spek ] [ + ] */}
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  id={`inv-spec-key-${idx}`}
+                                  placeholder="Label Spek (opsional/bisa kosong)"
+                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[10px] font-semibold text-slate-800 outline-none focus:border-slate-700 placeholder:text-slate-400"
+                                />
+                                <input
+                                  type="text"
+                                  id={`inv-spec-val-${idx}`}
+                                  placeholder="Nilai Spek (misal: FRP / Manhole / 3 Phase)"
+                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[10px] font-semibold text-slate-800 outline-none focus:border-slate-700 placeholder:text-slate-400"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const kInput = document.getElementById(`inv-spec-key-${idx}`) as HTMLInputElement;
+                                    const vInput = document.getElementById(`inv-spec-val-${idx}`) as HTMLInputElement;
+                                    const k = kInput?.value?.trim() || "";
+                                    const v = vInput?.value?.trim() || "";
+                                    if (k || v) {
+                                      const cleanKey = (k === "-" ? "" : k);
+                                      updateItem(idx, "specifications", [...currentSpecs, { key: cleanKey, value: v }]);
+                                      if (kInput) kInput.value = "";
+                                      if (vInput) vInput.value = "";
+                                    }
+                                  }}
+                                  className="px-3 py-1 bg-slate-900 text-white rounded-lg font-black text-xs hover:bg-slate-800 transition-all cursor-pointer"
+                                  title="Tambah Spesifikasi"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
                           </td>
                           <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
                             <input
@@ -2240,25 +2636,109 @@ const AdminInvoicesScreen = ({
             </div>
 
             {/* 6. TANDA TANGAN (PERSIS SEPERTI GAMBAR PENAWARAN) */}
-            <div className="pt-4 border-t-2 border-slate-200 flex flex-col sm:flex-row justify-between items-end gap-6">
-              <div className="text-xs text-slate-400 font-bold">
-                * Demikian invoice ini kami sampaikan. Pembayaran dianggap sah bila telah masuk ke rekening resmi kami.
+            <div className="pt-4 border-t-2 border-slate-200 space-y-3">
+              <div className="space-y-0.5 text-xs text-slate-700 font-semibold leading-relaxed">
+                <p>* Demikian invoice ini kami sampaikan. Pembayaran dianggap sah bila telah masuk ke rekening resmi kami.</p>
+                <p className="font-bold">Hormat Kami,</p>
               </div>
-              <div className="w-64 space-y-2 text-center bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                <div className="text-[10px] font-black uppercase tracking-wider text-slate-500">
-                  HORMAT KAMI,
-                </div>
-                <div className="h-16 flex items-center justify-center">
-                  <span className="text-[10px] text-slate-300 italic">(Tanda Tangan & Cap PT)</span>
-                </div>
+
+              <div className="w-full max-w-xs space-y-2">
+                {/* UPLOAD TANDA TANGAN DIGITAL BOX */}
                 <input
-                  type="text"
-                  required
-                  value={signatoryName}
-                  onChange={(e) => setSignatoryName(e.target.value)}
-                  placeholder="Nama Penandatangan"
-                  className="w-full px-2.5 py-1 text-center font-black text-xs text-slate-900 bg-white border border-slate-300 rounded-lg outline-none"
+                  type="file"
+                  id="inv-signature-input"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = async (ev) => {
+                        if (ev.target?.result) {
+                          let res = ev.target.result as string;
+                          try {
+                            res = await compressImage(res, 600, 600, 0.85);
+                          } catch (_) {}
+                          setInvoiceSignature(res);
+                          imageRepositoryService.saveImage(
+                            res,
+                            "signature",
+                            file.name.replace(/\.[^/.]+$/, "")
+                          );
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    }
+                  }}
                 />
+                <div
+                  onClick={() => document.getElementById("inv-signature-input")?.click()}
+                  className="w-full h-32 border-2 border-slate-400 hover:border-slate-800 rounded-2xl flex flex-col items-center justify-center p-3 cursor-pointer transition-all bg-slate-50/60 hover:bg-slate-50 relative group select-none shadow-xs"
+                >
+                  {invoiceSignature ? (
+                    <div className="w-full h-full flex flex-col items-center justify-center relative">
+                      <div className="w-full h-20 flex items-center justify-center p-1">
+                        <img src={invoiceSignature} alt="Tanda Tangan Digital" className="max-h-full max-w-full object-contain mx-auto" />
+                      </div>
+                      <span className="text-[9px] font-black text-slate-500 mt-1 group-hover:text-slate-900">
+                        Klik untuk ganti file TTD
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setInvoiceSignature("");
+                        }}
+                        className="absolute top-0 right-0 px-2 py-0.5 bg-rose-50 text-rose-600 rounded text-[9px] font-black border border-rose-200"
+                      >
+                        Hapus
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="text-center space-y-1">
+                      <span className="text-xl block">✍️</span>
+                      <span className="text-[11px] font-black uppercase tracking-wider text-slate-800 block">
+                        UPLOAD TANDA TANGAN DIGITAL
+                      </span>
+                      <span className="text-[9px] text-slate-400 font-bold block">
+                        Klik untuk upload dari laptop
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Tombol Akses Penampung Riwayat TTD */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImageRepoTargetCategory("signature");
+                    setIsImageRepoOpen(true);
+                  }}
+                  className="w-full py-2 px-3 bg-indigo-50/90 hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
+                >
+                  <FolderOpen size={13} className="text-indigo-700" />
+                  <span>Pilih dari Penampung TTD</span>
+                </button>
+
+                {/* INPUT NAMA LENGKAP & JABATAN */}
+                <div className="space-y-2">
+                  <input
+                    type="text"
+                    required
+                    value={signatoryName}
+                    onChange={(e) => setSignatoryName(e.target.value)}
+                    placeholder="INPUT NAMA LENGKAP"
+                    className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black uppercase tracking-wider text-slate-900 focus:border-slate-800 outline-none"
+                  />
+                  <input
+                    type="text"
+                    required
+                    value={signatoryRole}
+                    onChange={(e) => setSignatoryRole(e.target.value)}
+                    placeholder="INPUT NAMA JABATAN (misal: Direktur / Direktur Keuangan)"
+                    className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none"
+                  />
+                </div>
               </div>
             </div>
 
@@ -2328,6 +2808,12 @@ const AdminInvoicesScreen = ({
               companyEmail,
               logoImage,
               signatoryName,
+              signatoryTitle: signatoryRole,
+              signatoryRole,
+              digitalSignatureUrl: invoiceSignature,
+              signatureImage: invoiceSignature,
+              sphRefNumber: sphRefNumber || undefined,
+              poRef: sphRefNumber ? `SPH: ${sphRefNumber}` : undefined,
               overrideTerbilang,
             }}
             onSaveInvoice={async (updatedData) => {
@@ -2336,6 +2822,264 @@ const AdminInvoicesScreen = ({
               }
             }}
           />
+        )}
+      </AnimatePresence>
+
+      {/* Image Repository for Invoice (Logo & Signature) */}
+      {isImageRepoOpen && (
+        <ImageRepositoryModal
+          isOpen={isImageRepoOpen}
+          onClose={() => setIsImageRepoOpen(false)}
+          targetCategory={imageRepoTargetCategory}
+          onSelectImage={(dataUrl, category) => {
+            if (imageRepoTargetCategory === "logo" || category === "logo") {
+              setLogoImage(dataUrl);
+            } else {
+              setInvoiceSignature(dataUrl);
+            }
+          }}
+        />
+      )}
+
+      {/* Modal Ambil Data dari Surat Penawaran Harga (SPH) */}
+      <AnimatePresence>
+        {isImportSPHModalOpen && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0, y: 15 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.95, opacity: 0, y: 15 }}
+              className="bg-white w-full max-w-4xl rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]"
+            >
+              {/* Modal Header */}
+              <div className="p-5 sm:p-6 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-400">
+                    <FileSpreadsheet size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black tracking-tight">
+                      Ambil Data dari Surat Penawaran Harga (SPH)
+                    </h3>
+                    <p className="text-xs text-slate-400 font-medium">
+                      Pilih penawaran harga untuk otomatis mengisi rincian invoice klien, barang/jasa, spesifikasi, dan harga.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsImportSPHModalOpen(false)}
+                  className="w-9 h-9 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-all cursor-pointer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Filter and Search Bar */}
+              <div className="p-4 sm:p-5 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between shrink-0">
+                <div className="relative flex-1">
+                  <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                  <input
+                    type="text"
+                    value={sphSearchTerm}
+                    onChange={(e) => setSphSearchTerm(e.target.value)}
+                    placeholder="Cari nomor SPH, klien, UP, atau deskripsi pekerjaan..."
+                    className="w-full pl-10 pr-4 py-2 bg-white border border-slate-300 rounded-xl text-xs font-bold text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-600 transition-all"
+                  />
+                  {sphSearchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setSphSearchTerm("")}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+                  {[
+                    { id: "ALL", label: "Semua SPH" },
+                    { id: "Disetujui", label: "Disetujui / ACC" },
+                    { id: "Jadi Proyek", label: "Jadi Proyek" },
+                    { id: "Terkirim", label: "Terkirim" },
+                    { id: "Draft", label: "Draft" },
+                  ].map((filter) => (
+                    <button
+                      key={filter.id}
+                      type="button"
+                      onClick={() => setSphStatusFilter(filter.id)}
+                      className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all shrink-0 cursor-pointer ${
+                        sphStatusFilter === filter.id
+                          ? "bg-indigo-600 text-white shadow-sm"
+                          : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      {filter.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* List of SPH Cards */}
+              <div className="p-4 sm:p-6 overflow-y-auto space-y-3.5 flex-1 bg-slate-100/50">
+                {(() => {
+                  const filtered = localQuotations.filter((q) => {
+                    const term = sphSearchTerm.toLowerCase();
+                    const matchesSearch =
+                      (q.number || "").toLowerCase().includes(term) ||
+                      (q.recipient || "").toLowerCase().includes(term) ||
+                      (q.attention || "").toLowerCase().includes(term) ||
+                      (q.jobDescription || "").toLowerCase().includes(term) ||
+                      (q.items || []).some((it) => (it.description || "").toLowerCase().includes(term));
+
+                    const matchesStatus =
+                      sphStatusFilter === "ALL" ||
+                      (sphStatusFilter === "Disetujui" && (q.status === "Disetujui" || q.status === "Jadi Proyek")) ||
+                      q.status === sphStatusFilter;
+
+                    return matchesSearch && matchesStatus;
+                  });
+
+                  if (filtered.length === 0) {
+                    return (
+                      <div className="py-12 px-4 text-center space-y-3 bg-white rounded-2xl border border-slate-200">
+                        <div className="w-12 h-12 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mx-auto">
+                          <FileSpreadsheet size={24} />
+                        </div>
+                        <p className="text-sm font-black text-slate-800">
+                          Tidak Ditemukan Surat Penawaran Harga
+                        </p>
+                        <p className="text-xs text-slate-500 max-w-md mx-auto">
+                          {sphSearchTerm
+                            ? `Tidak ada SPH yang cocok dengan kata kunci "${sphSearchTerm}". Coba kata kunci lain atau reset filter status.`
+                            : "Belum ada dokumen Surat Penawaran Harga (SPH) yang tersimpan di sistem."}
+                        </p>
+                        {sphSearchTerm && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSphSearchTerm("");
+                              setSphStatusFilter("ALL");
+                            }}
+                            className="px-4 py-2 bg-slate-900 text-white text-xs font-bold rounded-xl"
+                          >
+                            Reset Pencarian
+                          </button>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  return filtered.map((q) => {
+                    const statusColor =
+                      q.status === "Disetujui"
+                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                        : q.status === "Jadi Proyek"
+                        ? "bg-purple-50 text-purple-700 border-purple-200"
+                        : q.status === "Terkirim"
+                        ? "bg-blue-50 text-blue-700 border-blue-200"
+                        : q.status === "Ditolak"
+                        ? "bg-rose-50 text-rose-700 border-rose-200"
+                        : "bg-slate-100 text-slate-700 border-slate-200";
+
+                    return (
+                      <div
+                        key={q.id}
+                        className="bg-white p-4 sm:p-5 rounded-2xl border-2 border-slate-200 hover:border-indigo-400 hover:shadow-lg transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 group"
+                      >
+                        <div className="space-y-2 flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-xs font-black text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-1 rounded-lg">
+                              {q.number || "SPH TANPA NOMOR"}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-500">
+                              {q.date || "-"}
+                            </span>
+                            <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border ${statusColor}`}>
+                              {q.status || "Draft"}
+                            </span>
+                          </div>
+
+                          <div>
+                            <h4 className="font-black text-slate-900 text-sm sm:text-base leading-snug truncate">
+                              {q.recipient || "Nama Klien Belum Ditentukan"}
+                            </h4>
+                            {q.attention && (
+                              <p className="text-[11px] font-semibold text-slate-500">
+                                Up: {q.attention}
+                              </p>
+                            )}
+                          </div>
+
+                          {q.jobDescription && (
+                            <div className="flex items-center gap-1.5 text-xs text-slate-700 font-medium bg-slate-50 p-2 rounded-xl border border-slate-100">
+                              <Briefcase size={13} className="text-slate-400 shrink-0" />
+                              <span className="truncate">{q.jobDescription}</span>
+                            </div>
+                          )}
+
+                          {q.items && q.items.length > 0 && (
+                            <div className="text-[10px] text-slate-500 flex flex-wrap items-center gap-1.5 pt-1">
+                              <span className="font-bold text-slate-700">
+                                {q.items.length} Item:
+                              </span>
+                              {q.items.slice(0, 2).map((it, idx) => (
+                                <span
+                                  key={idx}
+                                  className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[9px] font-medium truncate max-w-[200px]"
+                                >
+                                  {it.description} ({it.vol || (it as any).qty || 1} {it.unit || "ls"})
+                                </span>
+                              ))}
+                              {q.items.length > 2 && (
+                                <span className="text-[9px] font-bold text-indigo-600">
+                                  +{q.items.length - 2} item lainnya
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-3 pt-3 sm:pt-0 border-t sm:border-t-0 border-slate-100 shrink-0">
+                          <div className="text-left sm:text-right">
+                            <span className="text-[9px] font-black uppercase tracking-wider text-slate-400 block">
+                              Total Nilai Penawaran
+                            </span>
+                            <span className="font-mono text-base sm:text-lg font-black text-slate-900 tracking-tight">
+                              Rp {(q.grandTotal || q.subTotal || 0).toLocaleString("id-ID")}
+                            </span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleImportFromQuotation(q)}
+                            className="px-5 py-2.5 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white rounded-xl text-xs font-black uppercase tracking-wider shadow-md hover:shadow-lg transition-all flex items-center gap-2 group-hover:scale-105 active:scale-95 cursor-pointer"
+                          >
+                            <span>Gunakan SPH Ini</span>
+                            <ArrowRight size={14} />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-4 bg-white border-t border-slate-200 flex items-center justify-between shrink-0">
+                <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">
+                  💡 Seluruh item penawaran, harga, PPN, dan profil klien akan disalin langsung ke form invoice.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsImportSPHModalOpen(false)}
+                  className="px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all ml-auto cursor-pointer"
+                >
+                  Tutup
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </AdminLayout>
@@ -26826,12 +27570,30 @@ const SuratJalanScreen = ({
   const [vehicleType, setVehicleType] = useState("Pickup");
   const [vehiclePlate, setVehiclePlate] = useState("");
   const [notes, setNotes] = useState("");
-  const [items, setItems] = useState<Array<{ qty: string; unit: string; name: string }>>([
-    { qty: "1", unit: "Pcs", name: "Pompa Submersible" },
+  const [items, setItems] = useState<
+    Array<{
+      qty: string | number;
+      unit: string;
+      name: string;
+      specifications?: Array<{ key: string; value: string }> | string;
+    }>
+  >([
+    {
+      qty: "1",
+      unit: "Pcs",
+      name: "Pompa Submersible",
+      specifications: [{ key: "Spesifikasi", value: "Tipe Sewage Pump 2 Inch" }],
+    },
   ]);
   const [logoImage, setLogoImage] = useState<string | null>(null);
   const [receivedByText, setReceivedByText] = useState("………………………");
   const [hormatKamiText, setHormatKamiText] = useState("………………………");
+  const [sjSignatureType, setSjSignatureType] = useState<"upload" | "blank">("blank");
+  const [sjSignature, setSjSignature] = useState<string>("");
+  const [sjSignerName, setSjSignerName] = useState<string>("Petugas Logistik / Admin");
+  const [sjSignerTitle, setSjSignerTitle] = useState<string>("Logistik & Ekspedisi");
+  const [isImageRepoOpen, setIsImageRepoOpen] = useState(false);
+  const [imageRepoTargetCategory, setImageRepoTargetCategory] = useState<"logo" | "signature">("signature");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   // Kop PT details (Matching Invoice/Company standard profile)
@@ -26841,13 +27603,13 @@ const SuratJalanScreen = ({
   );
   const [ptPhone, setPtPhone] = useState("0888-1687-794");
 
-  const addItem = () => setItems([...items, { qty: "1", unit: "Pcs", name: "" }]);
+  const addItem = () => setItems([...items, { qty: "1", unit: "Pcs", name: "", specifications: [] }]);
   const removeItem = (index: number) => {
     if (items.length > 1) {
       setItems(items.filter((_, i) => i !== index));
     }
   };
-  const updateItem = (index: number, field: string, value: string) => {
+  const updateItem = (index: number, field: string, value: any) => {
     const newItems = [...items];
     (newItems[index] as any)[field] = value;
     setItems(newItems);
@@ -26885,9 +27647,15 @@ const SuratJalanScreen = ({
     setVehiclePlate("B 1234 ABC");
     setDate(new Date().toISOString().split("T")[0]);
     setNotes("");
-    setItems([{ qty: "1", unit: "Pcs", name: "Pompa Submersible" }]);
+    setItems([
+      { qty: "1", unit: "Pcs", name: "Pompa Submersible", specifications: [{ key: "Spesifikasi", value: "Tipe Sewage Pump 2 Inch" }] }
+    ]);
     setReceivedByText("………………………");
-    setHormatKamiText("………………………");
+    setHormatKamiText("Petugas Logistik / Admin");
+    setSjSignerName("Petugas Logistik / Admin");
+    setSjSignerTitle("Logistik & Ekspedisi");
+    setSjSignatureType("blank");
+    setSjSignature("");
     setView("build");
   };
 
@@ -26903,6 +27671,10 @@ const SuratJalanScreen = ({
     setNotes(sj.notes || "");
     setReceivedByText(sj.receivedByText || "………………………");
     setHormatKamiText(sj.hormatKamiText || "………………………");
+    setSjSignatureType(sj.signatureType || (sj.signatureImage ? "upload" : "blank"));
+    setSjSignature(sj.signatureImage || sj.digitalSignatureUrl || "");
+    setSjSignerName(sj.signerName || sj.hormatKamiText || "Petugas Logistik / Admin");
+    setSjSignerTitle(sj.signerTitle || "Logistik & Ekspedisi");
     if (sj.logoImage) setLogoImage(sj.logoImage);
     if (sj.ptName) setPtName(sj.ptName);
     if (sj.ptAddress) setPtAddress(sj.ptAddress);
@@ -26912,12 +27684,12 @@ const SuratJalanScreen = ({
       try {
         setItems(JSON.parse(sj.itemsJson));
       } catch (e) {
-        setItems(sj.items || [{ qty: "1", unit: "Pcs", name: "" }]);
+        setItems(sj.items || [{ qty: "1", unit: "Pcs", name: "", specifications: [] }]);
       }
     } else if (sj.items) {
       setItems(sj.items);
     } else {
-      setItems([{ qty: "1", unit: "Pcs", name: "" }]);
+      setItems([{ qty: "1", unit: "Pcs", name: "", specifications: [] }]);
     }
     setView("build");
   };
@@ -26942,13 +27714,18 @@ const SuratJalanScreen = ({
       vehiclePlate,
       notes,
       receivedByText,
-      hormatKamiText,
+      hormatKamiText: sjSignerName || hormatKamiText,
+      signerName: sjSignerName || hormatKamiText,
+      signerTitle: sjSignerTitle,
+      signatureType: sjSignatureType,
+      signatureImage: sjSignature,
+      digitalSignatureUrl: sjSignature,
       logoImage,
       ptName,
       ptAddress,
       ptPhone,
       itemsJson: JSON.stringify(items),
-      items: items.map(item => ({ qty: item.qty, unit: item.unit, name: item.name })),
+      items: items.map(item => ({ qty: item.qty, unit: item.unit, name: item.name, specifications: item.specifications || [] })),
       createdAt: editingId
         ? suratJalanList.find((v) => v.id === editingId)?.createdAt || new Date().toISOString()
         : new Date().toISOString(),
@@ -27412,21 +28189,94 @@ const SuratJalanScreen = ({
                     </tr>
                   </thead>
                   <tbody className="divide-y-2 divide-slate-200">
-                    {items.map((item, idx) => (
-                      <tr key={idx} className="align-top hover:bg-slate-50/50 transition-colors">
-                        <td className="py-3 px-2 text-center font-black text-slate-800 border-r-2 border-slate-300 text-xs">
-                          {idx + 1}
-                        </td>
-                        <td className="py-2.5 px-3 border-r-2 border-slate-300">
-                          <input
-                            type="text"
-                            required
-                            value={item.name}
-                            onChange={(e) => updateItem(idx, "name", e.target.value)}
-                            placeholder="Nama atau spesifikasi barang yang dikirim..."
-                            className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-slate-800 outline-none"
-                          />
-                        </td>
+                    {items.map((item, idx) => {
+                      const currentSpecs = Array.isArray(item.specifications) ? item.specifications : [];
+                      return (
+                        <tr key={idx} className="align-top hover:bg-slate-50/50 transition-colors">
+                          <td className="py-3 px-2 text-center font-black text-slate-800 border-r-2 border-slate-300 text-xs">
+                            {idx + 1}
+                          </td>
+                          <td className="py-2.5 px-3 border-r-2 border-slate-300 space-y-2">
+                            <input
+                              type="text"
+                              required
+                              value={item.name}
+                              onChange={(e) => updateItem(idx, "name", e.target.value)}
+                              placeholder="Nama atau jenis barang yang dikirim..."
+                              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-slate-900 focus:border-slate-800 outline-none"
+                            />
+
+                            {/* SUB ROW SPESIFIKASI PERSIS SEPERTI GAMBAR SURAT PENAWARAN HARGA */}
+                            <div className="bg-slate-50 p-2.5 rounded-xl border border-dashed border-slate-300 space-y-2 text-[10px]">
+                              <span className="text-[9px] font-black uppercase text-slate-500 tracking-wider block">
+                                spesifikasi
+                              </span>
+
+                              {/* Tampilkan daftar spesifikasi yang sudah ditambahkan */}
+                              {currentSpecs.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5 mb-1.5">
+                                  {currentSpecs.map((sp: any, sIdx: number) => {
+                                    const rawKey = (sp.key || "").trim();
+                                    const hasKey = rawKey && rawKey !== "-";
+                                    return (
+                                      <span key={sIdx} className="inline-flex items-center gap-1 px-2 py-0.5 bg-white border border-slate-300 rounded-md text-[10px] text-slate-700">
+                                        {hasKey ? (
+                                          <span className="font-bold text-slate-700">{rawKey}:</span>
+                                        ) : null}
+                                        <span className="font-medium text-slate-800">{sp.value}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            const nextSpecs = [...currentSpecs];
+                                            nextSpecs.splice(sIdx, 1);
+                                            updateItem(idx, "specifications", nextSpecs);
+                                          }}
+                                          className="text-rose-500 hover:text-rose-700 font-black ml-0.5 cursor-pointer"
+                                        >
+                                          ×
+                                        </button>
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Inputs Spesifikasi: [ Label (Bisa Kosong) ] [ Nilai Spek ] [ + ] */}
+                              <div className="flex items-center gap-1.5">
+                                <input
+                                  type="text"
+                                  id={`sj-spec-key-${idx}`}
+                                  placeholder="Label Spek (opsional/bisa kosong)"
+                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[10px] font-semibold text-slate-800 outline-none focus:border-slate-700 placeholder:text-slate-400"
+                                />
+                                <input
+                                  type="text"
+                                  id={`sj-spec-val-${idx}`}
+                                  placeholder="Nilai Spek (misal: Seri/Merk/Ukuran)"
+                                  className="flex-1 px-2.5 py-1 bg-white border border-slate-300 rounded-lg text-[10px] font-semibold text-slate-800 outline-none focus:border-slate-700 placeholder:text-slate-400"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const kInput = document.getElementById(`sj-spec-key-${idx}`) as HTMLInputElement;
+                                    const vInput = document.getElementById(`sj-spec-val-${idx}`) as HTMLInputElement;
+                                    const k = kInput?.value?.trim() || "";
+                                    const v = vInput?.value?.trim() || "";
+                                    if (k || v) {
+                                      const cleanKey = (k === "-" ? "" : k);
+                                      updateItem(idx, "specifications", [...currentSpecs, { key: cleanKey, value: v }]);
+                                      if (kInput) kInput.value = "";
+                                      if (vInput) vInput.value = "";
+                                    }
+                                  }}
+                                  className="px-3 py-1 bg-slate-900 text-white rounded-lg font-black text-xs hover:bg-slate-800 transition-all cursor-pointer"
+                                  title="Tambah Spesifikasi"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          </td>
                         <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
                           <input
                             type="text"
@@ -27458,7 +28308,8 @@ const SuratJalanScreen = ({
                           </button>
                         </td>
                       </tr>
-                    ))}
+                    );
+                  })}
                   </tbody>
                 </table>
               </div>
@@ -27490,50 +28341,174 @@ const SuratJalanScreen = ({
                 />
               </div>
 
-              {/* 3 KOLOM TANDA TANGAN */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
-                <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-300 text-center space-y-2">
-                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">
-                    PENERIMA / CUSTOMER
+              {/* 2 KOLOM TANDA TANGAN (Pengemudi/Ekspedisi Dihapus Sesuai Permintaan) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                {/* Kolom 1: Penerima / Klien */}
+                <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-300 text-center space-y-3">
+                  <span className="text-xs font-black uppercase text-slate-700 tracking-wider block">
+                    PENERIMA / KLIEN
                   </span>
-                  <div className="h-16 flex items-center justify-center">
-                    <span className="text-[10px] text-slate-300 italic">(Tanda Tangan & Nama Terang)</span>
+                  <div className="h-28 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded-xl bg-white/70">
+                    <span className="text-[10px] text-slate-400 italic font-semibold">(Tanda Tangan & Cap Penerima)</span>
                   </div>
-                  <input
-                    type="text"
-                    value={receivedByText}
-                    onChange={(e) => setReceivedByText(e.target.value)}
-                    placeholder="Nama Terang Penerima"
-                    className="w-full px-2 py-1 text-center font-bold text-xs text-slate-900 bg-white border border-slate-300 rounded-lg outline-none"
-                  />
-                </div>
-
-                <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-300 text-center space-y-2">
-                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">
-                    PENGEMUDI / EKSPEDISI
-                  </span>
-                  <div className="h-16 flex items-center justify-center">
-                    <span className="text-[10px] text-slate-300 italic">(Tanda Tangan Driver)</span>
-                  </div>
-                  <div className="px-2 py-1 text-center font-bold text-xs text-slate-700 bg-white border border-slate-200 rounded-lg">
-                    Sopir Logistik ({vehiclePlate || "Driver"})
+                  <div className="space-y-1 text-left">
+                    <label className="text-[9px] font-black uppercase text-slate-500 tracking-wider">
+                      Nama Terang Penerima:
+                    </label>
+                    <input
+                      type="text"
+                      value={receivedByText}
+                      onChange={(e) => setReceivedByText(e.target.value)}
+                      placeholder="Nama Penerima / PIC Lapangan"
+                      className="w-full px-3 py-2 text-center font-black text-xs text-slate-900 bg-white border border-slate-300 rounded-xl outline-none focus:border-slate-800"
+                    />
                   </div>
                 </div>
 
-                <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-300 text-center space-y-2">
-                  <span className="text-[10px] font-black uppercase text-slate-500 tracking-wider block">
-                    HORMAT KAMI / PENGIRIM
-                  </span>
-                  <div className="h-16 flex items-center justify-center">
-                    <span className="text-[10px] text-slate-300 italic">(Tanda Tangan & Cap PT)</span>
+                {/* Kolom 2: Hormat Kami / Pengirim (Opsi: Upload Gambar TTD atau Kosongan) */}
+                <div className="bg-slate-50 p-4 rounded-2xl border-2 border-slate-300 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-black uppercase text-slate-700 tracking-wider">
+                      HORMAT KAMI / PENGIRIM
+                    </span>
+                    {/* Opsi: Upload Gambar atau Kosongan */}
+                    <div className="flex bg-slate-200 p-0.5 rounded-lg text-[9px] font-black">
+                      <button
+                        type="button"
+                        onClick={() => setSjSignatureType("upload")}
+                        className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                          sjSignatureType === "upload" ? "bg-slate-900 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        ✍️ Upload Gambar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSjSignatureType("blank")}
+                        className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                          sjSignatureType === "blank" ? "bg-slate-900 text-white shadow-xs" : "text-slate-600 hover:text-slate-900"
+                        }`}
+                      >
+                        📝 Kosongan (TTD Basah)
+                      </button>
+                    </div>
                   </div>
-                  <input
-                    type="text"
-                    value={hormatKamiText}
-                    onChange={(e) => setHormatKamiText(e.target.value)}
-                    placeholder="Petugas Logistik / Admin"
-                    className="w-full px-2 py-1 text-center font-bold text-xs text-slate-900 bg-white border border-slate-300 rounded-lg outline-none"
-                  />
+
+                  {sjSignatureType === "upload" ? (
+                    <div className="space-y-2">
+                      <input
+                        type="file"
+                        id="sj-signature-input"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) {
+                            const reader = new FileReader();
+                            reader.onload = async (ev) => {
+                              if (ev.target?.result) {
+                                let res = ev.target.result as string;
+                                try {
+                                  res = await compressImage(res, 600, 600, 0.85);
+                                } catch (_) {}
+                                setSjSignature(res);
+                                imageRepositoryService.saveImage(
+                                  res,
+                                  "signature",
+                                  file.name.replace(/\.[^/.]+$/, "")
+                                );
+                              }
+                            };
+                            reader.readAsDataURL(file);
+                          }
+                        }}
+                      />
+                      <div
+                        onClick={() => document.getElementById("sj-signature-input")?.click()}
+                        className="w-full h-28 border-2 border-slate-400 hover:border-slate-800 rounded-xl flex flex-col items-center justify-center p-2 cursor-pointer transition-all bg-white relative group select-none shadow-xs"
+                      >
+                        {sjSignature ? (
+                          <div className="w-full h-full flex flex-col items-center justify-center relative">
+                            <div className="w-full h-16 flex items-center justify-center p-1">
+                              <img src={sjSignature} alt="Tanda Tangan Digital" className="max-h-full max-w-full object-contain mx-auto" />
+                            </div>
+                            <span className="text-[9px] font-black text-slate-500 mt-0.5 group-hover:text-slate-900">
+                              Klik untuk ganti file TTD
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSjSignature("");
+                              }}
+                              className="absolute top-0 right-0 px-2 py-0.5 bg-rose-50 text-rose-600 rounded text-[9px] font-black border border-rose-200"
+                            >
+                              Hapus
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="text-center space-y-0.5">
+                            <span className="text-lg block">✍️</span>
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-800 block">
+                              UPLOAD TANDA TANGAN / CAP
+                            </span>
+                            <span className="text-[8px] text-slate-400 font-bold block">
+                              Klik untuk upload dari perangkat
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setImageRepoTargetCategory("signature");
+                          setIsImageRepoOpen(true);
+                        }}
+                        className="w-full py-1.5 px-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-900 border border-indigo-300 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs active:scale-95"
+                      >
+                        <FolderOpen size={12} className="text-indigo-700" />
+                        <span>Pilih dari Penampung TTD</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="h-28 flex flex-col items-center justify-center border border-dashed border-slate-300 rounded-xl bg-white/70 text-center p-3">
+                      <span className="text-xs font-mono text-slate-400">________________________</span>
+                      <span className="text-[9px] text-slate-400 font-bold mt-1">
+                        (Kosongan untuk tanda tangan basah & cap manual saat barang dikirim)
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left">
+                    <div className="space-y-0.5">
+                      <label className="text-[9px] font-black uppercase text-slate-500 tracking-wider">
+                        Nama Pengirim / Petugas:
+                      </label>
+                      <input
+                        type="text"
+                        value={sjSignerName}
+                        onChange={(e) => {
+                          setSjSignerName(e.target.value);
+                          setHormatKamiText(e.target.value);
+                        }}
+                        placeholder="Petugas Logistik / Admin"
+                        className="w-full px-3 py-1.5 font-bold text-xs text-slate-900 bg-white border border-slate-300 rounded-xl outline-none focus:border-slate-800"
+                      />
+                    </div>
+                    <div className="space-y-0.5">
+                      <label className="text-[9px] font-black uppercase text-slate-500 tracking-wider">
+                        Jabatan:
+                      </label>
+                      <input
+                        type="text"
+                        value={sjSignerTitle}
+                        onChange={(e) => setSjSignerTitle(e.target.value)}
+                        placeholder="Logistik & Ekspedisi"
+                        className="w-full px-3 py-1.5 font-bold text-xs text-slate-900 bg-white border border-slate-300 rounded-xl outline-none focus:border-slate-800"
+                      />
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -27586,12 +28561,17 @@ const SuratJalanScreen = ({
               vehiclePlate,
               notes,
               receivedByText,
-              hormatKamiText,
+              hormatKamiText: sjSignerName || hormatKamiText,
+              signerName: sjSignerName || hormatKamiText,
+              signerTitle: sjSignerTitle,
+              signatureType: sjSignatureType,
+              signatureImage: sjSignature,
+              digitalSignatureUrl: sjSignature,
               logoImage,
               ptName,
               ptAddress,
               ptPhone,
-              items: items.map(item => ({ qty: item.qty, unit: item.unit, name: item.name })),
+              items: items.map(item => ({ qty: item.qty, unit: item.unit, name: item.name, specifications: item.specifications || [] })),
             }}
             onSaveSuratJalan={async (updatedData) => {
               if (editingId) {
@@ -27601,6 +28581,24 @@ const SuratJalanScreen = ({
           />
         )}
       </AnimatePresence>
+
+      {/* Image Repository for Surat Jalan (Logo & Signature) */}
+      {isImageRepoOpen && (
+        <ImageRepositoryModal
+          isOpen={isImageRepoOpen}
+          onClose={() => setIsImageRepoOpen(false)}
+          targetCategory={imageRepoTargetCategory}
+          onSelectImage={(dataUrl, category) => {
+            if (imageRepoTargetCategory === "logo" || category === "logo") {
+              setLogoImage(dataUrl);
+            } else {
+              setSjSignature(dataUrl);
+              setSjSignatureType("upload");
+            }
+            setIsImageRepoOpen(false);
+          }}
+        />
+      )}
     </AdminLayout>
   );
 };
@@ -30833,6 +31831,7 @@ export default function App() {
   const [clients, setClients] = useState<Client[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selectedInvoiceForEdit, setSelectedInvoiceForEdit] = useState<any | null>(null);
+  const [selectedQuotationForInvoice, setSelectedQuotationForInvoice] = useState<Quotation | null>(null);
   const [financeSearchQuery, setFinanceSearchQuery] = useState<string>("");
   const [suratJalanList, setSuratJalanList] = useState<SuratJalan[]>([]);
   const [maintenanceRecords, setMaintenanceRecords] = useState<
@@ -46094,6 +47093,18 @@ export default function App() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
+                              setSelectedQuotationForInvoice(q);
+                              navigate("admin-invoices");
+                            }}
+                            className="w-12 h-12 flex items-center justify-center bg-indigo-50 text-indigo-600 rounded-2xl border border-indigo-100 hover:bg-indigo-600 hover:text-white transition-all active:scale-95 shadow-sm"
+                            title="Buat Invoice dari SPH ini (Ambil Data)"
+                          >
+                            <Receipt size={18} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setViewingQuotation(q);
                               setIsQuotationModalOpen(true);
                             }}
@@ -48606,12 +49617,15 @@ export default function App() {
           <AdminInvoicesScreen
             invoices={invoices}
             clients={clients}
+            quotations={quotations}
             onNavigate={navigate}
             user={currentUser}
             roles={roles}
             logActivity={logActivity}
             selectedInvoiceForEdit={selectedInvoiceForEdit}
             setSelectedInvoiceForEdit={setSelectedInvoiceForEdit}
+            selectedQuotationForInvoice={selectedQuotationForInvoice}
+            setSelectedQuotationForInvoice={setSelectedQuotationForInvoice}
           />
         );
 

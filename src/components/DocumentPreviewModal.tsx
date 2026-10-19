@@ -26,6 +26,7 @@ import {
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { imageRepositoryService } from "../services/imageRepositoryService";
+import { compressImage } from "../lib/utils";
 
 // Custom helper to parse and format clean specification lines without duplication
 const getCleanSpecLines = (item: any): string[] => {
@@ -229,7 +230,11 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const [sjDriverName, setSjDriverName] = useState("Sopir Logistik");
   const [sjNotes, setSjNotes] = useState("Barang harap dibongkar dengan hati-hati dan diperiksa kelengkapannya saat tiba di lokasi.");
   const [sjItems, setSjItems] = useState<any[]>([]);
-  const [sjSenderName, setSjSenderName] = useState("Petugas Gudang");
+  const [sjSenderName, setSjSenderName] = useState("Petugas Logistik / Admin");
+  const [sjSenderTitle, setSjSenderTitle] = useState("Logistik & Ekspedisi");
+  const [sjReceivedBy, setSjReceivedBy] = useState("Penerima / Klien");
+  const [sjSignatureType, setSjSignatureType] = useState<"upload" | "blank">("blank");
+  const [sjSignatureUrl, setSjSignatureUrl] = useState<string>("");
 
   // --- BOQ spec Data ---
   const [bName, setBName] = useState("");
@@ -288,7 +293,11 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         setInvDate(initialInvoiceData.invoiceDate || new Date().toISOString().substring(0, 10));
         setInvDueDate(initialInvoiceData.dueDate || "");
         setInvJobDesc(initialInvoiceData.jobName || initialInvoiceData.jobDescription || "");
-        setInvPoRef(initialInvoiceData.poRef || initialInvoiceData.poNumber || "-");
+        setInvPoRef(
+          initialInvoiceData.sphRefNumber
+            ? `SPH: ${initialInvoiceData.sphRefNumber}`
+            : initialInvoiceData.poRef || initialInvoiceData.poNumber || "-"
+        );
         setInvBankName(initialInvoiceData.bankName || "Mandiri");
         setInvBankHolder(initialInvoiceData.bankAccountName || "PT. GARDA INOVASI GLOBALTECH");
         setInvBankNumber(initialInvoiceData.bankAccountNumber || "1550014117173");
@@ -304,6 +313,7 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         setCompLogoUrl(initialInvoiceData.logoImage || "");
         setQPreparedBy(initialInvoiceData.signatoryName || "JIDAN RAMADHAN");
         setQPreparedByTitle(initialInvoiceData.signatoryTitle || "Direktur Keuangan");
+        setQDigitalSigUrl(initialInvoiceData.digitalSignatureUrl || initialInvoiceData.signatureImage || "");
 
         const cleanNum = (num || "INV").replace(/[^a-zA-Z0-9_-]/g, "_");
         setDownloadFileName(`INVOICE_${cleanNum}.pdf`);
@@ -343,6 +353,12 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         setSjNotes(initialSuratJalanData.notes || "Harap barang dibongkar dengan hati-hati.");
         setSjItems(initialSuratJalanData.items ? [...initialSuratJalanData.items] : []);
         setCompName(initialSuratJalanData.ptName || "PT. GARDA INOVASI GLOBALTECH");
+        setCompLogoUrl(initialSuratJalanData.logoImage || "");
+        setSjSignatureType(initialSuratJalanData.signatureType || (initialSuratJalanData.signatureImage ? "upload" : "blank"));
+        setSjSignatureUrl(initialSuratJalanData.signatureImage || initialSuratJalanData.digitalSignatureUrl || "");
+        setSjSenderName(initialSuratJalanData.signerName || initialSuratJalanData.hormatKamiText || "Petugas Logistik / Admin");
+        setSjSenderTitle(initialSuratJalanData.signerTitle || "Logistik & Ekspedisi");
+        setSjReceivedBy(initialSuratJalanData.receivedByText || "Penerima / Klien");
 
         const cleanNum = (num || "SJ").replace(/[^a-zA-Z0-9_-]/g, "_");
         setDownloadFileName(`SURAT_JALAN_${cleanNum}.pdf`);
@@ -494,7 +510,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           vehiclePlate: sjVehiclePlate,
           driverName: sjDriverName,
           notes: sjNotes,
-          items: sjItems
+          items: sjItems,
+          signatureType: sjSignatureType,
+          signatureImage: sjSignatureUrl,
+          digitalSignatureUrl: sjSignatureUrl,
+          signerName: sjSenderName,
+          signerTitle: sjSenderTitle,
+          receivedByText: sjReceivedBy,
         });
       }
       onClose();
@@ -1062,9 +1084,60 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       pdf.setTextColor(30, 41, 59);
       pdf.text("Berikut adalah rincian tagihan atas barang / pekerjaan yang telah diselesaikan:", marginSize, 85);
 
+      const invTableHeaders = ["NO", "URAIAN PEKERJAAN / BARANG", "QTY", "SATUAN", "HARGA SATUAN", "TOTAL BIAYA"];
+      const col0W = 10;
+      const col2W = 13;
+      const col3W = 18;
+      const col4W = 27;
+      const col5W = 28;
+      const col1W = (pageWidth - marginSize * 2) - (col0W + col2W + col3W + col4W + col5W);
+
+      const parsedInvRows = invItems.map((item) => {
+        const itemTitle = (item.description || item.name || "").trim();
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(baseFontSize);
+        const titleLines: string[] = itemTitle ? pdf.splitTextToSize(itemTitle, col1W - 6) : ["-"];
+
+        let specs: { key: string; value: string }[] = [];
+        if (item.specifications) {
+          if (Array.isArray(item.specifications)) specs = item.specifications;
+          else if (typeof item.specifications === "string") {
+            specs = item.specifications.split("\n").filter(Boolean).map((l: string) => {
+              const parts = l.split(":");
+              return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
+            });
+          }
+        }
+        const validSpecs = specs.filter(s => s && (s.key || s.value));
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(baseFontSize - 1);
+        const parsedSpecs = validSpecs.map(sp => {
+          const rawKey = (sp.key || "").trim();
+          const hasKey = Boolean(rawKey && rawKey !== "-");
+          const k = hasKey ? rawKey.toUpperCase() : "";
+          const v = (sp.value || "").trim();
+          const valMaxWidth = col1W - 28;
+          const valLines: string[] = v ? pdf.splitTextToSize(v, valMaxWidth) : [""];
+          return { hasKey, key: k, valLines };
+        });
+
+        const lineStep = tableDensity === "compact" ? 2.8 : tableDensity === "spacious" ? 3.6 : 3.2;
+        const titleH = titleLines.length * (lineStep + 0.2);
+        let specsH = 0;
+        if (parsedSpecs.length > 0) {
+          specsH = 1.4;
+          parsedSpecs.forEach(ps => {
+            specsH += Math.max(1, ps.valLines.length) * (lineStep - 0.2) + 0.4;
+          });
+        }
+        const totalHeight = 2.0 + titleH + specsH + 3.0;
+        return { titleLines, parsedSpecs, totalHeight: Math.max(8, totalHeight) };
+      });
+
       const invTableRows = invItems.map((item, index) => [
         String(index + 1),
-        item.description || "-",
+        "",
         String(item.qty || 1),
         item.unit || "Unit",
         `Rp ${Number(item.price || 0).toLocaleString("id-ID")}`,
@@ -1098,15 +1171,67 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       ]);
 
       autoTable(pdf, {
-        head: [["NO", "DESKRIPSI TAGIHAN", "QTY", "SATUAN", "HARGA SATUAN", "TOTAL BIAYA"]],
+        head: [invTableHeaders],
         body: invTableRows,
         foot: invFootRows,
         startY: 89,
-        margin: { left: marginSize, right: marginSize },
+        margin: { left: marginSize, right: marginSize, bottom: 15 },
         theme: "grid",
-        styles: { fontSize: baseFontSize, cellPadding: cellPad, textColor: [15, 23, 42], lineColor: [203, 213, 225], lineWidth: 0.1 },
-        headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: "bold", halign: "center" },
-        columnStyles: { 0: { cellWidth: 10, halign: "center" }, 2: { cellWidth: 14, halign: "center" }, 3: { cellWidth: 18, halign: "center" }, 4: { cellWidth: 28, halign: "right" }, 5: { cellWidth: 28, halign: "right" } }
+        styles: { fontSize: baseFontSize, cellPadding: cellPad, textColor: [15, 23, 42], lineColor: [203, 213, 225], lineWidth: 0.1, valign: "top" },
+        headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: "bold", halign: "center", lineColor: [23, 37, 84], lineWidth: 0.1, fontSize: baseFontSize, cellPadding: 2.2 },
+        footStyles: { fillColor: [248, 250, 252], textColor: [15, 23, 42], fontStyle: "bold", lineColor: [203, 213, 225], lineWidth: 0.1, cellPadding: cellPad },
+        columnStyles: {
+          0: { halign: "center", cellWidth: col0W, fontStyle: "bold", valign: "top" },
+          1: { halign: "left", cellWidth: col1W, valign: "top" },
+          2: { halign: "center", cellWidth: col2W, valign: "top" },
+          3: { halign: "center", cellWidth: col3W, valign: "top" },
+          4: { halign: "right", cellWidth: col4W, valign: "top" },
+          5: { halign: "right", cellWidth: col5W, valign: "top" }
+        },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        didParseCell: (data) => {
+          if (data.section === "body") {
+            const parsed = parsedInvRows[data.row.index];
+            if (parsed) data.cell.styles.minCellHeight = parsed.totalHeight;
+            if (data.column.index === 1) data.cell.text = [];
+          }
+        },
+        didDrawCell: (data) => {
+          if (data.section === "body" && data.column.index === 1) {
+            const parsed = parsedInvRows[data.row.index];
+            if (parsed) {
+              let curY = data.cell.y + 2.2;
+              pdf.setFont("helvetica", "bold");
+              pdf.setFontSize(baseFontSize);
+              pdf.setTextColor(15, 23, 42);
+              parsed.titleLines.forEach((tLine: string) => {
+                curY += 2.6;
+                pdf.text(tLine, data.cell.x + 3, curY);
+                curY += 0.5;
+              });
+
+              if (parsed.parsedSpecs.length > 0) {
+                curY += 1.4;
+                pdf.setFont("helvetica", "normal");
+                pdf.setFontSize(baseFontSize - 1);
+                parsed.parsedSpecs.forEach((sp) => {
+                  const specLineStartY = curY + 2.2;
+                  if (sp.hasKey) {
+                    pdf.setTextColor(71, 85, 105);
+                    pdf.text(sp.key, data.cell.x + 3, specLineStartY);
+                    pdf.text(":", data.cell.x + 23, specLineStartY);
+                  }
+                  pdf.setTextColor(15, 23, 42);
+                  sp.valLines.forEach((vl: string, vlIdx: number) => {
+                    const lineY = specLineStartY + (vlIdx * 2.8);
+                    pdf.text(vl, data.cell.x + 26, lineY);
+                  });
+                  curY += Math.max(1, sp.valLines.length) * 2.8 + 0.4;
+                });
+              }
+            }
+          }
+        }
       });
 
       let finalY = (pdf as any).lastAutoTable.finalY + 5;
@@ -1307,28 +1432,127 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       pdf.setTextColor(30, 41, 59);
       pdf.text("Harap diterima dengan baik barang-barang yang tertera di bawah ini:", marginSize, 85);
 
-      // Surat jalan does NOT have money prices, only Qty and Condition
+      const sjTableHeaders = ["NO", "NAMA BARANG & SPESIFIKASI", "JUMLAH", "SATUAN", "KONDISI / KETERANGAN"];
+      const col0W = 10;
+      const col2W = 16;
+      const col3W = 18;
+      const col4W = 34;
+      const col1W = (pageWidth - marginSize * 2) - (col0W + col2W + col3W + col4W);
+
+      const parsedSjRows = sjItems.map((item) => {
+        const itemTitle = (item.description || item.name || "").trim();
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(baseFontSize);
+        const titleLines: string[] = itemTitle ? pdf.splitTextToSize(itemTitle, col1W - 6) : ["-"];
+
+        let specs: { key: string; value: string }[] = [];
+        if (item.specifications) {
+          if (Array.isArray(item.specifications)) specs = item.specifications;
+          else if (typeof item.specifications === "string") {
+            specs = item.specifications.split("\n").filter(Boolean).map((l: string) => {
+              const parts = l.split(":");
+              return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
+            });
+          }
+        }
+        const validSpecs = specs.filter(s => s && (s.key || s.value));
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(baseFontSize - 1);
+        const parsedSpecs = validSpecs.map(sp => {
+          const rawKey = (sp.key || "").trim();
+          const hasKey = Boolean(rawKey && rawKey !== "-");
+          const k = hasKey ? rawKey.toUpperCase() : "";
+          const v = (sp.value || "").trim();
+          const valMaxWidth = col1W - 28;
+          const valLines: string[] = v ? pdf.splitTextToSize(v, valMaxWidth) : [""];
+          return { hasKey, key: k, valLines };
+        });
+
+        const lineStep = tableDensity === "compact" ? 2.8 : tableDensity === "spacious" ? 3.6 : 3.2;
+        const titleH = titleLines.length * (lineStep + 0.2);
+        let specsH = 0;
+        if (parsedSpecs.length > 0) {
+          specsH = 1.4;
+          parsedSpecs.forEach(ps => {
+            specsH += Math.max(1, ps.valLines.length) * (lineStep - 0.2) + 0.4;
+          });
+        }
+        const totalHeight = 2.0 + titleH + specsH + 3.0;
+        return { titleLines, parsedSpecs, totalHeight: Math.max(8, totalHeight) };
+      });
+
       const sjTableRows = sjItems.map((item, index) => [
         String(index + 1),
-        item.description || item.name || "-",
+        "",
         String(item.qty || 1),
         item.unit || "Unit",
         item.condition || "Baik & Lengkap"
       ]);
 
       autoTable(pdf, {
-        head: [["NO", "NAMA BARANG & SPESIFIKASI", "JUMLAH", "SATUAN", "KONDISI / KETERANGAN"]],
+        head: [sjTableHeaders],
         body: sjTableRows,
         startY: 89,
-        margin: { left: marginSize, right: marginSize },
+        margin: { left: marginSize, right: marginSize, bottom: 15 },
         theme: "grid",
-        styles: { fontSize: baseFontSize, cellPadding: cellPad, textColor: [15, 23, 42], lineColor: [203, 213, 225], lineWidth: 0.1 },
-        headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: "bold", halign: "center" },
-        columnStyles: { 0: { cellWidth: 10, halign: "center" }, 2: { cellWidth: 18, halign: "center" }, 3: { cellWidth: 20, halign: "center" }, 4: { cellWidth: 35, halign: "center" } }
+        styles: { fontSize: baseFontSize, cellPadding: cellPad, textColor: [15, 23, 42], lineColor: [203, 213, 225], lineWidth: 0.1, valign: "top" },
+        headStyles: { fillColor: [30, 58, 138], textColor: [255, 255, 255], fontStyle: "bold", halign: "center", lineColor: [23, 37, 84], lineWidth: 0.1, fontSize: baseFontSize, cellPadding: 2.2 },
+        columnStyles: {
+          0: { halign: "center", cellWidth: col0W, fontStyle: "bold", valign: "top" },
+          1: { halign: "left", cellWidth: col1W, valign: "top" },
+          2: { halign: "center", cellWidth: col2W, valign: "top" },
+          3: { halign: "center", cellWidth: col3W, valign: "top" },
+          4: { halign: "center", cellWidth: col4W, valign: "top" }
+        },
+        alternateRowStyles: { fillColor: [248, 250, 252] },
+        didParseCell: (data) => {
+          if (data.section === "body") {
+            const parsed = parsedSjRows[data.row.index];
+            if (parsed) data.cell.styles.minCellHeight = parsed.totalHeight;
+            if (data.column.index === 1) data.cell.text = [];
+          }
+        },
+        didDrawCell: (data) => {
+          if (data.section === "body" && data.column.index === 1) {
+            const parsed = parsedSjRows[data.row.index];
+            if (parsed) {
+              let curY = data.cell.y + 2.2;
+              pdf.setFont("helvetica", "bold");
+              pdf.setFontSize(baseFontSize);
+              pdf.setTextColor(15, 23, 42);
+              parsed.titleLines.forEach((tLine: string) => {
+                curY += 2.6;
+                pdf.text(tLine, data.cell.x + 3, curY);
+                curY += 0.5;
+              });
+
+              if (parsed.parsedSpecs.length > 0) {
+                curY += 1.4;
+                pdf.setFont("helvetica", "normal");
+                pdf.setFontSize(baseFontSize - 1);
+                parsed.parsedSpecs.forEach((sp) => {
+                  const specLineStartY = curY + 2.2;
+                  if (sp.hasKey) {
+                    pdf.setTextColor(71, 85, 105);
+                    pdf.text(sp.key, data.cell.x + 3, specLineStartY);
+                    pdf.text(":", data.cell.x + 23, specLineStartY);
+                  }
+                  pdf.setTextColor(15, 23, 42);
+                  sp.valLines.forEach((vl: string, vlIdx: number) => {
+                    const lineY = specLineStartY + (vlIdx * 2.8);
+                    pdf.text(vl, data.cell.x + 26, lineY);
+                  });
+                  curY += Math.max(1, sp.valLines.length) * 2.8 + 0.4;
+                });
+              }
+            }
+          }
+        }
       });
 
       let finalY = (pdf as any).lastAutoTable.finalY + 8;
-      if (finalY > 240) {
+      if (finalY > 230) {
         pdf.addPage();
         finalY = 20;
       }
@@ -1336,27 +1560,55 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
       // Notes
       pdf.setFont("helvetica", "italic");
       pdf.setFontSize(7.5);
+      pdf.setTextColor(71, 85, 105);
       pdf.text(`Catatan: ${sjNotes}`, marginSize, finalY);
       finalY += 8;
 
-      // 3 Columns Signatures for Surat Jalan: Pengirim, Supir, Penerima
-      const colW = (pageWidth - marginSize * 2) / 3;
+      // 2 Columns Signatures for Surat Jalan (Driver/Supir Dihapus Sesuai Permintaan)
+      const colW = (pageWidth - marginSize * 2) / 2;
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(8);
-      pdf.text("Yang Menyerahkan / Gudang :", marginSize, finalY);
-      pdf.text("Pengemudi / Supir :", marginSize + colW, finalY);
-      pdf.text("Penerima / Klien :", marginSize + colW * 2, finalY);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text("Penerima / Klien :", marginSize, finalY);
+      pdf.text("Hormat Kami / Pengirim :", marginSize + colW, finalY);
 
-      finalY += 20;
-      pdf.line(marginSize, finalY, marginSize + 40, finalY);
-      pdf.line(marginSize + colW, finalY, marginSize + colW + 40, finalY);
-      pdf.line(marginSize + colW * 2, finalY, marginSize + colW * 2 + 40, finalY);
+      // Height for signature area
+      let sigH = 18;
+      if (sjSignatureType === "upload" && sjSignatureUrl && showDigitalStamp) {
+        try {
+          const sigDim = await getImageDimensions(sjSignatureUrl);
+          const maxW = 38;
+          const maxH = 16;
+          let drawW = maxW;
+          let drawH = drawW / sigDim.ratio;
+          if (drawH > maxH) {
+            drawH = maxH;
+            drawW = drawH * sigDim.ratio;
+          }
+          pdf.addImage(sjSignatureUrl, "PNG", marginSize + colW + 2, finalY + 3, drawW, drawH);
+          sigH = Math.max(18, drawH + 4);
+        } catch (_) {
+          sigH = 18;
+        }
+      }
+
+      finalY += sigH;
+      pdf.setDrawColor(30, 41, 59);
+      pdf.setLineWidth(0.2);
+      pdf.line(marginSize, finalY, marginSize + 48, finalY);
+      pdf.line(marginSize + colW, finalY, marginSize + colW + 48, finalY);
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(sjReceivedBy || "(.........................)", marginSize, finalY + 4);
+      pdf.text(sjSenderName || "(.........................)", marginSize + colW, finalY + 4);
 
       pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(7.5);
-      pdf.text(sjSenderName || "(.........................)", marginSize, finalY + 4);
-      pdf.text(sjDriverName || "(.........................)", marginSize + colW, finalY + 4);
-      pdf.text("(Tanda Tangan & Cap)", marginSize + colW * 2, finalY + 4);
+      pdf.setFontSize(7);
+      pdf.setTextColor(71, 85, 105);
+      pdf.text("(Tanda Tangan & Cap Penerima)", marginSize, finalY + 8);
+      pdf.text(sjSenderTitle || "Logistik & Ekspedisi", marginSize + colW, finalY + 8);
     }
 
     // Save with the user's customized download file name (Request 1)
@@ -1625,6 +1877,90 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                     )}
                   </div>
                 )}
+
+                {/* 5. Pengaturan Tanda Tangan Surat Jalan */}
+                {type === "surat_jalan" && (
+                  <div className="space-y-2.5 border-t border-slate-800/80 pt-3">
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="font-bold text-slate-300">Tanda Tangan Surat Jalan:</span>
+                      <div className="flex bg-slate-900 p-0.5 rounded-lg text-[8px] font-black">
+                        <button
+                          type="button"
+                          onClick={() => setSjSignatureType("upload")}
+                          className={`px-2.5 py-1 rounded transition-all cursor-pointer ${
+                            sjSignatureType === "upload" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          ✍️ Gambar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSjSignatureType("blank")}
+                          className={`px-2.5 py-1 rounded transition-all cursor-pointer ${
+                            sjSignatureType === "blank" ? "bg-indigo-600 text-white" : "text-slate-400 hover:text-slate-200"
+                          }`}
+                        >
+                          📝 Kosongan
+                        </button>
+                      </div>
+                    </div>
+
+                    {sjSignatureType === "upload" && (
+                      <div className="space-y-2 bg-slate-900 p-2.5 rounded-xl border border-slate-800">
+                        <input
+                          type="file"
+                          id="modal-sj-sig-input"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              const reader = new FileReader();
+                              reader.onload = async (ev) => {
+                                if (ev.target?.result) {
+                                  let res = ev.target.result as string;
+                                  try {
+                                    res = await compressImage(res, 600, 600, 0.85);
+                                  } catch (_) {}
+                                  setSjSignatureUrl(res);
+                                }
+                              };
+                              reader.readAsDataURL(file);
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => document.getElementById("modal-sj-sig-input")?.click()}
+                          className="w-full py-2 px-3 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                        >
+                          <span>{sjSignatureUrl ? "Ganti File TTD" : "+ Upload File TTD"}</span>
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2 text-[9px]">
+                      <div>
+                        <label className="text-slate-400 font-bold block mb-0.5">Nama Petugas:</label>
+                        <input
+                          type="text"
+                          value={sjSenderName}
+                          onChange={(e) => setSjSenderName(e.target.value)}
+                          className="w-full px-2.5 py-1 bg-slate-900 border border-slate-700 rounded text-xs text-white outline-none"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-400 font-bold block mb-0.5">Jabatan:</label>
+                        <input
+                          type="text"
+                          value={sjSenderTitle}
+                          onChange={(e) => setSjSenderTitle(e.target.value)}
+                          className="w-full px-2.5 py-1 bg-slate-900 border border-slate-700 rounded text-xs text-white outline-none"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
             </div>
@@ -1830,6 +2166,9 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                     </div>
                     <div className="space-y-1">
                       <div className="flex"><span className="w-20 text-slate-500 font-bold">No. Invoice</span><span className="w-3">:</span><span className="font-extrabold text-slate-900">{invNum || "-"}</span></div>
+                      {invPoRef && invPoRef !== "-" && (
+                        <div className="flex"><span className="w-20 text-slate-500 font-bold">Ref. Dokumen</span><span className="w-3">:</span><span className="font-bold text-indigo-700">{invPoRef}</span></div>
+                      )}
                       <div className="flex"><span className="w-20 text-slate-500 font-bold">Tanggal</span><span className="w-3">:</span><span className="font-bold text-slate-800">{invDate || "-"}</span></div>
                       <div className="flex"><span className="w-20 text-slate-500 font-bold">Jatuh Tempo</span><span className="w-3">:</span><span className="font-bold text-slate-800">{invDueDate || "-"}</span></div>
                     </div>
@@ -1850,7 +2189,38 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                       {invItems.map((item, idx) => (
                         <tr key={idx} className="hover:bg-slate-50">
                           <td className="px-2 py-1 text-center font-bold">{idx + 1}</td>
-                          <td className="px-2 py-1 font-bold text-slate-900">{item.description}</td>
+                          <td className="px-2 py-1 font-bold text-slate-900">
+                            {item.description || item.name}
+                            {(() => {
+                              let specs: any[] = [];
+                              if (item.specifications) {
+                                if (Array.isArray(item.specifications)) specs = item.specifications;
+                                else if (typeof item.specifications === "string") {
+                                  specs = item.specifications.split("\n").filter(Boolean).map((l: string) => {
+                                    const parts = l.split(":");
+                                    return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
+                                  });
+                                }
+                              }
+                              const validSpecs = specs.filter(s => s && (s.key || s.value));
+                              if (validSpecs.length === 0) return null;
+                              return (
+                                <div className="mt-1 space-y-0.5 text-[7px] text-slate-600 font-normal">
+                                  {validSpecs.map((sp: any, sIdx: number) => {
+                                    const rawKey = (sp.key || "").trim();
+                                    const hasKey = rawKey && rawKey !== "-";
+                                    return (
+                                      <div key={sIdx} className="grid grid-cols-[70px_8px_1fr]">
+                                        <span className="text-slate-600">{hasKey ? rawKey.toUpperCase() : ""}</span>
+                                        <span className="text-slate-400">{hasKey ? ":" : ""}</span>
+                                        <span className="text-slate-900">{sp.value}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
+                          </td>
                           <td className="px-2 py-1 text-center font-bold">{item.qty || 1}</td>
                           <td className="px-2 py-1 text-center font-bold">{item.unit || "Unit"}</td>
                           <td className="px-2 py-1 text-right font-mono">Rp {Number(item.price || 0).toLocaleString("id-ID")}</td>
@@ -1890,7 +2260,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                   <div className={`pt-2 ${sigAlign === "center" ? "text-center" : "text-left"}`}>
                     <p className="text-[8px] text-slate-600">Hormat kami,</p>
                     <p className="text-[8.5px] font-bold text-slate-900">{compName}</p>
-                    <div className="h-10" />
+                    {qDigitalSigUrl && showDigitalStamp ? (
+                      <div className={`py-1 flex ${sigAlign === "center" ? "justify-center" : "justify-start"}`}>
+                        <img src={qDigitalSigUrl} alt="TTD" className="max-h-12 object-contain" />
+                      </div>
+                    ) : (
+                      <div className="h-10" />
+                    )}
                     <p className="text-[8px] font-black text-slate-900 inline-block border-b border-slate-800 pb-0.5 tracking-wider">{qPreparedBy.toUpperCase()}</p>
                     <p className="text-[7.5px] text-slate-500 font-medium">{qPreparedByTitle}</p>
                   </div>
@@ -2009,7 +2385,38 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                       {sjItems.map((item, idx) => (
                         <tr key={idx} className="hover:bg-slate-50">
                           <td className="px-2 py-1 text-center font-bold">{idx + 1}</td>
-                          <td className="px-2 py-1 font-bold text-slate-900">{item.description || item.name}</td>
+                          <td className="px-2 py-1 font-bold text-slate-900">
+                            {item.description || item.name}
+                            {(() => {
+                              let specs: any[] = [];
+                              if (item.specifications) {
+                                if (Array.isArray(item.specifications)) specs = item.specifications;
+                                else if (typeof item.specifications === "string") {
+                                  specs = item.specifications.split("\n").filter(Boolean).map((l: string) => {
+                                    const parts = l.split(":");
+                                    return { key: parts[0]?.trim() || "", value: parts.slice(1).join(":")?.trim() || "" };
+                                  });
+                                }
+                              }
+                              const validSpecs = specs.filter(s => s && (s.key || s.value));
+                              if (validSpecs.length === 0) return null;
+                              return (
+                                <div className="mt-1 space-y-0.5 text-[7px] text-slate-600 font-normal">
+                                  {validSpecs.map((sp: any, sIdx: number) => {
+                                    const rawKey = (sp.key || "").trim();
+                                    const hasKey = rawKey && rawKey !== "-";
+                                    return (
+                                      <div key={sIdx} className="grid grid-cols-[70px_8px_1fr]">
+                                        <span className="text-slate-600">{hasKey ? rawKey.toUpperCase() : ""}</span>
+                                        <span className="text-slate-400">{hasKey ? ":" : ""}</span>
+                                        <span className="text-slate-900">{sp.value}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
+                          </td>
                           <td className="px-2 py-1 text-center font-bold">{item.qty || 1}</td>
                           <td className="px-2 py-1 text-center font-bold">{item.unit || "Unit"}</td>
                           <td className="px-2 py-1 text-center text-slate-600 font-medium">{item.condition || "Baik & Lengkap"}</td>
@@ -2020,21 +2427,33 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
 
                   <p className="text-[7.5px] italic text-slate-600">Catatan: {sjNotes}</p>
 
-                  <div className="grid grid-cols-3 gap-4 pt-4 text-center">
-                    <div>
-                      <p className="text-[8px] font-bold text-slate-800">Yang Menyerahkan:</p>
-                      <div className="h-10" />
-                      <p className="text-[8px] font-black text-slate-900 border-b border-slate-800 inline-block pb-0.5">{sjSenderName}</p>
-                    </div>
-                    <div>
-                      <p className="text-[8px] font-bold text-slate-800">Pengemudi / Supir:</p>
-                      <div className="h-10" />
-                      <p className="text-[8px] font-black text-slate-900 border-b border-slate-800 inline-block pb-0.5">{sjDriverName}</p>
-                    </div>
+                  {/* 2 KOLOM TANDA TANGAN SURAT JALAN (PENGEMUDI DIHAPUS) */}
+                  <div className="grid grid-cols-2 gap-8 pt-4 text-center">
                     <div>
                       <p className="text-[8px] font-bold text-slate-800">Penerima / Klien:</p>
-                      <div className="h-10" />
-                      <p className="text-[8px] font-black text-slate-900 border-b border-slate-800 inline-block pb-0.5">(.........................)</p>
+                      <div className="h-12 flex items-center justify-center">
+                        <span className="text-[7.5px] text-slate-300 italic">(Tanda Tangan & Cap Penerima)</span>
+                      </div>
+                      <p className="text-[8px] font-black text-slate-900 border-b border-slate-800 inline-block pb-0.5">
+                        {sjReceivedBy || "(.........................)"}
+                      </p>
+                      <p className="text-[7px] text-slate-500 font-medium">Penerima / PIC Lapangan</p>
+                    </div>
+                    <div>
+                      <p className="text-[8px] font-bold text-slate-800">Hormat Kami / Pengirim:</p>
+                      {sjSignatureType === "upload" && sjSignatureUrl && showDigitalStamp ? (
+                        <div className="h-12 flex items-center justify-center py-0.5">
+                          <img src={sjSignatureUrl} alt="TTD" className="max-h-12 object-contain" />
+                        </div>
+                      ) : (
+                        <div className="h-12 flex items-center justify-center">
+                          <span className="text-[7.5px] text-slate-300 italic">(Tanda Tangan Basah)</span>
+                        </div>
+                      )}
+                      <p className="text-[8px] font-black text-slate-900 border-b border-slate-800 inline-block pb-0.5">
+                        {sjSenderName || "(.........................)"}
+                      </p>
+                      <p className="text-[7px] text-slate-500 font-medium">{sjSenderTitle || "Logistik & Ekspedisi"}</p>
                     </div>
                   </div>
                 </div>
