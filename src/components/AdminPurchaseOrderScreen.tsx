@@ -18,11 +18,13 @@ import {
   CheckCircle,
   FileCheck,
   AlertCircle,
-  ChevronLeft
+  ChevronLeft,
+  FileSpreadsheet,
+  Percent
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
-import { PurchaseOrder, PurchaseOrderItem, ScreenId } from "../types";
+import { PurchaseOrder, PurchaseOrderItem, ScreenId, Quotation } from "../types";
 import { dbService } from "../services/db";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
 
@@ -30,12 +32,18 @@ interface AdminPurchaseOrderScreenProps {
   onNavigate: (s: ScreenId) => void;
   currentUser: any;
   logActivity?: (message: string, action: string, details: string) => Promise<void>;
+  quotations?: Quotation[];
+  selectedQuotationForPO?: Quotation | null;
+  setSelectedQuotationForPO?: (q: Quotation | null) => void;
 }
 
 export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> = ({
   onNavigate,
   currentUser,
-  logActivity
+  logActivity,
+  quotations = [],
+  selectedQuotationForPO,
+  setSelectedQuotationForPO
 }) => {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,6 +80,18 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
   const [shippingLabel, setShippingLabel] = useState("ONGKOS PENGIRIMAN SUPPLIER");
   const [shippingCost, setShippingCost] = useState(0);
   const [logoImage, setLogoImage] = useState<string | null>(null);
+
+  // Diskon (Persen & Nominal Rupiah seperti di SPH dan Invoice)
+  const [includeDiscount, setIncludeDiscount] = useState<boolean>(false);
+  const [discountType, setDiscountType] = useState<"percent" | "rupiah">("rupiah");
+  const [discountVal, setDiscountVal] = useState<number>(0);
+
+  // SPH (Surat Penawaran Harga) Import States
+  const [localQuotations, setLocalQuotations] = useState<Quotation[]>(quotations || []);
+  const [isImportSPHModalOpen, setIsImportSPHModalOpen] = useState(false);
+  const [sphSearchTerm, setSphSearchTerm] = useState("");
+  const [sphStatusFilter, setSphStatusFilter] = useState("ALL");
+  const [sphRefNumber, setSphRefNumber] = useState("");
 
   const [ketentuan, setKetentuan] = useState<string[]>([
     "Pembayaran : Pelunasan 100% saat barang diterima dan dokumentasi penagihan dokumentasi penagihan diterima dengan baik, lengkap diterima dengan baik, lengkap dan benar oleh PT. GARDA INOVASI GLOBALTECH",

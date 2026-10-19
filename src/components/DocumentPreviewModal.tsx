@@ -159,6 +159,11 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const [includeDownPayment, setIncludeDownPayment] = useState<boolean>(false);
   const [downPaymentLabel, setDownPaymentLabel] = useState<string>("DOWN PAYMENT (DP)");
   const [downPaymentPercent, setDownPaymentPercent] = useState<number>(50);
+  const [paymentStages, setPaymentStages] = useState<
+    Array<{ id?: string; label: string; percent: number }>
+  >([
+    { id: "1", label: "DOWN PAYMENT (DP)", percent: 50 }
+  ]);
 
   // --- DYNAMIC DISCOUNTS, TAX & COMPANY CREDENTIALS STATE ---
   const [includeDiscount, setIncludeDiscount] = useState<boolean>(false);
@@ -332,6 +337,11 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         setIncludeDownPayment(isDp);
         setDownPaymentPercent(dpPct);
         setDownPaymentLabel(dpLbl);
+        if (initialInvoiceData.paymentStages && Array.isArray(initialInvoiceData.paymentStages) && initialInvoiceData.paymentStages.length > 0) {
+          setPaymentStages(initialInvoiceData.paymentStages);
+        } else {
+          setPaymentStages([{ id: "1", label: dpLbl, percent: dpPct }]);
+        }
 
         setCompName(initialInvoiceData.companyName || "PT. GARDA INOVASI GLOBALTECH");
         setCompLogoUrl(initialInvoiceData.logoImage || "");
@@ -431,8 +441,11 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const invShipping = includeShipping ? Number(shippingCost || 0) : 0;
   const invTax = includePPN ? Math.round(invTaxBase * (taxRate / 100)) : 0;
   const invTotalFullProject = invTaxBase + invShipping + invTax;
+  const invTotalStagesPercent = includeDownPayment
+    ? paymentStages.reduce((acc, s) => acc + (Number(s.percent) || 0), 0)
+    : 100;
   const invDownPaymentAmount = includeDownPayment
-    ? Math.round((invTotalFullProject * downPaymentPercent) / 100)
+    ? Math.round((invTotalFullProject * invTotalStagesPercent) / 100)
     : 0;
   const invRemainingAmount = Math.max(0, invTotalFullProject - invDownPaymentAmount);
   const invGrandTotal = includeDownPayment ? invDownPaymentAmount : invTotalFullProject;
@@ -523,11 +536,12 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           discountVal,
           discountAmount: invDiscountAmount,
           includeDownPayment,
-          downPaymentLabel,
-          downPaymentPercent,
+          downPaymentLabel: paymentStages[0]?.label || downPaymentLabel,
+          downPaymentPercent: paymentStages[0]?.percent ?? downPaymentPercent,
           downPaymentAmount: invDownPaymentAmount,
           remainingAmount: invRemainingAmount,
           totalFullProject: invTotalFullProject,
+          paymentStages: includeDownPayment ? paymentStages : [],
           amount: invGrandTotal,
           grandTotal: invGrandTotal,
           bankName: invBankName,
@@ -1228,18 +1242,23 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           { content: "TOTAL NILAI PROYEK", colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [241, 245, 249] as any } },
           { content: `Rp ${invTotalFullProject.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [241, 245, 249] as any } }
         ]);
-        invFootRows.push([
-          { content: `${downPaymentLabel || "DOWN PAYMENT"} (${downPaymentPercent}%)`, colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [254, 243, 199] as any, textColor: [180, 83, 9] } },
-          { content: `Rp ${invDownPaymentAmount.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [254, 243, 199] as any, textColor: [180, 83, 9] } }
-        ]);
+
+        paymentStages.forEach((stage, idx) => {
+          const stageAmt = Math.round((invTotalFullProject * (Number(stage.percent) || 0)) / 100);
+          invFootRows.push([
+            { content: `${stage.label || (idx === 0 ? "DOWN PAYMENT" : `TERMIN ${idx + 1}`)} (${stage.percent}%)`, colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [254, 243, 199] as any, textColor: [180, 83, 9] } },
+            { content: `Rp ${stageAmt.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [254, 243, 199] as any, textColor: [180, 83, 9] } }
+          ]);
+        });
+
         if (invRemainingAmount > 0) {
           invFootRows.push([
-            { content: `SISA PEMBAYARAN (${Math.max(0, 100 - downPaymentPercent)}%)`, colSpan: 4, styles: { halign: "right", fontStyle: "normal" as const, fillColor: [248, 250, 252] as any, textColor: [100, 116, 139] } },
+            { content: `SISA PEMBAYARAN (${Math.max(0, 100 - invTotalStagesPercent)}%)`, colSpan: 4, styles: { halign: "right", fontStyle: "normal" as const, fillColor: [248, 250, 252] as any, textColor: [100, 116, 139] } },
             { content: `Rp ${invRemainingAmount.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "normal" as const, fillColor: [248, 250, 252] as any, textColor: [100, 116, 139] } }
           ]);
         }
         invFootRows.push([
-          { content: `TOTAL TAGIHAN INI (${downPaymentPercent}%)`, colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } },
+          { content: `TOTAL TAGIHAN INI (${invTotalStagesPercent}%)`, colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } },
           { content: `Rp ${invGrandTotal.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } }
         ]);
       } else {
@@ -2582,18 +2601,23 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                             <td colSpan={4} className="px-2 py-1 text-right">TOTAL NILAI PROYEK</td>
                             <td colSpan={2} className="px-2 py-1 text-right font-mono font-black">Rp {invTotalFullProject.toLocaleString("id-ID")}</td>
                           </tr>
-                          <tr className="bg-amber-50 text-amber-900 font-black">
-                            <td colSpan={4} className="px-2 py-1 text-right">{downPaymentLabel || "DOWN PAYMENT"} ({downPaymentPercent}%)</td>
-                            <td colSpan={2} className="px-2 py-1 text-right font-mono font-black text-amber-700">Rp {invDownPaymentAmount.toLocaleString("id-ID")}</td>
-                          </tr>
+                          {paymentStages.map((stage, sIdx) => {
+                            const stageAmt = Math.round((invTotalFullProject * (Number(stage.percent) || 0)) / 100);
+                            return (
+                              <tr key={sIdx} className="bg-amber-50 text-amber-900 font-black">
+                                <td colSpan={4} className="px-2 py-1 text-right">{stage.label || (sIdx === 0 ? "DOWN PAYMENT" : `TERMIN ${sIdx + 1}`)} ({stage.percent}%)</td>
+                                <td colSpan={2} className="px-2 py-1 text-right font-mono font-black text-amber-700">Rp {stageAmt.toLocaleString("id-ID")}</td>
+                              </tr>
+                            );
+                          })}
                           {invRemainingAmount > 0 && (
                             <tr className="bg-slate-50 text-slate-500 font-medium">
-                              <td colSpan={4} className="px-2 py-0.5 text-right">Sisa Pembayaran ({Math.max(0, 100 - downPaymentPercent)}%)</td>
+                              <td colSpan={4} className="px-2 py-0.5 text-right">Sisa Pembayaran ({Math.max(0, 100 - invTotalStagesPercent)}%)</td>
                               <td colSpan={2} className="px-2 py-0.5 text-right font-mono">Rp {invRemainingAmount.toLocaleString("id-ID")}</td>
                             </tr>
                           )}
                           <tr className="bg-[#1e3a8a] text-white font-black">
-                            <td colSpan={4} className="px-2 py-1.5 text-right">TOTAL TAGIHAN INI ({downPaymentPercent}%)</td>
+                            <td colSpan={4} className="px-2 py-1.5 text-right">TOTAL TAGIHAN INI ({invTotalStagesPercent}%)</td>
                             <td colSpan={2} className="px-2 py-1.5 text-right font-mono font-black">Rp {invGrandTotal.toLocaleString("id-ID")}</td>
                           </tr>
                         </>

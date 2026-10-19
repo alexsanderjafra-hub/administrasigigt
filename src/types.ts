@@ -400,6 +400,7 @@ export interface Invoice {
   downPaymentAmount?: number;
   remainingAmount?: number;
   totalFullProject?: number;
+  paymentStages?: Array<{ id?: string; label: string; percent: number }>;
 }
 
 export interface MaintenanceRecord {

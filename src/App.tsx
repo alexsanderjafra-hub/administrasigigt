@@ -1147,6 +1147,7 @@ const AdminInvoicesScreen = ({
   setSelectedInvoiceForEdit,
   selectedQuotationForInvoice,
   setSelectedQuotationForInvoice,
+  onLaunchSuratJalan,
 }: {
   invoices: Invoice[];
   clients: Client[];
@@ -1159,6 +1160,7 @@ const AdminInvoicesScreen = ({
   setSelectedInvoiceForEdit?: (inv: any | null) => void;
   selectedQuotationForInvoice?: Quotation | null;
   setSelectedQuotationForInvoice?: (q: Quotation | null) => void;
+  onLaunchSuratJalan?: (invData: any) => void;
 }) => {
   const [view, setView] = useState<"list" | "build">("list");
   const [searchTerm, setSearchTerm] = useState("");
@@ -1280,10 +1282,15 @@ const AdminInvoicesScreen = ({
   const [discountType, setDiscountType] = useState<"rupiah" | "percent">("rupiah");
   const [discountVal, setDiscountVal] = useState(0);
 
-  // Termin / Down Payment (DP) Khusus Persen
+  // Termin / Down Payment (DP) Khusus Persen (Bisa Di + Kolom Tagihan)
   const [includeDownPayment, setIncludeDownPayment] = useState(false);
   const [downPaymentLabel, setDownPaymentLabel] = useState("DOWN PAYMENT (DP)");
   const [downPaymentPercent, setDownPaymentPercent] = useState<number>(50);
+  const [paymentStages, setPaymentStages] = useState<
+    Array<{ id: string; label: string; percent: number }>
+  >([
+    { id: "1", label: "DOWN PAYMENT (DP)", percent: 50 }
+  ]);
 
   // Indonesian spelling of numbers (Terbilang)
   const numberToTerbilang = (num: number): string => {
@@ -1345,8 +1352,11 @@ const AdminInvoicesScreen = ({
   const taxAmount = enablePPN ? Math.round((baseAfterDisc * taxPercentage) / 100) : 0;
   const totalFullProject = baseAfterDisc + shippingAmount + taxAmount;
 
+  const totalStagesPercent = includeDownPayment
+    ? paymentStages.reduce((acc, s) => acc + (Number(s.percent) || 0), 0)
+    : 100;
   const downPaymentAmount = includeDownPayment
-    ? Math.round((totalFullProject * downPaymentPercent) / 100)
+    ? Math.round((totalFullProject * totalStagesPercent) / 100)
     : 0;
   const remainingAmount = Math.max(0, totalFullProject - downPaymentAmount);
   const grandTotal = includeDownPayment ? downPaymentAmount : totalFullProject;
@@ -1558,6 +1568,23 @@ const AdminInvoicesScreen = ({
     setIncludeDownPayment(inv.includeDownPayment || false);
     setDownPaymentLabel(inv.downPaymentLabel || "DOWN PAYMENT (DP)");
     setDownPaymentPercent(inv.downPaymentPercent !== undefined ? inv.downPaymentPercent : 50);
+    if (inv.paymentStages && Array.isArray(inv.paymentStages) && inv.paymentStages.length > 0) {
+      setPaymentStages(
+        inv.paymentStages.map((st: any, idx: number) => ({
+          id: st.id || String(idx + 1),
+          label: st.label || (idx === 0 ? "DOWN PAYMENT (DP)" : `TERMIN ${idx + 1}`),
+          percent: Number(st.percent) || 0
+        }))
+      );
+    } else {
+      setPaymentStages([
+        {
+          id: "1",
+          label: inv.downPaymentLabel || "DOWN PAYMENT (DP)",
+          percent: inv.downPaymentPercent !== undefined ? inv.downPaymentPercent : 50
+        }
+      ]);
+    }
 
     setView("build");
   };
@@ -1598,6 +1625,7 @@ const AdminInvoicesScreen = ({
     setIncludeDownPayment(false);
     setDownPaymentLabel("DOWN PAYMENT (DP)");
     setDownPaymentPercent(50);
+    setPaymentStages([{ id: "1", label: "DOWN PAYMENT (DP)", percent: 50 }]);
 
     setView("build");
   };
@@ -1645,11 +1673,12 @@ const AdminInvoicesScreen = ({
       discountVal: includeDiscount ? discountVal : 0,
       discountAmount: discAmount,
       includeDownPayment,
-      downPaymentLabel,
-      downPaymentPercent: includeDownPayment ? downPaymentPercent : 100,
+      downPaymentLabel: paymentStages[0]?.label || downPaymentLabel,
+      downPaymentPercent: includeDownPayment ? (paymentStages[0]?.percent ?? downPaymentPercent) : 100,
       downPaymentAmount: includeDownPayment ? downPaymentAmount : 0,
       remainingAmount: includeDownPayment ? remainingAmount : 0,
       totalFullProject,
+      paymentStages: includeDownPayment ? paymentStages : [],
       itemsJson: JSON.stringify(items),
       items,
       bankName,
@@ -1769,8 +1798,8 @@ const AdminInvoicesScreen = ({
       const generatedFileName = formatInvoicePdfFileName(
         invoiceNumber,
         includeDownPayment,
-        downPaymentPercent,
-        downPaymentLabel,
+        paymentStages[0]?.percent ?? downPaymentPercent,
+        paymentStages[0]?.label || downPaymentLabel,
         recipientName
       );
       pdf.save(generatedFileName);
@@ -1964,6 +1993,16 @@ const AdminInvoicesScreen = ({
                         </td>
                         <td className="p-8 text-right pr-10 whitespace-nowrap">
                           <div className="flex justify-end gap-2 text-slate-400">
+                            {onLaunchSuratJalan && (
+                              <button
+                                onClick={() => onLaunchSuratJalan(inv)}
+                                className="p-2.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-800 rounded-xl transition-all font-sans text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs"
+                                title="Luncurkan Builder Surat Jalan dari Invoice ini"
+                              >
+                                <Truck size={15} className="text-emerald-600" />
+                                <span>Surat Jalan</span>
+                              </button>
+                            )}
                             <button
                               onClick={() => handleEditInvoice(inv)}
                               className="p-2.5 hover:bg-indigo-50 hover:text-indigo-600 rounded-xl transition-all font-sans text-xs font-bold flex items-center gap-1.5"
@@ -2008,6 +2047,34 @@ const AdminInvoicesScreen = ({
               <ChevronLeft size={16} /> Kembali ke Daftar Invoice
             </button>
             <div className="flex flex-wrap items-center gap-3">
+              {onLaunchSuratJalan && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const invData = {
+                      invoiceNumber,
+                      clientId,
+                      clientName: recipientName,
+                      recipientName,
+                      recipientAddress: (clients.find(c => c.id === clientId)?.address) || "",
+                      items: items.map(it => ({
+                        name: it.description,
+                        description: it.description,
+                        qty: it.qty,
+                        unit: it.unit,
+                        price: it.price,
+                        specifications: it.specifications
+                      }))
+                    };
+                    onLaunchSuratJalan(invData);
+                  }}
+                  className="bg-emerald-600 text-white hover:bg-emerald-700 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer flex items-center gap-2"
+                  title="Luncurkan Builder Surat Jalan dari Invoice ini"
+                >
+                  <Truck size={15} />
+                  <span>Buat Surat Jalan</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -2728,112 +2795,127 @@ const AdminInvoicesScreen = ({
                   )}
                 </div>
 
-                {/* ROW: CHECKLIST KOTAK INPUT TAGIHAN / DOWN PAYMENT / TERMIN (REQUEST 3: KHUSUS PERSEN & SUB JUDUL BISA DIKETIK) */}
-                <div className="p-3 bg-white rounded-xl border-2 border-amber-300/80 bg-gradient-to-br from-amber-50/30 to-orange-50/20 space-y-2.5">
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+                {/* ROW: CHECKLIST KOTAK INPUT TAGIHAN / TERMIN (BISA DI + / TAMBAH KOLOM TAGIHAN SEPERTI PERMINTAAN USER) */}
+                <div className="p-3.5 bg-white rounded-xl border-2 border-amber-300 space-y-3 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={includeDownPayment}
                         onChange={(e) => setIncludeDownPayment(e.target.checked)}
                         className="w-5 h-5 rounded accent-amber-600 cursor-pointer"
                       />
-                      <span className="text-[10px] font-black uppercase tracking-wider text-amber-900">
-                        {includeDownPayment ? "TAGIHAN BERTAHAP (DP/TERMIN):" : "TERAPKAN DP / TERMIN:"}
+                      <span className="text-xs font-black uppercase tracking-wider text-amber-950">
+                        {includeDownPayment ? "TAGIHAN BERTAHAP / DOWN PAYMENT (PERSEN %):" : "TERAPKAN DOWN PAYMENT / TERMIN:"}
                       </span>
                     </label>
-                    <input
-                      type="text"
-                      value={downPaymentLabel}
-                      onChange={(e) => setDownPaymentLabel(e.target.value)}
-                      placeholder="DOWN PAYMENT (DP) / TERMIN 1"
-                      className="flex-1 px-2.5 py-1 bg-white border border-amber-300 rounded-lg text-xs font-black text-slate-900 outline-none focus:border-amber-600 transition-all"
-                      title="Sub judul tagihan ini bisa diketik bebas (contoh: DOWN PAYMENT, TERMIN 1, PELUNASAN, dll.)"
-                    />
-                    <span className="text-xs font-mono font-black text-amber-700 shrink-0">
-                      {includeDownPayment ? `${downPaymentPercent}% (Rp ${downPaymentAmount.toLocaleString("id-ID")})` : "100% (Penuh)"}
-                    </span>
+                    {includeDownPayment && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const nextStages = [
+                            ...paymentStages,
+                            {
+                              id: String(Date.now()),
+                              label: paymentStages.length === 1 ? "TERMIN 2" : "PELUNASAN",
+                              percent: Math.max(0, 100 - paymentStages.reduce((a, b) => a + (Number(b.percent) || 0), 0))
+                            }
+                          ];
+                          setPaymentStages(nextStages);
+                        }}
+                        className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 shadow-sm transition-all cursor-pointer active:scale-95"
+                        title="Tambah baris tagihan baru di bawahnya"
+                      >
+                        <Plus size={14} />
+                        <span>+ Tambah Kolom Tagihan</span>
+                      </button>
+                    )}
                   </div>
 
                   {includeDownPayment ? (
-                    <div className="space-y-2.5 pt-1.5 border-t border-amber-200">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[10px] text-slate-700 font-bold shrink-0">
-                          Jumlah Tagihan (% Khusus):
-                        </span>
-                        <div className="relative flex-1">
-                          <input
-                            type="number"
-                            min={1}
-                            max={100}
-                            value={downPaymentPercent || ""}
-                            placeholder="50"
-                            onChange={(e) => {
-                              const val = parseFloat(e.target.value);
-                              setDownPaymentPercent(isNaN(val) ? 0 : Math.min(100, Math.max(0, val)));
-                            }}
-                            className="w-full px-3 py-1.5 pr-8 bg-white border border-amber-300 rounded-lg text-xs font-mono font-black text-slate-900 outline-none focus:border-amber-600 shadow-inner"
-                          />
-                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-amber-600">
-                            %
-                          </span>
-                        </div>
-                        {/* Quick preset buttons */}
-                        <div className="flex items-center gap-1 shrink-0">
-                          {[20, 30, 40, 50, 70, 100].map((pct) => (
-                            <button
-                              key={pct}
-                              type="button"
-                              onClick={() => setDownPaymentPercent(pct)}
-                              className={`px-2 py-1 text-[9px] font-black rounded-md transition-all ${
-                                downPaymentPercent === pct
-                                  ? "bg-amber-600 text-white shadow-xs"
-                                  : "bg-white border border-amber-200 text-slate-700 hover:bg-amber-100"
-                              }`}
-                            >
-                              {pct}%
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                    <div className="space-y-2 pt-2 border-t border-amber-200">
+                      {paymentStages.map((stage, sIdx) => {
+                        const stageAmount = Math.round((totalFullProject * (Number(stage.percent) || 0)) / 100);
+                        return (
+                          <div key={stage.id || sIdx} className="flex flex-col sm:flex-row sm:items-center gap-2 bg-amber-50/70 p-2.5 rounded-xl border border-amber-200">
+                            <span className="text-xs font-black text-amber-900 w-6 shrink-0">{sIdx + 1}.</span>
+                            {/* Input Sub Judul (Bisa diketik seperti biaya kirim) */}
+                            <input
+                              type="text"
+                              value={stage.label}
+                              onChange={(e) => {
+                                const next = [...paymentStages];
+                                next[sIdx].label = e.target.value;
+                                setPaymentStages(next);
+                                if (sIdx === 0) setDownPaymentLabel(e.target.value);
+                              }}
+                              placeholder="Ketik nama tagihan (contoh: DOWN PAYMENT)"
+                              className="flex-1 px-3 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-black text-slate-900 outline-none focus:border-amber-600 transition-all placeholder:text-slate-400"
+                            />
+                            {/* Kotak Input Persen Khusus */}
+                            <div className="relative w-28 shrink-0">
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                value={stage.percent || ""}
+                                placeholder="50"
+                                onChange={(e) => {
+                                  const val = Math.min(100, Math.max(0, parseFloat(e.target.value) || 0));
+                                  const next = [...paymentStages];
+                                  next[sIdx].percent = val;
+                                  setPaymentStages(next);
+                                  if (sIdx === 0) setDownPaymentPercent(val);
+                                }}
+                                className="w-full px-3 py-1.5 pr-8 bg-white border border-amber-300 rounded-lg text-xs font-mono font-black text-center text-slate-900 outline-none focus:border-amber-600 transition-all"
+                              />
+                              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-amber-600">
+                                %
+                              </span>
+                            </div>
+                            {/* Nominal Otomatis Terhitung */}
+                            <span className="text-xs font-mono font-black text-amber-900 min-w-[130px] text-right shrink-0">
+                              Rp {stageAmount.toLocaleString("id-ID")}
+                            </span>
+                            {/* Tombol Hapus Baris */}
+                            {paymentStages.length > 1 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const next = paymentStages.filter((_, i) => i !== sIdx);
+                                  setPaymentStages(next);
+                                  if (next.length > 0) {
+                                    setDownPaymentLabel(next[0].label);
+                                    setDownPaymentPercent(next[0].percent);
+                                  }
+                                }}
+                                className="p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer shrink-0"
+                                title="Hapus Baris Tagihan"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })}
 
-                      {/* Template sub judul chips */}
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-[9px] text-slate-500 font-bold">Pilihan Sub Judul Cepat:</span>
-                        {[
-                          "DOWN PAYMENT (DP)",
-                          "DP 50%",
-                          "TERMIN 1",
-                          "TERMIN 2",
-                          "PELUNASAN",
-                        ].map((lbl) => (
-                          <button
-                            key={lbl}
-                            type="button"
-                            onClick={() => setDownPaymentLabel(lbl)}
-                            className="px-2 py-0.5 bg-white border border-amber-200 hover:bg-amber-100 text-slate-700 rounded text-[9px] font-bold transition-all shadow-2xs"
-                          >
-                            {lbl}
-                          </button>
-                        ))}
-                      </div>
-
-                      <div className="p-2.5 bg-amber-50/90 rounded-xl border border-amber-200 text-[10px] space-y-1">
+                      {/* Summary Tagihan & Sisa */}
+                      <div className="p-2.5 bg-amber-50 rounded-xl border border-amber-200 text-[10px] space-y-1 mt-2">
                         <div className="flex justify-between font-medium text-slate-600">
-                          <span>Total Keseluruhan Proyek:</span>
+                          <span>Total Keseluruhan Nilai Proyek:</span>
                           <span className="font-mono font-bold text-slate-900">
                             Rp {totalFullProject.toLocaleString("id-ID")}
                           </span>
                         </div>
                         <div className="flex justify-between font-bold text-amber-900">
-                          <span>Nilai Ditagihkan ({downPaymentLabel || "DP"} {downPaymentPercent}%):</span>
+                          <span>Total Tagihan Saat Ini ({totalStagesPercent}%):</span>
                           <span className="font-mono font-black text-amber-700">
                             Rp {downPaymentAmount.toLocaleString("id-ID")}
                           </span>
                         </div>
                         {remainingAmount > 0 && (
-                          <div className="flex justify-between text-slate-500">
-                            <span>Sisa Belum Ditagih ({Math.max(0, 100 - downPaymentPercent)}%):</span>
+                          <div className="flex justify-between text-slate-500 font-medium">
+                            <span>Sisa Belum Ditagihkan ({Math.max(0, 100 - totalStagesPercent)}%):</span>
                             <span className="font-mono font-bold text-slate-700">
                               Rp {remainingAmount.toLocaleString("id-ID")}
                             </span>
@@ -3053,11 +3135,12 @@ const AdminInvoicesScreen = ({
               discountType,
               discountVal: includeDiscount ? discountVal : 0,
               includeDownPayment,
-              downPaymentLabel,
-              downPaymentPercent,
+              downPaymentLabel: paymentStages[0]?.label || downPaymentLabel,
+              downPaymentPercent: paymentStages[0]?.percent ?? downPaymentPercent,
               downPaymentAmount,
               remainingAmount,
               totalFullProject,
+              paymentStages: includeDownPayment ? paymentStages : [],
               amount: grandTotal,
               grandTotal,
               companyName,
@@ -27797,6 +27880,8 @@ const SuratJalanScreen = ({
   user,
   roles,
   logActivity,
+  selectedInvoiceForSuratJalan,
+  setSelectedInvoiceForSuratJalan,
 }: {
   suratJalanList: any[];
   clients: Client[];
@@ -27804,6 +27889,8 @@ const SuratJalanScreen = ({
   user: any;
   roles: RoleConfig[];
   logActivity: (m: string, a: string, d: string) => Promise<void>;
+  selectedInvoiceForSuratJalan?: any;
+  setSelectedInvoiceForSuratJalan?: (inv: any | null) => void;
 }) => {
   const [view, setView] = useState<"list" | "build">("list");
   const [searchTerm, setSearchTerm] = useState("");
@@ -27843,6 +27930,43 @@ const SuratJalanScreen = ({
       specifications: [{ key: "Spesifikasi", value: "Tipe Sewage Pump 2 Inch" }],
     },
   ]);
+
+  // Listener untuk import dari Invoice jika diluncurkan
+  useEffect(() => {
+    if (selectedInvoiceForSuratJalan) {
+      const inv = selectedInvoiceForSuratJalan;
+      setEditingId(null);
+      setSuratNumber(`SJ/${new Date().getFullYear()}/${Math.floor(1000 + Math.random() * 9000)}`);
+      setClientId(inv.clientId || "");
+      setRecipient(inv.clientName || inv.recipientName || "");
+      setAddress(inv.recipientAddress || inv.clientAddress || (clients.find(c => c.id === inv.clientId)?.address) || "");
+      setDate(new Date().toISOString().split("T")[0]);
+      setNotes(inv.notes || `Pengiriman barang/material terkait Invoice No: ${inv.invoiceNumber || ""}`);
+
+      let rawItems: any[] = [];
+      if (inv.items && Array.isArray(inv.items)) {
+        rawItems = inv.items;
+      } else if (inv.itemsJson) {
+        try {
+          rawItems = JSON.parse(inv.itemsJson);
+        } catch (e) {
+          rawItems = [];
+        }
+      }
+      if (rawItems.length > 0) {
+        setItems(rawItems.map((it: any) => ({
+          qty: it.qty || "1",
+          unit: it.unit || "Pcs",
+          name: it.description || it.name || "Material/Barang",
+          specifications: it.specifications || []
+        })));
+      }
+      setView("build");
+      if (setSelectedInvoiceForSuratJalan) {
+        setSelectedInvoiceForSuratJalan(null);
+      }
+    }
+  }, [selectedInvoiceForSuratJalan, setSelectedInvoiceForSuratJalan, clients]);
   const [logoImage, setLogoImage] = useState<string | null>(null);
   const [receivedByText, setReceivedByText] = useState("………………………");
   const [hormatKamiText, setHormatKamiText] = useState("………………………");
@@ -32090,6 +32214,8 @@ export default function App() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [selectedInvoiceForEdit, setSelectedInvoiceForEdit] = useState<any | null>(null);
   const [selectedQuotationForInvoice, setSelectedQuotationForInvoice] = useState<Quotation | null>(null);
+  const [selectedInvoiceForSuratJalan, setSelectedInvoiceForSuratJalan] = useState<any | null>(null);
+  const [selectedQuotationForPO, setSelectedQuotationForPO] = useState<Quotation | null>(null);
   const [financeSearchQuery, setFinanceSearchQuery] = useState<string>("");
   const [suratJalanList, setSuratJalanList] = useState<SuratJalan[]>([]);
   const [maintenanceRecords, setMaintenanceRecords] = useState<
@@ -47363,6 +47489,18 @@ export default function App() {
                             type="button"
                             onClick={(e) => {
                               e.stopPropagation();
+                              setSelectedQuotationForPO(q);
+                              navigate("admin-po");
+                            }}
+                            className="w-12 h-12 flex items-center justify-center bg-emerald-50 text-emerald-600 rounded-2xl border border-emerald-100 hover:bg-emerald-600 hover:text-white transition-all active:scale-95 shadow-sm"
+                            title="Buat Purchase Order (PO) dari SPH ini"
+                          >
+                            <FileSpreadsheet size={18} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
                               setViewingQuotation(q);
                               setIsQuotationModalOpen(true);
                             }}
@@ -49884,6 +50022,10 @@ export default function App() {
             setSelectedInvoiceForEdit={setSelectedInvoiceForEdit}
             selectedQuotationForInvoice={selectedQuotationForInvoice}
             setSelectedQuotationForInvoice={setSelectedQuotationForInvoice}
+            onLaunchSuratJalan={(invData) => {
+              setSelectedInvoiceForSuratJalan(invData);
+              navigate("admin-surat-jalan");
+            }}
           />
         );
 
@@ -49899,6 +50041,9 @@ export default function App() {
               onNavigate={navigate}
               currentUser={currentUser}
               logActivity={logActivity}
+              quotations={quotations}
+              selectedQuotationForPO={selectedQuotationForPO}
+              setSelectedQuotationForPO={setSelectedQuotationForPO}
             />
           </AdminLayout>
         );
@@ -50472,6 +50617,8 @@ export default function App() {
             user={currentUser}
             roles={roles}
             logActivity={logActivity}
+            selectedInvoiceForSuratJalan={selectedInvoiceForSuratJalan}
+            setSelectedInvoiceForSuratJalan={setSelectedInvoiceForSuratJalan}
           />
         );
       case "splash":
