@@ -388,6 +388,18 @@ export interface Invoice {
   status: 'PENDING' | 'PAID' | 'OVERDUE';
   dueDate: string;
   createdAt: string;
+  sphRefNumber?: string;
+  quotationNumber?: string;
+  includeDiscount?: boolean;
+  discountType?: 'percent' | 'rupiah';
+  discountVal?: number;
+  discountAmount?: number;
+  includeDownPayment?: boolean;
+  downPaymentLabel?: string;
+  downPaymentPercent?: number;
+  downPaymentAmount?: number;
+  remainingAmount?: number;
+  totalFullProject?: number;
 }
 
 export interface MaintenanceRecord {

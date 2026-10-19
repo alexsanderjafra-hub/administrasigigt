@@ -225,6 +225,7 @@ import SheetsDashboard from "./components/SheetsDashboard";
 import { getGoogleAccessToken, setGoogleAccessToken, syncAllDataToGoogleSheets } from "./services/sheets";
 import { calculateKasbonBalances, simulateKasbonAllocation, extractKasbonRecipient } from "./utils/kasbonHelper";
 import { normalizeContactName } from "./utils/contactHelper";
+import { formatInvoicePdfFileName } from "./utils/invoiceFileName";
 import { DebtPaymentManager } from "./components/DebtPaymentManager";
 import { SyncBackupModal } from "./components/SyncBackupModal";
 import { autoBackupService } from "./services/autoBackupService";
@@ -1273,8 +1274,16 @@ const AdminInvoicesScreen = ({
   const [includeShipping, setIncludeShipping] = useState(false);
   const [shippingLabel, setShippingLabel] = useState("BIAYA PENGIRIMAN / ONGKIR");
   const [shippingCost, setShippingCost] = useState(0);
+
+  // Diskon (Persen & Nominal Rupiah seperti di SPH)
   const [includeDiscount, setIncludeDiscount] = useState(false);
+  const [discountType, setDiscountType] = useState<"rupiah" | "percent">("rupiah");
   const [discountVal, setDiscountVal] = useState(0);
+
+  // Termin / Down Payment (DP) Khusus Persen
+  const [includeDownPayment, setIncludeDownPayment] = useState(false);
+  const [downPaymentLabel, setDownPaymentLabel] = useState("DOWN PAYMENT (DP)");
+  const [downPaymentPercent, setDownPaymentPercent] = useState<number>(50);
 
   // Indonesian spelling of numbers (Terbilang)
   const numberToTerbilang = (num: number): string => {
@@ -1328,11 +1337,19 @@ const AdminInvoicesScreen = ({
     return acc + q * p;
   }, 0);
 
-  const discAmount = includeDiscount ? discountVal : 0;
+  const discAmount = includeDiscount
+    ? (discountType === "percent" ? Math.round(subTotal * (discountVal / 100)) : discountVal)
+    : 0;
   const baseAfterDisc = Math.max(0, subTotal - discAmount);
   const shippingAmount = includeShipping ? Number(shippingCost || 0) : 0;
   const taxAmount = enablePPN ? Math.round((baseAfterDisc * taxPercentage) / 100) : 0;
-  const grandTotal = baseAfterDisc + shippingAmount + taxAmount;
+  const totalFullProject = baseAfterDisc + shippingAmount + taxAmount;
+
+  const downPaymentAmount = includeDownPayment
+    ? Math.round((totalFullProject * downPaymentPercent) / 100)
+    : 0;
+  const remainingAmount = Math.max(0, totalFullProject - downPaymentAmount);
+  const grandTotal = includeDownPayment ? downPaymentAmount : totalFullProject;
   const computedTerbilang = numberToTerbilang(grandTotal);
 
   // File structure helpers
@@ -1448,7 +1465,22 @@ const AdminInvoicesScreen = ({
     setShippingCost(q.shippingCost || 0);
     setShippingLabel(q.shippingLabel || "BIAYA PENGIRIMAN / ONGKIR");
     setIncludeDiscount(!!q.includeDiscount);
-    setDiscountVal(q.discountVal || q.discountAmount || 0);
+    setDiscountType(q.discountType || "rupiah");
+    setDiscountVal(q.discountVal || 0);
+
+    // Deteksi jika pada SPH terdapat ketentuan Down Payment (DP)
+    let detectedDp = 50;
+    let hasDp = false;
+    if (q.paymentTerms) {
+      const match = q.paymentTerms.match(/DP\s*(\d+)%/i);
+      if (match && match[1]) {
+        detectedDp = parseInt(match[1], 10);
+        hasDp = true;
+      }
+    }
+    setIncludeDownPayment(hasDp);
+    setDownPaymentLabel("DOWN PAYMENT (DP)");
+    setDownPaymentPercent(detectedDp);
 
     if (q.compName) setCompanyName(q.compName);
     if (q.compAddress) setCompanyAddress(q.compAddress);
@@ -1519,8 +1551,13 @@ const AdminInvoicesScreen = ({
     setIncludeShipping(inv.includeShipping || false);
     setShippingLabel(inv.shippingLabel || "BIAYA PENGIRIMAN / ONGKIR");
     setShippingCost(inv.shippingCost || 0);
-    setIncludeDiscount(inv.discountVal ? inv.discountVal > 0 : false);
+    setIncludeDiscount(inv.includeDiscount !== undefined ? inv.includeDiscount : (inv.discountVal ? inv.discountVal > 0 : false));
+    setDiscountType(inv.discountType || "rupiah");
     setDiscountVal(inv.discountVal || 0);
+
+    setIncludeDownPayment(inv.includeDownPayment || false);
+    setDownPaymentLabel(inv.downPaymentLabel || "DOWN PAYMENT (DP)");
+    setDownPaymentPercent(inv.downPaymentPercent !== undefined ? inv.downPaymentPercent : 50);
 
     setView("build");
   };
@@ -1555,7 +1592,13 @@ const AdminInvoicesScreen = ({
     setShippingLabel("BIAYA PENGIRIMAN / ONGKIR");
     setShippingCost(0);
     setIncludeDiscount(false);
+    setDiscountType("rupiah");
     setDiscountVal(0);
+
+    setIncludeDownPayment(false);
+    setDownPaymentLabel("DOWN PAYMENT (DP)");
+    setDownPaymentPercent(50);
+
     setView("build");
   };
 
@@ -1597,7 +1640,16 @@ const AdminInvoicesScreen = ({
       includeShipping,
       shippingLabel,
       shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+      includeDiscount,
+      discountType,
       discountVal: includeDiscount ? discountVal : 0,
+      discountAmount: discAmount,
+      includeDownPayment,
+      downPaymentLabel,
+      downPaymentPercent: includeDownPayment ? downPaymentPercent : 100,
+      downPaymentAmount: includeDownPayment ? downPaymentAmount : 0,
+      remainingAmount: includeDownPayment ? remainingAmount : 0,
+      totalFullProject,
       itemsJson: JSON.stringify(items),
       items,
       bankName,
@@ -1714,7 +1766,14 @@ const AdminInvoicesScreen = ({
         pdfWidth,
         Math.min(pdfHeight, pdf.internal.pageSize.getHeight()),
       );
-      pdf.save(`Invoice_${invoiceNumber.replace(/\//g, "_")}.pdf`);
+      const generatedFileName = formatInvoicePdfFileName(
+        invoiceNumber,
+        includeDownPayment,
+        downPaymentPercent,
+        downPaymentLabel,
+        recipientName
+      );
+      pdf.save(generatedFileName);
     } catch (err: any) {
       console.error("PDF Export Error Details:", err);
       alert(`Gagal download PDF: ${err.message || "Error tidak dikenal"}`);
@@ -2519,7 +2578,7 @@ const AdminInvoicesScreen = ({
                   </span>
                 </div>
 
-                {/* ROW: CHECKLIST DISKON */}
+                {/* ROW: CHECKLIST DISKON (DENGAN PILIHAN PERSEN & NOMINAL SEPERTI DI SPH) */}
                 <div className="p-3 bg-white rounded-xl border border-slate-300 space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="flex items-center gap-2 cursor-pointer">
@@ -2533,20 +2592,66 @@ const AdminInvoicesScreen = ({
                         DISKON
                       </span>
                     </label>
+                    {includeDiscount && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setDiscountType("rupiah")}
+                          className={`px-2.5 py-1 text-[10px] font-black rounded-lg transition-all ${
+                            discountType === "rupiah"
+                              ? "bg-slate-900 text-white shadow-xs"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          }`}
+                        >
+                          Rp (Nominal)
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDiscountType("percent")}
+                          className={`px-2.5 py-1 text-[10px] font-black rounded-lg transition-all ${
+                            discountType === "percent"
+                              ? "bg-slate-900 text-white shadow-xs"
+                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                          }`}
+                        >
+                          % (Persen)
+                        </button>
+                      </div>
+                    )}
                   </div>
                   {includeDiscount ? (
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min={0}
-                        value={discountVal || ""}
-                        placeholder="Nominal Diskon (Rp)"
-                        onChange={(e) => setDiscountVal(Math.max(0, parseFloat(e.target.value) || 0))}
-                        className="w-full px-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none"
-                      />
-                      <span className="text-xs font-mono font-bold text-rose-600 shrink-0">
-                        -Rp {discAmount.toLocaleString("id-ID")}
-                      </span>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <div className="relative flex-1">
+                          <input
+                            type="number"
+                            min={0}
+                            max={discountType === "percent" ? 100 : undefined}
+                            value={discountVal || ""}
+                            placeholder={
+                              discountType === "percent"
+                                ? "Ketik persentase diskon (contoh: 5 atau 10)"
+                                : "Ketik nominal diskon Rp (contoh: 500000)"
+                            }
+                            onChange={(e) => setDiscountVal(Math.max(0, parseFloat(e.target.value) || 0))}
+                            className="w-full px-3 py-1.5 pr-8 bg-slate-50 border border-slate-300 rounded-lg text-xs font-mono font-bold text-slate-900 outline-none focus:border-slate-800 focus:bg-white transition-all"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-black text-slate-400">
+                            {discountType === "percent" ? "%" : "Rp"}
+                          </span>
+                        </div>
+                        <span className="text-xs font-mono font-bold text-rose-600 shrink-0">
+                          -Rp {discAmount.toLocaleString("id-ID")}
+                        </span>
+                      </div>
+                      {discountType === "percent" && discountVal > 0 && (
+                        <div className="text-[10px] text-slate-500 font-medium">
+                          Potongan {discountVal}% dari Subtotal (Rp {subTotal.toLocaleString("id-ID")}) ={" "}
+                          <strong className="text-rose-600 font-mono font-bold">
+                            -Rp {discAmount.toLocaleString("id-ID")}
+                          </strong>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="text-[10px] text-slate-400 font-semibold italic">
@@ -2623,14 +2728,159 @@ const AdminInvoicesScreen = ({
                   )}
                 </div>
 
-                {/* ROW: GRAND TOTAL */}
-                <div className="p-3.5 bg-slate-900 text-white rounded-xl flex items-center justify-between shadow-md">
-                  <span className="text-xs font-black uppercase tracking-wider text-slate-300">
-                    GRAND TOTAL
-                  </span>
-                  <span className="text-base font-mono font-black text-emerald-400">
-                    Rp {grandTotal.toLocaleString("id-ID")}
-                  </span>
+                {/* ROW: CHECKLIST KOTAK INPUT TAGIHAN / DOWN PAYMENT / TERMIN (REQUEST 3: KHUSUS PERSEN & SUB JUDUL BISA DIKETIK) */}
+                <div className="p-3 bg-white rounded-xl border-2 border-amber-300/80 bg-gradient-to-br from-amber-50/30 to-orange-50/20 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="flex items-center gap-1.5 cursor-pointer shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={includeDownPayment}
+                        onChange={(e) => setIncludeDownPayment(e.target.checked)}
+                        className="w-5 h-5 rounded accent-amber-600 cursor-pointer"
+                      />
+                      <span className="text-[10px] font-black uppercase tracking-wider text-amber-900">
+                        {includeDownPayment ? "TAGIHAN BERTAHAP (DP/TERMIN):" : "TERAPKAN DP / TERMIN:"}
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={downPaymentLabel}
+                      onChange={(e) => setDownPaymentLabel(e.target.value)}
+                      placeholder="DOWN PAYMENT (DP) / TERMIN 1"
+                      className="flex-1 px-2.5 py-1 bg-white border border-amber-300 rounded-lg text-xs font-black text-slate-900 outline-none focus:border-amber-600 transition-all"
+                      title="Sub judul tagihan ini bisa diketik bebas (contoh: DOWN PAYMENT, TERMIN 1, PELUNASAN, dll.)"
+                    />
+                    <span className="text-xs font-mono font-black text-amber-700 shrink-0">
+                      {includeDownPayment ? `${downPaymentPercent}% (Rp ${downPaymentAmount.toLocaleString("id-ID")})` : "100% (Penuh)"}
+                    </span>
+                  </div>
+
+                  {includeDownPayment ? (
+                    <div className="space-y-2.5 pt-1.5 border-t border-amber-200">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-slate-700 font-bold shrink-0">
+                          Jumlah Tagihan (% Khusus):
+                        </span>
+                        <div className="relative flex-1">
+                          <input
+                            type="number"
+                            min={1}
+                            max={100}
+                            value={downPaymentPercent || ""}
+                            placeholder="50"
+                            onChange={(e) => {
+                              const val = parseFloat(e.target.value);
+                              setDownPaymentPercent(isNaN(val) ? 0 : Math.min(100, Math.max(0, val)));
+                            }}
+                            className="w-full px-3 py-1.5 pr-8 bg-white border border-amber-300 rounded-lg text-xs font-mono font-black text-slate-900 outline-none focus:border-amber-600 shadow-inner"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-black text-amber-600">
+                            %
+                          </span>
+                        </div>
+                        {/* Quick preset buttons */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {[20, 30, 40, 50, 70, 100].map((pct) => (
+                            <button
+                              key={pct}
+                              type="button"
+                              onClick={() => setDownPaymentPercent(pct)}
+                              className={`px-2 py-1 text-[9px] font-black rounded-md transition-all ${
+                                downPaymentPercent === pct
+                                  ? "bg-amber-600 text-white shadow-xs"
+                                  : "bg-white border border-amber-200 text-slate-700 hover:bg-amber-100"
+                              }`}
+                            >
+                              {pct}%
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Template sub judul chips */}
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-[9px] text-slate-500 font-bold">Pilihan Sub Judul Cepat:</span>
+                        {[
+                          "DOWN PAYMENT (DP)",
+                          "DP 50%",
+                          "TERMIN 1",
+                          "TERMIN 2",
+                          "PELUNASAN",
+                        ].map((lbl) => (
+                          <button
+                            key={lbl}
+                            type="button"
+                            onClick={() => setDownPaymentLabel(lbl)}
+                            className="px-2 py-0.5 bg-white border border-amber-200 hover:bg-amber-100 text-slate-700 rounded text-[9px] font-bold transition-all shadow-2xs"
+                          >
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="p-2.5 bg-amber-50/90 rounded-xl border border-amber-200 text-[10px] space-y-1">
+                        <div className="flex justify-between font-medium text-slate-600">
+                          <span>Total Keseluruhan Proyek:</span>
+                          <span className="font-mono font-bold text-slate-900">
+                            Rp {totalFullProject.toLocaleString("id-ID")}
+                          </span>
+                        </div>
+                        <div className="flex justify-between font-bold text-amber-900">
+                          <span>Nilai Ditagihkan ({downPaymentLabel || "DP"} {downPaymentPercent}%):</span>
+                          <span className="font-mono font-black text-amber-700">
+                            Rp {downPaymentAmount.toLocaleString("id-ID")}
+                          </span>
+                        </div>
+                        {remainingAmount > 0 && (
+                          <div className="flex justify-between text-slate-500">
+                            <span>Sisa Belum Ditagih ({Math.max(0, 100 - downPaymentPercent)}%):</span>
+                            <span className="font-mono font-bold text-slate-700">
+                              Rp {remainingAmount.toLocaleString("id-ID")}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-slate-400 font-semibold italic">
+                      (Tidak diceklis - Tagihan invoice 100% senilai total keseluruhan proyek)
+                    </div>
+                  )}
+                </div>
+
+                {/* ROW: GRAND TOTAL / TOTAL DITAGIHKAN */}
+                <div className="p-4 bg-slate-900 text-white rounded-xl space-y-2.5 shadow-md">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-300 block">
+                        {includeDownPayment ? `TOTAL DITAGIHKAN (${downPaymentLabel || "DP"} ${downPaymentPercent}%)` : "GRAND TOTAL"}
+                      </span>
+                      {includeDownPayment && (
+                        <span className="text-[10px] text-slate-400 font-medium">
+                          Dari total nilai proyek Rp {totalFullProject.toLocaleString("id-ID")}
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-lg font-mono font-black text-emerald-400">
+                      Rp {grandTotal.toLocaleString("id-ID")}
+                    </span>
+                  </div>
+
+                  {/* Format Nama File PDF Otomatis Sesuai Request 3 */}
+                  <div className="pt-2 border-t border-slate-800 text-[9px] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+                    <span className="font-bold text-slate-400 flex items-center gap-1">
+                      <span>📄 Nama File PDF Otomatis:</span>
+                    </span>
+                    <span className="font-mono font-bold text-emerald-300 bg-slate-800/90 px-2.5 py-1 rounded-md border border-slate-700 truncate max-w-full sm:max-w-[340px]">
+                      {formatInvoicePdfFileName(
+                        invoiceNumber,
+                        includeDownPayment,
+                        downPaymentPercent,
+                        downPaymentLabel,
+                        recipientName
+                      )}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2799,7 +3049,15 @@ const AdminInvoicesScreen = ({
               includeShipping,
               shippingLabel,
               shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+              includeDiscount,
+              discountType,
               discountVal: includeDiscount ? discountVal : 0,
+              includeDownPayment,
+              downPaymentLabel,
+              downPaymentPercent,
+              downPaymentAmount,
+              remainingAmount,
+              totalFullProject,
               amount: grandTotal,
               grandTotal,
               companyName,

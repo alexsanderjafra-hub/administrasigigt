@@ -27,6 +27,7 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { imageRepositoryService } from "../services/imageRepositoryService";
 import { compressImage } from "../lib/utils";
+import { formatInvoicePdfFileName } from "../utils/invoiceFileName";
 
 // Custom helper to parse and format clean specification lines without duplication
 const getCleanSpecLines = (item: any): string[] => {
@@ -154,7 +155,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const [includeShipping, setIncludeShipping] = useState<boolean>(false);
   const [shippingCost, setShippingCost] = useState<number>(0);
 
+  // Termin / Down Payment (DP) Khusus Persen untuk Invoice (Request 3)
+  const [includeDownPayment, setIncludeDownPayment] = useState<boolean>(false);
+  const [downPaymentLabel, setDownPaymentLabel] = useState<string>("DOWN PAYMENT (DP)");
+  const [downPaymentPercent, setDownPaymentPercent] = useState<number>(50);
+
   // --- DYNAMIC DISCOUNTS, TAX & COMPANY CREDENTIALS STATE ---
+  const [includeDiscount, setIncludeDiscount] = useState<boolean>(false);
   const [discountType, setDiscountType] = useState<"percent" | "rupiah">("rupiah");
   const [discountVal, setDiscountVal] = useState<number>(0);
   const [taxRate, setTaxRate] = useState<number>(11);
@@ -308,15 +315,40 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         setIncludeShipping(initialInvoiceData.includeShipping || false);
         setShippingCost(initialInvoiceData.shippingCost || 0);
         setShippingLabel(initialInvoiceData.shippingLabel || "BIAYA PENGIRIMAN / ONGKIR");
+        
+        // Diskon (Persen & Nominal)
+        setIncludeDiscount(
+          initialInvoiceData.includeDiscount !== undefined
+            ? initialInvoiceData.includeDiscount
+            : (initialInvoiceData.discountVal ? initialInvoiceData.discountVal > 0 : false)
+        );
+        setDiscountType(initialInvoiceData.discountType || "rupiah");
         setDiscountVal(initialInvoiceData.discountVal || 0);
+
+        // Termin / Down Payment (DP) Khusus Persen
+        const isDp = !!initialInvoiceData.includeDownPayment;
+        const dpPct = initialInvoiceData.downPaymentPercent !== undefined ? initialInvoiceData.downPaymentPercent : 50;
+        const dpLbl = initialInvoiceData.downPaymentLabel || "DOWN PAYMENT (DP)";
+        setIncludeDownPayment(isDp);
+        setDownPaymentPercent(dpPct);
+        setDownPaymentLabel(dpLbl);
+
         setCompName(initialInvoiceData.companyName || "PT. GARDA INOVASI GLOBALTECH");
         setCompLogoUrl(initialInvoiceData.logoImage || "");
         setQPreparedBy(initialInvoiceData.signatoryName || "JIDAN RAMADHAN");
         setQPreparedByTitle(initialInvoiceData.signatoryTitle || "Direktur Keuangan");
         setQDigitalSigUrl(initialInvoiceData.digitalSignatureUrl || initialInvoiceData.signatureImage || "");
 
-        const cleanNum = (num || "INV").replace(/[^a-zA-Z0-9_-]/g, "_");
-        setDownloadFileName(`INVOICE_${cleanNum}.pdf`);
+        // Set nama file sesuai format permintaan:
+        // MISAL: INV..NO...DP50%...PT.....
+        const autoName = formatInvoicePdfFileName(
+          num,
+          isDp,
+          dpPct,
+          dpLbl,
+          recip
+        );
+        setDownloadFileName(autoName);
       } else if (type === "po" && initialPoData) {
         const num = initialPoData.poNo || "";
         setPoNo(num);
@@ -390,11 +422,20 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
   const qTax = includePPN ? Math.round(qTaxBase * (taxRate / 100)) : 0;
   const qGrandTotal = qSubtotal - qDiscountAmount + qShipping + qTax;
 
-  // Invoice Financials
+  // Invoice Financials (Diskon Persen/Nominal & Termin/DP Khusus Persen)
   const invSubtotal = invItems.reduce((acc, el) => acc + ((Number(el.qty) || 1) * (Number(el.price) || 0)), 0);
+  const invDiscountAmount = includeDiscount
+    ? (discountType === "percent" ? Math.round(invSubtotal * (discountVal / 100)) : discountVal)
+    : 0;
+  const invTaxBase = Math.max(0, invSubtotal - invDiscountAmount);
   const invShipping = includeShipping ? Number(shippingCost || 0) : 0;
-  const invTax = includePPN ? Math.round(invSubtotal * (taxRate / 100)) : 0;
-  const invGrandTotal = invSubtotal - discountVal + invShipping + invTax;
+  const invTax = includePPN ? Math.round(invTaxBase * (taxRate / 100)) : 0;
+  const invTotalFullProject = invTaxBase + invShipping + invTax;
+  const invDownPaymentAmount = includeDownPayment
+    ? Math.round((invTotalFullProject * downPaymentPercent) / 100)
+    : 0;
+  const invRemainingAmount = Math.max(0, invTotalFullProject - invDownPaymentAmount);
+  const invGrandTotal = includeDownPayment ? invDownPaymentAmount : invTotalFullProject;
 
   // PO Financials
   const poSubtotal = poItems.reduce((acc, el) => acc + ((Number(el.qty) || 1) * (Number(el.price) || 0)), 0);
@@ -477,6 +518,16 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
           includeShipping,
           shippingLabel,
           shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+          includeDiscount,
+          discountType,
+          discountVal,
+          discountAmount: invDiscountAmount,
+          includeDownPayment,
+          downPaymentLabel,
+          downPaymentPercent,
+          downPaymentAmount: invDownPaymentAmount,
+          remainingAmount: invRemainingAmount,
+          totalFullProject: invTotalFullProject,
           amount: invGrandTotal,
           grandTotal: invGrandTotal,
           bankName: invBankName,
@@ -1151,6 +1202,13 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         ]
       ];
 
+      if (includeDiscount && invDiscountAmount > 0) {
+        invFootRows.push([
+          { content: `DISKON ${discountType === "percent" ? `(${discountVal}%)` : ""}`, colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [254, 242, 242] as any, textColor: [225, 29, 72] } },
+          { content: `-Rp ${invDiscountAmount.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [254, 242, 242] as any, textColor: [225, 29, 72] } }
+        ]);
+      }
+
       if (includeShipping) {
         invFootRows.push([
           { content: shippingLabel || "BIAYA PENGIRIMAN / ONGKIR", colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [248, 250, 252] as any } },
@@ -1165,10 +1223,31 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
         ]);
       }
 
-      invFootRows.push([
-        { content: "TOTAL TAGIHAN", colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } },
-        { content: `Rp ${invGrandTotal.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } }
-      ]);
+      if (includeDownPayment) {
+        invFootRows.push([
+          { content: "TOTAL NILAI PROYEK", colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [241, 245, 249] as any } },
+          { content: `Rp ${invTotalFullProject.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [241, 245, 249] as any } }
+        ]);
+        invFootRows.push([
+          { content: `${downPaymentLabel || "DOWN PAYMENT"} (${downPaymentPercent}%)`, colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [254, 243, 199] as any, textColor: [180, 83, 9] } },
+          { content: `Rp ${invDownPaymentAmount.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [254, 243, 199] as any, textColor: [180, 83, 9] } }
+        ]);
+        if (invRemainingAmount > 0) {
+          invFootRows.push([
+            { content: `SISA PEMBAYARAN (${Math.max(0, 100 - downPaymentPercent)}%)`, colSpan: 4, styles: { halign: "right", fontStyle: "normal" as const, fillColor: [248, 250, 252] as any, textColor: [100, 116, 139] } },
+            { content: `Rp ${invRemainingAmount.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "normal" as const, fillColor: [248, 250, 252] as any, textColor: [100, 116, 139] } }
+          ]);
+        }
+        invFootRows.push([
+          { content: `TOTAL TAGIHAN INI (${downPaymentPercent}%)`, colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } },
+          { content: `Rp ${invGrandTotal.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } }
+        ]);
+      } else {
+        invFootRows.push([
+          { content: "TOTAL TAGIHAN", colSpan: 4, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } },
+          { content: `Rp ${invGrandTotal.toLocaleString("id-ID")}`, colSpan: 2, styles: { halign: "right", fontStyle: "bold" as const, fillColor: [30, 58, 138] as any, textColor: [255, 255, 255] } }
+        ]);
+      }
 
       autoTable(pdf, {
         head: [invTableHeaders],
@@ -1878,6 +1957,248 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                   </div>
                 )}
 
+                {/* 5. Khusus Invoice: Pengaturan Diskon & Tagihan DP/Termin (Request 2 & 3) */}
+                {type === "invoice" && (
+                  <div className="space-y-3 border-t border-slate-800/80 pt-3">
+                    {/* Diskon Invoice (% & Rp) */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <label className="font-bold text-slate-300 flex items-center gap-1.5 cursor-pointer">
+                          <Percent size={12} className="text-rose-400" />
+                          <span>Terapkan Diskon</span>
+                        </label>
+                        <div className="flex items-center gap-2">
+                          {includeDiscount && (
+                            <div className="flex bg-slate-900 p-0.5 rounded-lg text-[8px] font-black">
+                              <button
+                                type="button"
+                                onClick={() => setDiscountType("rupiah")}
+                                className={`px-2 py-0.5 rounded transition-all ${
+                                  discountType === "rupiah" ? "bg-rose-600 text-white" : "text-slate-400 hover:text-slate-200"
+                                }`}
+                              >
+                                Rp
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setDiscountType("percent")}
+                                className={`px-2 py-0.5 rounded transition-all ${
+                                  discountType === "percent" ? "bg-rose-600 text-white" : "text-slate-400 hover:text-slate-200"
+                                }`}
+                              >
+                                %
+                              </button>
+                            </div>
+                          )}
+                          <input
+                            type="checkbox"
+                            checked={includeDiscount}
+                            onChange={(e) => setIncludeDiscount(e.target.checked)}
+                            className="w-4 h-4 rounded text-rose-600 border-slate-700 bg-slate-800 cursor-pointer"
+                          />
+                        </div>
+                      </div>
+
+                      {includeDiscount && (
+                        <div className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 space-y-1.5">
+                          <label className="text-[8px] font-extrabold uppercase text-slate-400">
+                            {discountType === "percent" ? "Persentase Diskon (%):" : "Nominal Diskon (Rp):"}
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={0}
+                              max={discountType === "percent" ? 100 : undefined}
+                              value={discountVal || ""}
+                              onChange={(e) => setDiscountVal(Math.max(0, parseFloat(e.target.value) || 0))}
+                              placeholder={discountType === "percent" ? "Contoh: 10" : "Contoh: 500000"}
+                              className="w-full px-2.5 py-1 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono font-bold text-rose-400 outline-none"
+                            />
+                            <span className="text-[10px] font-mono font-bold text-rose-400 shrink-0">
+                              -Rp {invDiscountAmount.toLocaleString("id-ID")}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Tagihan Down Payment (DP) / Termin Khusus Persen */}
+                    <div className="space-y-2 border-t border-slate-800/60 pt-2.5">
+                      <div className="flex items-center justify-between text-[10px]">
+                        <label className="font-bold text-amber-300 flex items-center gap-1.5 cursor-pointer">
+                          <Receipt size={12} className="text-amber-400" />
+                          <span>Tagihan Bertahap (DP / Termin %)</span>
+                        </label>
+                        <input
+                          type="checkbox"
+                          checked={includeDownPayment}
+                          onChange={(e) => {
+                            const val = e.target.checked;
+                            setIncludeDownPayment(val);
+                            setDownloadFileName(
+                              formatInvoicePdfFileName(
+                                invNum,
+                                val,
+                                downPaymentPercent,
+                                downPaymentLabel,
+                                invRecipient
+                              )
+                            );
+                          }}
+                          className="w-4 h-4 rounded text-amber-500 border-slate-700 bg-slate-800 cursor-pointer"
+                        />
+                      </div>
+
+                      {includeDownPayment && (
+                        <div className="bg-slate-900/90 p-2.5 rounded-xl border border-amber-500/30 space-y-2 text-white">
+                          <div>
+                            <label className="text-[8px] font-extrabold uppercase text-slate-400">
+                              Sub Judul Tagihan (Bisa Diketik):
+                            </label>
+                            <input
+                              type="text"
+                              value={downPaymentLabel}
+                              onChange={(e) => {
+                                setDownPaymentLabel(e.target.value);
+                                setDownloadFileName(
+                                  formatInvoicePdfFileName(
+                                    invNum,
+                                    includeDownPayment,
+                                    downPaymentPercent,
+                                    e.target.value,
+                                    invRecipient
+                                  )
+                                );
+                              }}
+                              placeholder="DOWN PAYMENT (DP)"
+                              className="w-full px-2.5 py-1 bg-slate-950 border border-slate-700 rounded-lg text-xs font-bold text-amber-300 outline-none"
+                            />
+                          </div>
+
+                          {/* Quick Chips */}
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {["DOWN PAYMENT (DP)", "DP 50%", "TERMIN 1", "TERMIN 2", "PELUNASAN"].map((chip) => (
+                              <button
+                                key={chip}
+                                type="button"
+                                onClick={() => {
+                                  setDownPaymentLabel(chip);
+                                  setDownloadFileName(
+                                    formatInvoicePdfFileName(
+                                      invNum,
+                                      includeDownPayment,
+                                      downPaymentPercent,
+                                      chip,
+                                      invRecipient
+                                    )
+                                  );
+                                }}
+                                className="px-1.5 py-0.5 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-300 rounded text-[8px] font-bold"
+                              >
+                                {chip}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div>
+                            <label className="text-[8px] font-extrabold uppercase text-slate-400">
+                              Persentase Tagihan (% Khusus):
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <div className="relative flex-1">
+                                <input
+                                  type="number"
+                                  min={1}
+                                  max={100}
+                                  value={downPaymentPercent || ""}
+                                  onChange={(e) => {
+                                    const pct = Math.min(100, Math.max(0, parseFloat(e.target.value) || 0));
+                                    setDownPaymentPercent(pct);
+                                    setDownloadFileName(
+                                      formatInvoicePdfFileName(
+                                        invNum,
+                                        includeDownPayment,
+                                        pct,
+                                        downPaymentLabel,
+                                        invRecipient
+                                      )
+                                    );
+                                  }}
+                                  placeholder="50"
+                                  className="w-full px-2.5 py-1 pr-6 bg-slate-950 border border-slate-700 rounded-lg text-xs font-mono font-bold text-amber-400 outline-none"
+                                />
+                                <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400 font-bold">
+                                  %
+                                </span>
+                              </div>
+                              <div className="flex gap-1">
+                                {[30, 50, 70, 100].map((p) => (
+                                  <button
+                                    key={p}
+                                    type="button"
+                                    onClick={() => {
+                                      setDownPaymentPercent(p);
+                                      setDownloadFileName(
+                                        formatInvoicePdfFileName(
+                                          invNum,
+                                          includeDownPayment,
+                                          p,
+                                          downPaymentLabel,
+                                          invRecipient
+                                        )
+                                      );
+                                    }}
+                                    className={`px-1.5 py-0.5 rounded text-[8px] font-black ${
+                                      downPaymentPercent === p ? "bg-amber-600 text-white" : "bg-slate-950 text-slate-400"
+                                    }`}
+                                  >
+                                    {p}%
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="p-2 bg-slate-950 rounded-lg border border-slate-800/80 text-[8.5px] space-y-0.5">
+                            <div className="flex justify-between text-slate-400">
+                              <span>Total Proyek:</span>
+                              <span className="font-mono">Rp {invTotalFullProject.toLocaleString("id-ID")}</span>
+                            </div>
+                            <div className="flex justify-between font-bold text-amber-400">
+                              <span>Ditagihkan ({downPaymentPercent}%):</span>
+                              <span className="font-mono">Rp {invDownPaymentAmount.toLocaleString("id-ID")}</span>
+                            </div>
+                            {invRemainingAmount > 0 && (
+                              <div className="flex justify-between text-slate-500">
+                                <span>Sisa:</span>
+                                <span className="font-mono">Rp {invRemainingAmount.toLocaleString("id-ID")}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDownloadFileName(
+                                formatInvoicePdfFileName(
+                                  invNum,
+                                  includeDownPayment,
+                                  downPaymentPercent,
+                                  downPaymentLabel,
+                                  invRecipient
+                                )
+                              );
+                            }}
+                            className="w-full py-1 text-[8px] font-black uppercase tracking-wider bg-slate-950 hover:bg-slate-800 text-amber-400 border border-amber-500/30 rounded-lg transition-all"
+                          >
+                            🔄 Sinkronkan Nama File PDF
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* 5. Pengaturan Tanda Tangan Surat Jalan */}
                 {type === "surat_jalan" && (
                   <div className="space-y-2.5 border-t border-slate-800/80 pt-3">
@@ -2233,6 +2554,16 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                         <td colSpan={4} className="px-2 py-1 text-right">SUBTOTAL</td>
                         <td colSpan={2} className="px-2 py-1 text-right font-mono font-black">Rp {invSubtotal.toLocaleString("id-ID")}</td>
                       </tr>
+                      {includeDiscount && invDiscountAmount > 0 && (
+                        <tr className="bg-rose-50/70 text-rose-700 font-bold">
+                          <td colSpan={4} className="px-2 py-1 text-right">
+                            DISKON {discountType === "percent" ? `(${discountVal}%)` : ""}
+                          </td>
+                          <td colSpan={2} className="px-2 py-1 text-right font-mono font-black">
+                            -Rp {invDiscountAmount.toLocaleString("id-ID")}
+                          </td>
+                        </tr>
+                      )}
                       {includeShipping && (
                         <tr className="bg-slate-50 font-bold">
                           <td colSpan={4} className="px-2 py-1 text-right">{shippingLabel}</td>
@@ -2245,10 +2576,33 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
                           <td colSpan={2} className="px-2 py-1 text-right font-mono font-black">Rp {invTax.toLocaleString("id-ID")}</td>
                         </tr>
                       )}
-                      <tr className="bg-[#1e3a8a] text-white font-black">
-                        <td colSpan={4} className="px-2 py-1 text-right">TOTAL TAGIHAN</td>
-                        <td colSpan={2} className="px-2 py-1 text-right font-mono">Rp {invGrandTotal.toLocaleString("id-ID")}</td>
-                      </tr>
+                      {includeDownPayment ? (
+                        <>
+                          <tr className="bg-slate-100 font-bold text-slate-700 border-t border-slate-300">
+                            <td colSpan={4} className="px-2 py-1 text-right">TOTAL NILAI PROYEK</td>
+                            <td colSpan={2} className="px-2 py-1 text-right font-mono font-black">Rp {invTotalFullProject.toLocaleString("id-ID")}</td>
+                          </tr>
+                          <tr className="bg-amber-50 text-amber-900 font-black">
+                            <td colSpan={4} className="px-2 py-1 text-right">{downPaymentLabel || "DOWN PAYMENT"} ({downPaymentPercent}%)</td>
+                            <td colSpan={2} className="px-2 py-1 text-right font-mono font-black text-amber-700">Rp {invDownPaymentAmount.toLocaleString("id-ID")}</td>
+                          </tr>
+                          {invRemainingAmount > 0 && (
+                            <tr className="bg-slate-50 text-slate-500 font-medium">
+                              <td colSpan={4} className="px-2 py-0.5 text-right">Sisa Pembayaran ({Math.max(0, 100 - downPaymentPercent)}%)</td>
+                              <td colSpan={2} className="px-2 py-0.5 text-right font-mono">Rp {invRemainingAmount.toLocaleString("id-ID")}</td>
+                            </tr>
+                          )}
+                          <tr className="bg-[#1e3a8a] text-white font-black">
+                            <td colSpan={4} className="px-2 py-1.5 text-right">TOTAL TAGIHAN INI ({downPaymentPercent}%)</td>
+                            <td colSpan={2} className="px-2 py-1.5 text-right font-mono font-black">Rp {invGrandTotal.toLocaleString("id-ID")}</td>
+                          </tr>
+                        </>
+                      ) : (
+                        <tr className="bg-[#1e3a8a] text-white font-black">
+                          <td colSpan={4} className="px-2 py-1 text-right">TOTAL TAGIHAN</td>
+                          <td colSpan={2} className="px-2 py-1 text-right font-mono font-black">Rp {invGrandTotal.toLocaleString("id-ID")}</td>
+                        </tr>
+                      )}
                     </tfoot>
                   </table>
 
@@ -2476,6 +2830,26 @@ export const DocumentPreviewModal: React.FC<DocumentPreviewModalProps> = ({
               placeholder="nama_file.pdf"
               className="px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-slate-600 focus:border-indigo-500 rounded-lg text-xs font-mono font-bold text-white outline-none w-full sm:w-72"
             />
+            {type === "invoice" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setDownloadFileName(
+                    formatInvoicePdfFileName(
+                      invNum,
+                      includeDownPayment,
+                      downPaymentPercent,
+                      downPaymentLabel,
+                      invRecipient
+                    )
+                  );
+                }}
+                className="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-amber-400 hover:text-amber-300 rounded-lg text-[9px] font-bold shrink-0 transition-all"
+                title="Format ulang nama file ke standar: INV_[NOMOR]_[DP/TERMIN%]_PT_[NAMA]"
+              >
+                🔄 Reset Format DP
+              </button>
+            )}
           </div>
 
           <div className="flex gap-3 w-full sm:w-auto justify-end">
