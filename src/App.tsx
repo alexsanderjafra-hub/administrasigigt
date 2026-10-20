@@ -217,6 +217,7 @@ import { AdminDailyReportsScreen } from "./components/AdminDailyReportsScreen";
 import { generateDailyReportPDF as generateDailyReportPDFUtil, generateBatchDailyReportsPDF, formatIndonesianDateUpper } from "./utils/dailyReportPdf";
 import { EKatalog } from "./components/EKatalog";
 import { AdminPurchaseOrderScreen } from "./components/AdminPurchaseOrderScreen";
+import { AdminKwitansiScreen } from "./components/AdminKwitansiScreen";
 import AdminKasbonScreen from "./components/AdminKasbonScreen";
 import { DocumentPreviewModal } from "./components/DocumentPreviewModal";
 import { ImageRepositoryModal } from "./components/ImageRepositoryModal";
@@ -1148,6 +1149,7 @@ const AdminInvoicesScreen = ({
   selectedQuotationForInvoice,
   setSelectedQuotationForInvoice,
   onLaunchSuratJalan,
+  onLaunchKwitansi,
 }: {
   invoices: Invoice[];
   clients: Client[];
@@ -1161,6 +1163,7 @@ const AdminInvoicesScreen = ({
   selectedQuotationForInvoice?: Quotation | null;
   setSelectedQuotationForInvoice?: (q: Quotation | null) => void;
   onLaunchSuratJalan?: (invData: any) => void;
+  onLaunchKwitansi?: (invData: any) => void;
 }) => {
   const [view, setView] = useState<"list" | "build">("list");
   const [searchTerm, setSearchTerm] = useState("");
@@ -2003,6 +2006,16 @@ const AdminInvoicesScreen = ({
                                 <span>Surat Jalan</span>
                               </button>
                             )}
+                            {onLaunchKwitansi && (
+                              <button
+                                onClick={() => onLaunchKwitansi(inv)}
+                                className="p-2.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 hover:text-indigo-800 rounded-xl transition-all font-sans text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs"
+                                title="Luncurkan Builder Kwitansi dari Invoice ini"
+                              >
+                                <Receipt size={15} className="text-indigo-600" />
+                                <span>Kwitansi</span>
+                              </button>
+                            )}
                             <button
                               onClick={() => handleEditInvoice(inv)}
                               className="p-2.5 hover:bg-indigo-50 hover:text-indigo-600 rounded-xl transition-all font-sans text-xs font-bold flex items-center gap-1.5"
@@ -2073,6 +2086,29 @@ const AdminInvoicesScreen = ({
                 >
                   <Truck size={15} />
                   <span>Buat Surat Jalan</span>
+                </button>
+              )}
+              {onLaunchKwitansi && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const invData = {
+                      invoiceNumber,
+                      clientId,
+                      clientName: recipientName,
+                      recipientName,
+                      recipientAddress: (clients.find(c => c.id === clientId)?.address) || "",
+                      amount: grandTotal,
+                      jobName,
+                      date: invoiceDate,
+                    };
+                    onLaunchKwitansi(invData);
+                  }}
+                  className="bg-indigo-600 text-white hover:bg-indigo-700 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-sm transition-all cursor-pointer flex items-center gap-2"
+                  title="Luncurkan Builder Kwitansi dari Invoice ini"
+                >
+                  <Receipt size={15} />
+                  <span>Buat Kwitansi</span>
                 </button>
               )}
               <button
@@ -7814,7 +7850,11 @@ const getEffectiveDebtRecords = (
 
     if (
       r.type === "HUTANG" &&
+      (r as any).isSeedData === true &&
       !((r as any).isUserEdited) &&
+      !((r as any).isUserCreated) &&
+      !((r as any).isManualEntry) &&
+      !((r as any).originPoId) &&
       !hasUserOverride &&
       !((r as any).originFinancialRecordId) &&
       !((r as any).originCustomId) &&
@@ -9373,7 +9413,7 @@ const AdminDebtScreen = ({
     e.preventDefault();
     const customId = getNextDebtCustomId(effectiveDebtRecords, activeTab);
 
-    const newRecord: Omit<DebtRecord, "id"> = {
+    const newRecord: any = {
       type: activeTab,
       customId,
       ...formData,
@@ -9382,10 +9422,17 @@ const AdminDebtScreen = ({
       recordedBy: user.name,
       timestamp: Date.now(),
       payments: [],
+      isUserCreated: true,
+      isUserEdited: true,
+      isManualEntry: true,
     };
     const docId = await dbService.createDocument("debtRecords", newRecord);
     const createdDebt = { id: docId || customId || `debt-${Date.now()}`, ...newRecord } as DebtRecord;
-    setDebtRecords((prev) => [createdDebt, ...prev]);
+    saveDebtOverride(createdDebt);
+    if (createdDebt.customId) {
+      saveDebtOverride(createdDebt, createdDebt.customId);
+    }
+    setDebtRecords?.((prev) => [createdDebt, ...prev]);
     await logActivity(
       "DEBT",
       "CREATE",
@@ -12268,6 +12315,31 @@ const AdminDebtScreen = ({
     setIsExporting(false);
   };
 
+  const handleDownloadPerContact = (contactName: string, type: "HUTANG" | "PIUTANG") => {
+    const targetKey = normalizeContactName(contactName).toUpperCase();
+    const recs = effectiveDebtRecords.filter((r) => {
+      if (r.type !== type) return false;
+      const rawName = (r.contactName || "Tanpa Nama").trim();
+      const displayName = normalizeContactName(rawName);
+      return displayName.toUpperCase() === targetKey;
+    });
+    const totalAmount = recs.reduce((sum, r) => {
+      const s = getScheduleForRecord(r, projects, financialRecords);
+      return sum + (s.contractValue || r.amount || 0);
+    }, 0);
+    const totalPaid = recs.reduce((sum, r) => {
+      const s = getScheduleForRecord(r, projects, financialRecords);
+      return sum + s.totalPaid;
+    }, 0);
+    const totalRemaining = Math.max(0, totalAmount - totalPaid);
+    downloadContactSummaryPDF(
+      { name: contactName, type },
+      recs,
+      financialRecords,
+      { totalAmount, totalPaid, totalRemaining, count: recs.length }
+    );
+  };
+
   return (
     <AdminLayout
       activeScreen="admin-debt"
@@ -12507,11 +12579,22 @@ const AdminDebtScreen = ({
                         </div>
 
                         {/* Interactive action prompt */}
-                        <div className="pt-2 mt-1 border-t border-slate-100 flex items-center justify-between text-[9.5px] font-bold text-slate-400 group-hover/card:text-indigo-600 transition-colors">
-                          <span className="flex items-center gap-1">
-                            <Eye size={12} /> Klik untuk rincian & mutasi
+                        <div className="pt-2 mt-1 border-t border-slate-100 flex items-center justify-between text-[9.5px] font-bold text-slate-400">
+                          <span className="flex items-center gap-1 group-hover/card:text-indigo-600 transition-colors">
+                            <Eye size={12} /> Rincian & Mutasi
                           </span>
-                          <ChevronRight size={13} className="group-hover/card:translate-x-0.5 transition-transform" />
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDownloadPerContact(group.name, activeTab);
+                            }}
+                            className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg text-[9px] font-black uppercase tracking-wider flex items-center gap-1 cursor-pointer transition-all shadow-xs"
+                            title={`Unduh Laporan PDF ${activeTab === "HUTANG" ? "Vendor / Kreditur" : "Proyek / Klien"} ini`}
+                          >
+                            <Download size={10} />
+                            <span>PDF</span>
+                          </button>
                         </div>
                       </div>
                     </div>
@@ -12985,6 +13068,20 @@ const AdminDebtScreen = ({
                               <Calendar size={14} />
                             </button>
                           )}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (activeTab === "PIUTANG") {
+                                downloadSinglePiutangPDF(r);
+                              } else {
+                                handleDownloadPerContact(r.contactName, "HUTANG");
+                              }
+                            }}
+                            className="p-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl hover:scale-105 transition-all shadow-md shadow-emerald-100 flex items-center justify-center cursor-pointer"
+                            title={activeTab === "PIUTANG" ? "Unduh Laporan Realisasi PDF Proyek/Piutang Ini" : "Unduh Laporan PDF Kreditur Ini"}
+                          >
+                            <Download size={14} />
+                          </button>
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
@@ -16966,6 +17063,50 @@ const RefIdBankBadgeList = ({ refIdBankStr, totalAmount }: { refIdBankStr: strin
         </span>
       ))}
     </div>
+  );
+};
+
+const FastFormTextarea: React.FC<{
+  value: string;
+  onChange: (val: string) => void;
+  placeholder?: string;
+  className?: string;
+  rows?: number;
+  required?: boolean;
+}> = ({ value, onChange, placeholder, className, rows = 3, required }) => {
+  const [localVal, setLocalVal] = useState(value || "");
+  const debounceTimerRef = useRef<any>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    setLocalVal(value || "");
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const val = e.target.value.toUpperCase();
+    setLocalVal(val);
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    debounceTimerRef.current = setTimeout(() => {
+      onChangeRef.current(val);
+    }, 100);
+  };
+
+  const handleBlur = () => {
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+    onChangeRef.current(localVal);
+  };
+
+  return (
+    <textarea
+      rows={rows}
+      required={required}
+      placeholder={placeholder}
+      className={className}
+      value={localVal}
+      onChange={handleChange}
+      onBlur={handleBlur}
+    />
   );
 };
 
@@ -26260,16 +26401,16 @@ const AdminFinanceScreen = ({
                       <label className="text-xs md:text-sm font-black text-slate-400 uppercase tracking-widest ml-1">
                         Deskripsi Transaksi
                       </label>
-                      <textarea
+                      <FastFormTextarea
                         placeholder="Contoh: Pembelian semen Tiga Roda 50 sak untuk proyek A..."
                         required
                         rows={3}
                         value={formData.description}
-                        onChange={(e) =>
-                          setFormData({
-                            ...formData,
-                            description: e.target.value.toUpperCase(),
-                          })
+                        onChange={(val) =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            description: val,
+                          }))
                         }
                         className="w-full px-6 py-5 md:py-6 bg-slate-50 border border-slate-100 rounded-[28px] text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all resize-none shadow-sm"
                       />
@@ -27832,16 +27973,16 @@ const AdminFinanceScreen = ({
                       <label className="text-xs md:text-sm font-black text-slate-400 uppercase tracking-widest ml-1">
                         Deskripsi Transaksi
                       </label>
-                      <textarea
+                      <FastFormTextarea
                         placeholder="Contoh: Pembelian semen Tiga Roda 50 sak untuk proyek A..."
                         required
                         rows={3}
                         value={editFormData.description}
-                        onChange={(e) =>
-                          setEditFormData({
-                            ...editFormData,
-                            description: e.target.value.toUpperCase(),
-                          })
+                        onChange={(val) =>
+                          setEditFormData((prev) => (prev ? {
+                            ...prev,
+                            description: val,
+                          } : null))
                         }
                         className="w-full px-6 py-5 md:py-6 bg-slate-50 border border-slate-100 rounded-[28px] text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all resize-none shadow-sm"
                       />
@@ -29037,6 +29178,7 @@ function AdminSidebar({
     { id: "admin-debt", icon: ArrowRightLeft, label: "Hutang Piutang" },
     { id: "admin-kasbon", icon: Coins, label: "Kasbon Pegawai" },
     { id: "admin-invoices", icon: Receipt, label: "Invoice & Penagihan" },
+    { id: "admin-kwitansi", icon: Receipt, label: "Kwitansi Pembayaran" },
     { id: "admin-po", icon: FileText, label: "Purchase Order (PO)" },
     { id: "admin-inventory", icon: Package, label: "Aset & Inventaris" },
     { id: "admin-maintenance", icon: Wrench, label: "Pemeliharaan Aset" },
@@ -29060,6 +29202,7 @@ function AdminSidebar({
         "admin-debt",
         "admin-analytics",
         "admin-invoices",
+        "admin-kwitansi",
         "admin-announcements",
         "admin-schedule",
         "company-profile",
@@ -32215,6 +32358,7 @@ export default function App() {
   const [selectedInvoiceForEdit, setSelectedInvoiceForEdit] = useState<any | null>(null);
   const [selectedQuotationForInvoice, setSelectedQuotationForInvoice] = useState<Quotation | null>(null);
   const [selectedInvoiceForSuratJalan, setSelectedInvoiceForSuratJalan] = useState<any | null>(null);
+  const [selectedInvoiceForKwitansi, setSelectedInvoiceForKwitansi] = useState<any | null>(null);
   const [selectedQuotationForPO, setSelectedQuotationForPO] = useState<Quotation | null>(null);
   const [financeSearchQuery, setFinanceSearchQuery] = useState<string>("");
   const [suratJalanList, setSuratJalanList] = useState<SuratJalan[]>([]);
@@ -39002,9 +39146,12 @@ export default function App() {
             if (k1) prevMap.set(k1, d);
             if (k2) prevMap.set(k2, d);
           });
-          return deduped.map((item) => {
+          const dedupedKeys = new Set<string>();
+          const result = deduped.map((item) => {
             const k1 = (item.customId || "").trim().toUpperCase();
             const k2 = (item.id || "").trim().toUpperCase();
+            if (k1) dedupedKeys.add(k1);
+            if (k2) dedupedKeys.add(k2);
             const ov = debtOverrides[k1] || debtOverrides[k2];
             const p = prevMap.get(k1) || prevMap.get(k2);
             if (ov || (p && (p as any).isUserEdited)) {
@@ -39019,6 +39166,17 @@ export default function App() {
             }
             return item;
           });
+
+          // PRESERVE records in prev that are newly created or manual entries
+          (prev || []).forEach((p) => {
+            const k1 = (p.customId || "").trim().toUpperCase();
+            const k2 = (p.id || "").trim().toUpperCase();
+            if ((!k1 || !dedupedKeys.has(k1)) && (!k2 || !dedupedKeys.has(k2))) {
+              result.push(p);
+            }
+          });
+
+          return result;
         });
       },
       [],
@@ -43962,171 +44120,115 @@ export default function App() {
 
                     currentY += 24;
 
-                    // 4 KPI Summary Cards (Nilai Kontrak, Pemasukan, Pengeluaran, Keuntungan)
-                    const cardGap = 3;
-                    const cardW = (pageWidth - 28 - cardGap * 3) / 4;
-                    const cardH = 22;
+                    // HALAMAN 1: IKHTISAR RINGKAS KEUANGAN PROYEK (Sederhana 6 Indikator Utama)
+                    const rabValue = currentOperationalCost || 0;
+                    const keuntunganSementara = actualIncome - actualExpense; // hasil dari uang masuk dikurang uang keluar
+                    const rencanaKeuntungan = currentContractValue - rabValue; // hasil dari nilai kontrak dikurang NILAI RAB PROYEK
 
-                    // 1. Nilai Kontrak
-                    doc.setFillColor(248, 250, 252);
-                    doc.setDrawColor(203, 213, 225);
-                    doc.roundedRect(14, currentY, cardW, cardH, 2, 2, "FD");
                     doc.setFont("helvetica", "bold");
-                    doc.setFontSize(6.5);
-                    doc.setTextColor(100, 116, 139);
-                    doc.text("NILAI KONTRAK (SPK)", 17, currentY + 5.5);
-                    doc.setFontSize(9);
-                    doc.setTextColor(15, 23, 42);
-                    doc.text(`Rp ${currentContractValue.toLocaleString("id-ID")}`, 17, currentY + 13);
-                    doc.setFont("helvetica", "normal");
-                    doc.setFontSize(6.5);
-                    doc.setTextColor(148, 163, 184);
-                    doc.text(isPpnActive ? "Termasuk PPN 11%" : "Non-PPN (HPP Saja)", 17, currentY + 18.5);
-
-                    // 2. Total Pemasukan
-                    const c2X = 14 + cardW + cardGap;
-                    doc.setFillColor(240, 253, 244);
-                    doc.setDrawColor(187, 247, 208);
-                    doc.roundedRect(c2X, currentY, cardW, cardH, 2, 2, "FD");
-                    doc.setFont("helvetica", "bold");
-                    doc.setFontSize(6.5);
-                    doc.setTextColor(5, 150, 105);
-                    doc.text("TOTAL PEMASUKAN (IN)", c2X + 3, currentY + 5.5);
-                    doc.setFontSize(9);
-                    doc.setTextColor(4, 120, 87);
-                    doc.text(`Rp ${actualIncome.toLocaleString("id-ID")}`, c2X + 3, currentY + 13);
-                    doc.setFont("helvetica", "normal");
-                    doc.setFontSize(6.5);
-                    doc.setTextColor(5, 150, 105);
-                    const incomePercent = currentContractValue > 0 ? ((actualIncome / currentContractValue) * 100).toFixed(1) : "0";
-                    doc.text(`Realisasi Termin: ${incomePercent}%`, c2X + 3, currentY + 18.5);
-
-                    // 3. Total Pengeluaran
-                    const c3X = c2X + cardW + cardGap;
-                    doc.setFillColor(255, 241, 242);
-                    doc.setDrawColor(254, 205, 211);
-                    doc.roundedRect(c3X, currentY, cardW, cardH, 2, 2, "FD");
-                    doc.setFont("helvetica", "bold");
-                    doc.setFontSize(6.5);
-                    doc.setTextColor(225, 29, 72);
-                    doc.text("TOTAL PENGELUARAN (OUT)", c3X + 3, currentY + 5.5);
-                    doc.setFontSize(9);
-                    doc.setTextColor(190, 18, 60);
-                    doc.text(`Rp ${actualExpense.toLocaleString("id-ID")}`, c3X + 3, currentY + 13);
-                    doc.setFont("helvetica", "normal");
-                    doc.setFontSize(6);
-                    doc.setTextColor(159, 18, 57);
-                    doc.text(`PT: ${expenseViaCompany.toLocaleString("id-ID")} | Tlg: ${expenseViaPersonal.toLocaleString("id-ID")}`, c3X + 3, currentY + 18.5);
-
-                    // 4. Keuntungan / Net Margin
-                    const c4X = c3X + cardW + cardGap;
-                    const isNetPos = actualNetMargin >= 0;
-                    doc.setFillColor(isNetPos ? 240 : 255, isNetPos ? 253 : 241, isNetPos ? 244 : 242);
-                    doc.setDrawColor(isNetPos ? 187 : 254, isNetPos ? 247 : 205, isNetPos ? 208 : 211);
-                    doc.roundedRect(c4X, currentY, cardW, cardH, 2, 2, "FD");
-                    doc.setFont("helvetica", "bold");
-                    doc.setFontSize(6.5);
-                    doc.setTextColor(isNetPos ? 22 : 225, isNetPos ? 163 : 29, isNetPos ? 74 : 72);
-                    doc.text("KEUNTUNGAN KAS BERJALAN", c4X + 3, currentY + 5.5);
-                    doc.setFontSize(9);
-                    doc.setTextColor(isNetPos ? 21 : 190, isNetPos ? 128 : 18, isNetPos ? 61 : 60);
-                    doc.text(`Rp ${actualNetMargin.toLocaleString("id-ID")}`, c4X + 3, currentY + 13);
-                    doc.setFont("helvetica", "normal");
-                    doc.setFontSize(6);
-                    doc.setTextColor(100, 116, 139);
-                    doc.text(`Proyeksi Laba: Rp ${projectedProfitRealTime.toLocaleString("id-ID")}`, c4X + 3, currentY + 18.5);
-
-                    currentY += 26;
-
-                    // Table 1: Rencana vs Realisasi Anggaran Proyek
-                    doc.setFont("helvetica", "bold");
-                    doc.setFontSize(8.5);
+                    doc.setFontSize(9.5);
                     doc.setTextColor(30, 41, 59);
-                    doc.text("1. IKHTISAR RENCANA ANGGARAN VS REALISASI BIAYA & LABA", 14, currentY);
-                    currentY += 2;
+                    doc.text("IKHTISAR KEUANGAN & LABA RUGI PROYEK", 14, currentY);
+                    currentY += 4;
 
-                    const budgetRows = [
+                    const summaryRows = [
                       [
-                        isPpnActive ? "Nilai Kontrak Proyek (Inc. PPN 11%)" : "Nilai Kontrak Proyek (HPP / Non-PPN)",
+                        "1. NILAI KONTRAK PROYEK",
                         `Rp ${currentContractValue.toLocaleString("id-ID")}`,
+                        isPpnActive ? "Nilai Kontrak SPK (Termasuk PPN 11%)" : "Nilai Kontrak SPK (HPP / Non-PPN)"
+                      ],
+                      [
+                        "2. UANG MASUK DARI PROYEK / PEMBAYARAN PROYEK",
                         `Rp ${actualIncome.toLocaleString("id-ID")}`,
-                        `Rp ${Math.max(0, currentContractValue - actualIncome).toLocaleString("id-ID")}`,
-                        actualIncome >= currentContractValue ? "100% Lunas" : `${((actualIncome / (currentContractValue || 1)) * 100).toFixed(1)}% Terbayar`
+                        `Realisasi Termin: ${currentContractValue > 0 ? ((actualIncome / currentContractValue) * 100).toFixed(1) : "0"}% dari Nilai Kontrak`
                       ],
                       [
-                        "Biaya Lapangan (Operasional/Bahan)",
-                        `Rp ${(currentOperationalCost || 0).toLocaleString("id-ID")}`,
+                        "3. UANG KELUAR UNTUK PROYEK",
                         `Rp ${actualExpense.toLocaleString("id-ID")}`,
-                        `Rp ${(currentOperationalCost ? currentOperationalCost - actualExpense : 0).toLocaleString("id-ID")}`,
-                        currentOperationalCost > 0
-                          ? (actualExpense <= currentOperationalCost ? "Efisien (Under Budget)" : "Over Budget")
-                          : "Sesuai Realisasi"
+                        `Realisasi Biaya Lapangan (PT: Rp ${expenseViaCompany.toLocaleString("id-ID")} | Talangan: Rp ${expenseViaPersonal.toLocaleString("id-ID")})`
                       ],
                       [
-                        "Pengeluaran via Rekening Resmi PT",
-                        "-",
-                        `Rp ${expenseViaCompany.toLocaleString("id-ID")}`,
-                        "-",
-                        "Kas Utama Perusahaan"
+                        "4. NILAI RAB PROYEK",
+                        `Rp ${rabValue.toLocaleString("id-ID")}`,
+                        rabValue > 0 ? `Rencana Anggaran Biaya Lapangan (${actualExpense <= rabValue ? "Efisien / Under Budget" : "Over Budget"})` : "Anggaran Biaya Belum Diatur"
                       ],
                       [
-                        "Pengeluaran via Talangan Dana Pribadi",
-                        "-",
-                        `Rp ${expenseViaPersonal.toLocaleString("id-ID")}`,
-                        "-",
-                        "Hutang PT ke Pemilik Dana"
+                        "5. KEUNTUNGAN SEMENTARA PROYEK\n(Hasil dari Uang Masuk dikurang Uang Keluar)",
+                        `Rp ${keuntunganSementara.toLocaleString("id-ID")}`,
+                        keuntunganSementara >= 0 ? "Surplus Arus Kas Proyek Berjalan (+)" : "Defisit Kas Proyek Berjalan (-)"
                       ],
                       [
-                        "Keuntungan Kas Berjalan (Kas Masuk - Kas Keluar)",
-                        "-",
-                        `Rp ${actualNetMargin.toLocaleString("id-ID")}`,
-                        "-",
-                        actualNetMargin >= 0 ? "Surplus Arus Kas" : "Defisit Kas Berjalan"
-                      ],
-                      [
-                        "Proyeksi Laba Bersih Akhir (Nilai Kontrak - Realisasi Biaya)",
-                        `Rp ${(currentContractValue - (currentOperationalCost || 0)).toLocaleString("id-ID")}`,
-                        `Rp ${projectedProfitRealTime.toLocaleString("id-ID")}`,
-                        "-",
-                        projectedProfitRealTime >= 0 ? "Target Profit Tercapai" : "Margin Kritis"
+                        "6. RENCANA KEUNTUNGAN PROYEK\n(Hasil dari Nilai Kontrak dikurang NILAI RAB PROYEK)",
+                        `Rp ${rencanaKeuntungan.toLocaleString("id-ID")}`,
+                        rencanaKeuntungan >= 0 ? "Target Rencana Laba Bersih Sesuai SPK & RAB" : "Margin Kritis"
                       ],
                     ];
 
                     autoTable(doc, {
-                      startY: currentY + 1,
+                      startY: currentY,
                       margin: { left: 14, right: 14 },
-                      head: [["Komponen Finansial", "Rencana (SPK/RAB)", "Realisasi Kas", "Selisih / Sisa", "Keterangan"]],
-                      body: budgetRows,
+                      head: [["Komponen Informasi Finansial Proyek", "Nominal (IDR)", "Keterangan"]],
+                      body: summaryRows,
                       theme: "grid",
                       headStyles: {
-                        fillColor: [51, 65, 85], // Slate-700
+                        fillColor: [15, 23, 42], // Slate-900
                         textColor: [255, 255, 255],
-                        fontSize: 7,
+                        fontSize: 8.5,
                         fontStyle: "bold",
+                        cellPadding: 3.5,
                       },
                       bodyStyles: {
-                        fontSize: 6.8,
+                        fontSize: 8,
                         textColor: [30, 41, 59],
+                        cellPadding: 4,
                       },
                       columnStyles: {
-                        0: { cellWidth: 58, fontStyle: "bold" },
-                        1: { cellWidth: 32, halign: "right" },
-                        2: { cellWidth: 32, halign: "right", fontStyle: "bold" },
-                        3: { cellWidth: 30, halign: "right" },
-                        4: { cellWidth: "auto", halign: "center" },
+                        0: { cellWidth: 95, fontStyle: "bold" },
+                        1: { cellWidth: 45, halign: "right", fontStyle: "bold" },
+                        2: { cellWidth: "auto" },
                       },
                       alternateRowStyles: {
                         fillColor: [248, 250, 252],
                       },
+                      didParseCell: (data) => {
+                        if (data.section === "body") {
+                          if (data.row.index === 0) {
+                            data.cell.styles.textColor = [15, 23, 42];
+                          } else if (data.row.index === 1) {
+                            if (data.column.index === 1) data.cell.styles.textColor = [5, 150, 105];
+                          } else if (data.row.index === 2) {
+                            if (data.column.index === 1) data.cell.styles.textColor = [225, 29, 72];
+                          } else if (data.row.index === 4) {
+                            if (data.column.index === 1) {
+                              data.cell.styles.textColor = keuntunganSementara >= 0 ? [5, 150, 105] : [225, 29, 72];
+                            }
+                          } else if (data.row.index === 5) {
+                            if (data.column.index === 1) {
+                              data.cell.styles.textColor = rencanaKeuntungan >= 0 ? [30, 64, 175] : [225, 29, 72];
+                            }
+                          }
+                        }
+                      },
                     });
 
-                    currentY = (doc as any).lastAutoTable.finalY + 8;
+                    // Ringkasan catatan halaman 1
+                    currentY = (doc as any).lastAutoTable.finalY + 10;
+                    doc.setFillColor(241, 245, 249);
+                    doc.setDrawColor(203, 213, 225);
+                    doc.roundedRect(14, currentY, pageWidth - 28, 22, 2, 2, "FD");
+                    doc.setFont("helvetica", "bold");
+                    doc.setFontSize(8);
+                    doc.setTextColor(51, 65, 85);
+                    doc.text("STATUS RINGKAS FINANSIAL PROYEK:", 20, currentY + 7);
+                    doc.setFont("helvetica", "normal");
+                    doc.setFontSize(7.5);
+                    doc.setTextColor(100, 116, 139);
+                    doc.text(`* Realisasi Pembayaran Proyek: ${actualIncome >= currentContractValue ? "100% LUNAS" : `${((actualIncome / (currentContractValue || 1)) * 100).toFixed(1)}% Terbayar (Sisa Tagihan: Rp ${Math.max(0, currentContractValue - actualIncome).toLocaleString("id-ID")})`}`, 20, currentY + 12);
+                    doc.text(`* Catatan keuangan dan rincian seluruh mutasi transaksi kas proyek terlampir lengkap di Halaman 2.`, 20, currentY + 17);
 
-                    // Check if new page needed for Transaction Ledger
-                    if (currentY > 210) {
-                      doc.addPage();
-                      currentY = 16;
-                    }
+                    // HALAMAN 2: CATATAN KEUANGAN DAN JURNAL LENGKAP
+                    doc.addPage();
+                    currentY = 16;
 
                     // Table 2: Jurnal Mutasi Kas Lengkap
                     doc.setFont("helvetica", "bold");
@@ -44160,7 +44262,7 @@ export default function App() {
                       foot: [
                         ["", "", "", "TOTAL KAS MASUK (IN)", "", "", "MASUK", `+ Rp ${actualIncome.toLocaleString("id-ID")}`],
                         ["", "", "", "TOTAL KAS KELUAR (OUT)", "", "", "KELUAR", `- Rp ${actualExpense.toLocaleString("id-ID")}`],
-                        ["", "", "", "SURPLUS / LABA BERJALAN", "", "", isNetPos ? "SURPLUS" : "DEFISIT", `Rp ${actualNetMargin.toLocaleString("id-ID")}`],
+                        ["", "", "", "SURPLUS / LABA BERJALAN", "", "", actualNetMargin >= 0 ? "SURPLUS" : "DEFISIT", `Rp ${actualNetMargin.toLocaleString("id-ID")}`],
                       ],
                       theme: "grid",
                       headStyles: {
@@ -50026,7 +50128,31 @@ export default function App() {
               setSelectedInvoiceForSuratJalan(invData);
               navigate("admin-surat-jalan");
             }}
+            onLaunchKwitansi={(invData) => {
+              setSelectedInvoiceForKwitansi(invData);
+              navigate("admin-kwitansi");
+            }}
           />
+        );
+
+      case "admin-kwitansi":
+        return (
+          <AdminLayout
+            activeScreen={screen}
+            onNavigate={navigate}
+            user={currentUser}
+            roles={roles}
+          >
+            <AdminKwitansiScreen
+              onNavigate={navigate}
+              currentUser={currentUser}
+              invoices={invoices}
+              clients={clients}
+              selectedInvoiceForKwitansi={selectedInvoiceForKwitansi}
+              setSelectedInvoiceForKwitansi={setSelectedInvoiceForKwitansi}
+              logActivity={logActivity}
+            />
+          </AdminLayout>
         );
 
       case "admin-po":
@@ -50044,6 +50170,8 @@ export default function App() {
               quotations={quotations}
               selectedQuotationForPO={selectedQuotationForPO}
               setSelectedQuotationForPO={setSelectedQuotationForPO}
+              debtRecords={debtRecords}
+              setDebtRecords={setDebtRecords}
             />
           </AdminLayout>
         );

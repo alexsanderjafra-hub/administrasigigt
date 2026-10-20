@@ -24,8 +24,11 @@ import {
 } from "lucide-react";
 import { jsPDF } from "jspdf";
 import html2canvas from "html2canvas";
-import { PurchaseOrder, PurchaseOrderItem, ScreenId, Quotation } from "../types";
+import { PurchaseOrder, PurchaseOrderItem, ScreenId, Quotation, DebtRecord } from "../types";
 import { dbService } from "../services/db";
+import { saveDebtOverride } from "../services/financialStorage";
+import { normalizeContactName } from "../utils/contactHelper";
+import { getNextDebtCustomId } from "../App";
 import { DocumentPreviewModal } from "./DocumentPreviewModal";
 
 interface AdminPurchaseOrderScreenProps {
@@ -35,6 +38,8 @@ interface AdminPurchaseOrderScreenProps {
   quotations?: Quotation[];
   selectedQuotationForPO?: Quotation | null;
   setSelectedQuotationForPO?: (q: Quotation | null) => void;
+  debtRecords?: DebtRecord[];
+  setDebtRecords?: React.Dispatch<React.SetStateAction<DebtRecord[]>>;
 }
 
 export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> = ({
@@ -43,7 +48,9 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
   logActivity,
   quotations = [],
   selectedQuotationForPO,
-  setSelectedQuotationForPO
+  setSelectedQuotationForPO,
+  debtRecords = [],
+  setDebtRecords,
 }) => {
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,7 +79,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
   const [signerRole, setSignerRole] = useState("Direktur / Menyetujui");
   const [ppnPercent, setPpnPercent] = useState<number>(11);
   const [includePPN, setIncludePPN] = useState(true);
-  const [status, setStatus] = useState<"DRAFT" | "SENT" | "COMPLETED" | "CANCELLED">("DRAFT");
+  const [status, setStatus] = useState<"DRAFT" | "SENT" | "ACC" | "COMPLETED" | "CANCELLED">("DRAFT");
   
   // Ongkir / Pengiriman fleksibel (Request 2) & Preview (Request 3)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
@@ -384,6 +391,12 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
             `Vendor: ${vendorName}`
           );
         }
+        if (status === "ACC") {
+          await syncDebtForPO(newId, payload);
+        }
+      }
+      if (selectedPO?.id && status === "ACC") {
+        await syncDebtForPO(selectedPO.id, payload);
       }
       if (openPreview) {
         setIsPreviewOpen(true);
@@ -392,6 +405,63 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
       }
     } catch (err) {
       triggerToast("Gagal menyimpan Purchase Order ke database", "error");
+    }
+  };
+
+  const syncDebtForPO = async (poId: string, poData: any) => {
+    try {
+      const existingDebt = (debtRecords || []).find(d => 
+        (d as any).originPoId === poId || 
+        d.customId === `PO-${poData.poNo}` || 
+        (d.title && d.title.includes(poData.poNo))
+      );
+
+      if (!existingDebt) {
+        const nextCustomId = getNextDebtCustomId(debtRecords || [], "HUTANG");
+        const itemsSummary = poData.items?.map((i: any) => `${i.description} (${i.qty} ${i.unit})`).join(", ") || "Pengadaan barang";
+        const debtPayload: any = {
+          id: `debt-po-${poId}`,
+          customId: nextCustomId,
+          type: "HUTANG",
+          title: `[PO ${poData.poNo}] ${poData.vendorName}`,
+          contactName: normalizeContactName(poData.vendorName),
+          amount: Number(poData.grandTotal) || 0,
+          dueDate: poData.date || new Date().toISOString().split("T")[0],
+          status: "UNPAID",
+          description: `Hutang perusahaan atas PO No. ${poData.poNo} kepada ${poData.vendorName} (${itemsSummary})`,
+          recordedBy: poData.signerName || currentUser?.name || "Admin",
+          timestamp: Date.now(),
+          payments: [],
+          originPoId: poId,
+          originCustomId: poData.poNo,
+          isUserCreated: true,
+          isUserEdited: true,
+          isManualEntry: true,
+        };
+
+        saveDebtOverride(debtPayload);
+        await dbService.setDocument("debtRecords", debtPayload.id, debtPayload);
+        if (setDebtRecords) {
+          setDebtRecords(prev => [debtPayload, ...prev.filter(d => d.id !== debtPayload.id)]);
+        }
+      }
+    } catch (e) {
+      console.warn("syncDebtForPO warning:", e);
+    }
+  };
+
+  const handleAccPO = async (po: PurchaseOrder) => {
+    try {
+      await dbService.updateDocument("purchaseOrders", po.id, { status: "ACC" });
+      setPurchaseOrders(prev => prev.map(p => p.id === po.id ? { ...p, status: "ACC" } : p));
+      await syncDebtForPO(po.id, { ...po, status: "ACC" });
+      triggerToast(`PO No. ${po.poNo} berhasil di-ACC & otomatis masuk ke Menu Hutang!`, "success");
+      if (logActivity) {
+        await logActivity(`PO No. ${po.poNo} disetujui (ACC) dan tercatat di Menu Hutang PT`, "ACC", `Vendor: ${po.vendorName}`);
+      }
+    } catch (err) {
+      console.error("Error ACC PO:", err);
+      triggerToast("Gagal melakukan ACC PO", "error");
     }
   };
 
@@ -653,7 +723,9 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
                     <div className="flex items-start justify-between relative z-10 mb-4">
                       <div>
                         <span className={`px-3 py-1 text-[9px] font-black tracking-widest rounded-full uppercase ${
-                          po.status === "COMPLETED" 
+                          po.status === "ACC"
+                            ? "bg-emerald-600 text-white font-extrabold shadow-sm"
+                            : po.status === "COMPLETED" 
                             ? "bg-emerald-50 text-emerald-600 border border-emerald-100" 
                             : po.status === "SENT"
                             ? "bg-blue-50 text-blue-600 border border-blue-100"
@@ -661,7 +733,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
                             ? "bg-rose-50 text-rose-600 border border-rose-100"
                             : "bg-slate-100 text-slate-600"
                         }`}>
-                          {po.status || "DRAFT"}
+                          {po.status === "ACC" ? "✅ ACC (Hutang)" : (po.status || "DRAFT")}
                         </span>
                         <h2 className="text-lg font-black text-slate-900 tracking-tight mt-3">
                           {po.poNo}
@@ -707,24 +779,40 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
                     </div>
 
                     {/* Actions button footer */}
-                    <div className="flex gap-2 mt-6 pt-4 border-t border-slate-50 relative z-10">
+                    <div className="flex flex-wrap gap-2 mt-6 pt-4 border-t border-slate-50 relative z-10">
+                      {po.status !== "ACC" ? (
+                        <button
+                          type="button"
+                          onClick={() => handleAccPO(po)}
+                          className="px-3.5 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[10px] uppercase tracking-wider rounded-xl transition-all shadow-sm active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                          title="Setujui (ACC) PO ini dan otomatis masukkan ke Menu Hutang Perusahaan"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          <span>ACC PO</span>
+                        </button>
+                      ) : (
+                        <span className="px-3 py-3 bg-emerald-50 text-emerald-700 border border-emerald-200 font-extrabold text-[9px] uppercase tracking-wider rounded-xl flex items-center gap-1">
+                          <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Tercatat Hutang</span>
+                        </span>
+                      )}
                       <button
                         onClick={() => handlePreview(po)}
-                        className="flex-1 flex items-center justify-center gap-2 py-3 bg-slate-900 text-white hover:bg-slate-800 font-bold text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-sm active:scale-95"
+                        className="flex-1 min-w-[120px] flex items-center justify-center gap-2 py-3 bg-slate-900 text-white hover:bg-slate-800 font-bold text-[10px] uppercase tracking-widest rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer"
                       >
                         <Eye className="w-3.5 h-3.5" />
-                        Preview & Download
+                        Preview & PDF
                       </button>
                       <button
                         onClick={() => handleEdit(po)}
-                        className="p-3 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl transition-colors active:scale-95"
+                        className="p-3 bg-slate-50 hover:bg-slate-100 text-slate-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
                         title="Edit PO"
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleDelete(po.id!, po.poNo)}
-                        className="p-3 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition-colors active:scale-95"
+                        className="p-3 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl transition-colors active:scale-95 cursor-pointer"
                         title="Hapus PO"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -920,6 +1008,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
                     >
                       <option value="DRAFT">DRAFT</option>
                       <option value="SENT">TERKIRIM (SENT)</option>
+                      <option value="ACC">DISETUJUI / ACC (Otomatis Masuk Hutang PT)</option>
                       <option value="COMPLETED">SELESAI (COMPLETED)</option>
                       <option value="CANCELLED">BATAL (CANCELLED)</option>
                     </select>

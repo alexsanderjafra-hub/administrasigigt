@@ -581,7 +581,30 @@ export type ScreenId =
   | 'admin-sheets'
   | 'admin-po'
   | 'admin-daily-reports'
+  | 'admin-kwitansi'
   | 'absen-pulang';
+
+export interface KwitansiRecord {
+  id: string;
+  kwitansiNumber: string;
+  date: string;
+  receivedFrom: string;
+  amount: number;
+  terbilang: string;
+  forPayment: string;
+  paymentMethod: 'TRANSFER' | 'CASH';
+  city: string;
+  recipientName: string;
+  recipientRole: string;
+  approvedBy?: string;
+  approvedByRole?: string;
+  companyName: string;
+  companyAddress?: string;
+  invoiceNumber?: string;
+  projectId?: string;
+  status: 'LUNAS' | 'DRAFT';
+  createdAt: number;
+}
 
 export interface PurchaseOrderItem {
   no: number;
