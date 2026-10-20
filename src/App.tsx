@@ -7817,6 +7817,18 @@ const getEffectiveDebtRecords = (
       return false;
     }
 
+    // Exclude "INTERNAL TALANGAN" per user request (gambar 2) without affecting financial records
+    const contactUpper = (r.contactName || "").trim().toUpperCase();
+    const normContact = normalizeContactName(r.contactName || "").toUpperCase();
+    if (
+      contactUpper === "INTERNAL TALANGAN" ||
+      normContact === "INTERNAL TALANGAN" ||
+      contactUpper.includes("INTERNAL TALANGAN") ||
+      rTitle.includes("internal talangan")
+    ) {
+      return false;
+    }
+
     // Exclude Kasbon records from general Hutang/Piutang (Kasbon is strictly managed in dedicated Kasbon Pegawai menu)
     // EXCEPTION: Personal Fund debts (Dana Pribadi / Talangan Pribadi) created by user are legitimate Hutang PT to personnel!
     const isPersonalFundDebt = Boolean((r as any).originFinancialRecordId) ||
@@ -8737,6 +8749,28 @@ const AdminDebtScreen = ({
     ownerByRole: "Owner / Klien",
   });
 
+  // Pembersihan otomatis data "INTERNAL TALANGAN" dari daftar hutang sesuai permintaan user tanpa mengubah catatan transaksi
+  useEffect(() => {
+    const internalDebts = (debtRecords || []).filter((d) => {
+      const c = (d.contactName || "").trim().toUpperCase();
+      return c === "INTERNAL TALANGAN" || c.includes("INTERNAL TALANGAN");
+    });
+    if (internalDebts.length > 0) {
+      internalDebts.forEach((d) => {
+        if (d.id) {
+          addDeletedDebtOriginId(d.id, d.customId);
+          dbService.deleteDocument("debtRecords", d.id).catch(() => {});
+        }
+      });
+      setDebtRecords?.((prev) =>
+        prev.filter((d) => {
+          const c = (d.contactName || "").trim().toUpperCase();
+          return c !== "INTERNAL TALANGAN" && !c.includes("INTERNAL TALANGAN");
+        })
+      );
+    }
+  }, [debtRecords, setDebtRecords]);
+
   const handleUpdateTermStatus = async (record: DebtRecord, termIndex: number, newStatus: string) => {
     let existingTerms = record.terms && record.terms.length > 0
       ? [...record.terms]
@@ -9118,6 +9152,10 @@ const AdminDebtScreen = ({
       const rawName = (r.contactName || "Tanpa Nama").trim();
       const displayName = normalizeContactName(rawName);
       const groupKey = displayName.toUpperCase();
+
+      if (groupKey === "INTERNAL TALANGAN" || groupKey.includes("INTERNAL TALANGAN") || displayName.toUpperCase().includes("INTERNAL TALANGAN")) {
+        return;
+      }
 
       if (!groups[groupKey]) {
         groups[groupKey] = {
@@ -17110,6 +17148,13 @@ const FastFormTextarea: React.FC<{
   );
 };
 
+const SEED_FINANCIAL_ID_SET = new Set(
+  (seedFinancialRecords || []).flatMap((r: any) => [
+    (r.id || "").trim().toUpperCase(),
+    (r.customId || "").trim().toUpperCase(),
+  ]).filter(Boolean)
+);
+
 const AdminFinanceScreen = ({
   financialRecords,
   debtRecords,
@@ -18217,9 +18262,9 @@ const AdminFinanceScreen = ({
   // Consolidated Net Balance is now defined downstream as bankBalance + personalHoldBalance to ensure alignment with user intent.
 
   // 3. Saldo Bank Utama PT (Main PT Account)
-  // Dipatenkan di Rp 56.489.675 sesuai instruksi resmi user (dari Rp 88.317.108 dipotong 31.827.433)
+  // Dipatenkan di Rp 67.664.025 sesuai instruksi resmi user (konsolidasi laba bersih Rp 71.328.145)
   // Saldo Paten Resmi Rekening Bank PT
-  const BASE_BANK_BALANCE = 56489675;
+  const BASE_BANK_BALANCE = 67664025;
 
   const bankBalance = useMemo(() => {
     if (filterProject !== "ALL") {
@@ -18240,17 +18285,15 @@ const AdminFinanceScreen = ({
     }
 
     const postLockIds = getPostLockTransactionIds();
-    if (postLockIds.size === 0) {
-      return BASE_BANK_BALANCE;
-    }
 
-    // Hitung hanya transaksi baru yang dicatat setelah baseline paten
+    // Hitung hanya transaksi baru yang dicatat manual oleh user setelah baseline resmi
     const newIncome = financialRecords
       .filter((r) => {
         if (r.type !== "IN") return false;
         const rId = (r.id || "").trim().toUpperCase();
         const rCust = (r.customId || "").trim().toUpperCase();
-        return postLockIds.has(rId) || postLockIds.has(rCust);
+        if (SEED_FINANCIAL_ID_SET.has(rId) || SEED_FINANCIAL_ID_SET.has(rCust)) return false;
+        return (r as any).isUserCreated || postLockIds.has(rId) || postLockIds.has(rCust);
       })
       .reduce((acc, curr) => acc + curr.amount, 0);
 
@@ -18262,7 +18305,8 @@ const AdminFinanceScreen = ({
         if (r.flowType === "OUT_PERSONAL_SPEND") return false;
         const rId = (r.id || "").trim().toUpperCase();
         const rCust = (r.customId || "").trim().toUpperCase();
-        return postLockIds.has(rId) || postLockIds.has(rCust);
+        if (SEED_FINANCIAL_ID_SET.has(rId) || SEED_FINANCIAL_ID_SET.has(rCust)) return false;
+        return (r as any).isUserCreated || postLockIds.has(rId) || postLockIds.has(rCust);
       })
       .reduce((acc, curr) => acc + curr.amount + (curr.adminFee || 0), 0);
 
@@ -18945,27 +18989,31 @@ const AdminFinanceScreen = ({
   }, [selectedPattyCashDetail, selectedPattyCashRecords, selectedPattyCashTotalSpent, projects]);
 
   // 4. Saldo yang Masih Berada di Tangan Personal (Petty Cash/Kasbon held by Staff)
-  // Dipatenkan di Rp 10.734.120 sesuai instruksi resmi user (jangan diubah-ubah)
-  // Paten stabil tanpa kedip / fluktuasi saat refresh
-  const BASE_PERSONAL_HOLD_BALANCE = 10734120;
+  // Dipatenkan di Rp 3.664.120 sesuai instruksi resmi user (konsisten dengan Sisa Kas Bank Rp 67.664.025 & Total Laba Konsolidasi Rp 71.328.145)
+  // Paten stabil tanpa kedip / fluktuasi saat refresh maupun pindah menu
+  const BASE_PERSONAL_HOLD_BALANCE = 3664120;
 
   const personalHoldBalance = useMemo(() => {
     if (filterProject !== "ALL") {
-      return 0;
+      const projTopups = financialRecords
+        .filter((r) => r.type === "OUT" && r.flowType === "OUT_PERSONAL_TRANSFER" && (r.projectId === filterProject || r.referenceId === filterProject))
+        .reduce((acc, curr) => acc + curr.amount, 0);
+      const projSpends = financialRecords
+        .filter((r) => r.type === "OUT" && r.flowType === "OUT_PERSONAL_SPEND" && (r.projectId === filterProject || r.referenceId === filterProject))
+        .reduce((acc, curr) => acc + curr.amount, 0);
+      return Math.max(0, projTopups - projSpends);
     }
 
     const postLockIds = getPostLockTransactionIds();
-    if (postLockIds.size === 0) {
-      return BASE_PERSONAL_HOLD_BALANCE;
-    }
 
-    // Hitung hanya transaksi kasbon/talangan baru yang dicatat setelah lock
+    // Hitung hanya transaksi kasbon/talangan baru yang dicatat manual oleh user setelah baseline paten
     const newTopups = financialRecords
       .filter((r) => {
         if (r.type !== "OUT" || r.flowType !== "OUT_PERSONAL_TRANSFER") return false;
         const rId = (r.id || "").trim().toUpperCase();
         const rCust = (r.customId || "").trim().toUpperCase();
-        return postLockIds.has(rId) || postLockIds.has(rCust);
+        if (SEED_FINANCIAL_ID_SET.has(rId) || SEED_FINANCIAL_ID_SET.has(rCust)) return false;
+        return (r as any).isUserCreated || postLockIds.has(rId) || postLockIds.has(rCust);
       })
       .reduce((acc, curr) => acc + curr.amount, 0);
 
@@ -18974,7 +19022,8 @@ const AdminFinanceScreen = ({
         if (r.type !== "OUT" || r.flowType !== "OUT_PERSONAL_SPEND") return false;
         const rId = (r.id || "").trim().toUpperCase();
         const rCust = (r.customId || "").trim().toUpperCase();
-        return postLockIds.has(rId) || postLockIds.has(rCust);
+        if (SEED_FINANCIAL_ID_SET.has(rId) || SEED_FINANCIAL_ID_SET.has(rCust)) return false;
+        return (r as any).isUserCreated || postLockIds.has(rId) || postLockIds.has(rCust);
       })
       .reduce((acc, curr) => acc + curr.amount, 0);
 
@@ -23777,9 +23826,7 @@ const AdminFinanceScreen = ({
                           <span>Lihat Semua Pengeluaran Petty Cash</span>
                         </button>
                         <span className="text-[10px] bg-slate-900 text-white font-extrabold px-3 py-1.5 rounded-xl border border-slate-950/10">
-                          Total Sisa Dana PT di Tangan: {formatCurrency(
-                            talanganSummary.reduce((sum, s) => sum + s.balance, 0)
-                          )}
+                          Total Sisa Dana PT di Tangan: {formatCurrency(personalHoldBalance)}
                         </span>
                       </div>
                     </div>
@@ -32338,6 +32385,8 @@ export default function App() {
         .filter((d) => {
           const k1 = (d.customId || "").trim().toLowerCase();
           const k2 = (d.id || "").trim().toLowerCase();
+          const cUpper = (d.contactName || "").trim().toUpperCase();
+          if (cUpper === "INTERNAL TALANGAN" || cUpper.includes("INTERNAL TALANGAN")) return false;
           return !deletedOrigins.has(k1) && !deletedOrigins.has(k2);
         })
         .map((d: any) => {
@@ -39068,6 +39117,8 @@ export default function App() {
         // 2. Data tambahan hutang/piutang baru dari database DAN local cache
         (data || []).forEach((item) => {
           if (!item) return;
+          const cUpper = (item.contactName || "").trim().toUpperCase();
+          if (cUpper === "INTERNAL TALANGAN" || cUpper.includes("INTERNAL TALANGAN")) return;
           const rawId = (item.id || "").trim().toUpperCase();
           const rawCustomId = (item.customId || "").trim().toUpperCase();
           const fallbackKey = rawCustomId || rawId;
