@@ -18285,28 +18285,27 @@ const AdminFinanceScreen = ({
     }
 
     const postLockIds = getPostLockTransactionIds();
+    const isNewTx = (r: FinancialRecord) => {
+      const rId = (r.id || "").trim().toUpperCase();
+      const rCust = (r.customId || "").trim().toUpperCase();
+      if (postLockIds.has(rId) || postLockIds.has(rCust)) return true;
+      const rDate = r.date || "";
+      return rDate >= "2026-10-21";
+    };
 
-    // Hitung hanya transaksi baru yang dicatat manual oleh user setelah baseline resmi
+    // Hitung hanya transaksi baru yang dicatat manual oleh user setelah penutupan resmi baseline
     const newIncome = financialRecords
-      .filter((r) => {
-        if (r.type !== "IN") return false;
-        const rId = (r.id || "").trim().toUpperCase();
-        const rCust = (r.customId || "").trim().toUpperCase();
-        if (SEED_FINANCIAL_ID_SET.has(rId) || SEED_FINANCIAL_ID_SET.has(rCust)) return false;
-        return (r as any).isUserCreated || postLockIds.has(rId) || postLockIds.has(rCust);
-      })
+      .filter((r) => isNewTx(r) && r.type === "IN")
       .reduce((acc, curr) => acc + curr.amount, 0);
 
     const newOutFromBank = financialRecords
       .filter((r) => {
+        if (!isNewTx(r)) return false;
         if (r.type !== "OUT") return false;
         const s = (r.sumberDana || "").toUpperCase();
         if (s !== "REKENING PT" && s !== "BANK PT" && s !== "PT" && s !== "") return false;
         if (r.flowType === "OUT_PERSONAL_SPEND") return false;
-        const rId = (r.id || "").trim().toUpperCase();
-        const rCust = (r.customId || "").trim().toUpperCase();
-        if (SEED_FINANCIAL_ID_SET.has(rId) || SEED_FINANCIAL_ID_SET.has(rCust)) return false;
-        return (r as any).isUserCreated || postLockIds.has(rId) || postLockIds.has(rCust);
+        return true;
       })
       .reduce((acc, curr) => acc + curr.amount + (curr.adminFee || 0), 0);
 
@@ -19005,26 +19004,21 @@ const AdminFinanceScreen = ({
     }
 
     const postLockIds = getPostLockTransactionIds();
+    const isNewTx = (r: FinancialRecord) => {
+      const rId = (r.id || "").trim().toUpperCase();
+      const rCust = (r.customId || "").trim().toUpperCase();
+      if (postLockIds.has(rId) || postLockIds.has(rCust)) return true;
+      const rDate = r.date || "";
+      return rDate >= "2026-10-21";
+    };
 
     // Hitung hanya transaksi kasbon/talangan baru yang dicatat manual oleh user setelah baseline paten
     const newTopups = financialRecords
-      .filter((r) => {
-        if (r.type !== "OUT" || r.flowType !== "OUT_PERSONAL_TRANSFER") return false;
-        const rId = (r.id || "").trim().toUpperCase();
-        const rCust = (r.customId || "").trim().toUpperCase();
-        if (SEED_FINANCIAL_ID_SET.has(rId) || SEED_FINANCIAL_ID_SET.has(rCust)) return false;
-        return (r as any).isUserCreated || postLockIds.has(rId) || postLockIds.has(rCust);
-      })
+      .filter((r) => isNewTx(r) && r.type === "OUT" && r.flowType === "OUT_PERSONAL_TRANSFER")
       .reduce((acc, curr) => acc + curr.amount, 0);
 
     const newSpends = financialRecords
-      .filter((r) => {
-        if (r.type !== "OUT" || r.flowType !== "OUT_PERSONAL_SPEND") return false;
-        const rId = (r.id || "").trim().toUpperCase();
-        const rCust = (r.customId || "").trim().toUpperCase();
-        if (SEED_FINANCIAL_ID_SET.has(rId) || SEED_FINANCIAL_ID_SET.has(rCust)) return false;
-        return (r as any).isUserCreated || postLockIds.has(rId) || postLockIds.has(rCust);
-      })
+      .filter((r) => isNewTx(r) && r.type === "OUT" && r.flowType === "OUT_PERSONAL_SPEND")
       .reduce((acc, curr) => acc + curr.amount, 0);
 
     return Math.max(0, BASE_PERSONAL_HOLD_BALANCE + newTopups - newSpends);
