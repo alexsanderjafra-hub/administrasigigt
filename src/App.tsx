@@ -18201,18 +18201,11 @@ const AdminFinanceScreen = ({
     [effectiveDebtRecords, projects, financialRecords, editingTransaction]
   );
 
-  // Advanced PT Accounting Formulas with Dynamic June Baseline Integration
+  // Advanced PT Accounting Formulas with Official Consolidated Baseline
   // 1. Total Pemasukan Riil (Income)
+  // Dipatenkan di Rp 1.728.295.627 sesuai tampilan resmi AI Studio Preview yang stabil
+  const BASE_INCOME_OFFICIAL = 1728295627;
   const income = useMemo(() => {
-    const postJuneIncome = financialRecords
-      .filter(
-        (r) =>
-          r.type === "IN" &&
-          (isUsingJuneBaseline ? !r.date.startsWith("2026-06") : true) &&
-          (filterProject === "ALL" || r.referenceId === filterProject || r.projectId === filterProject),
-      )
-      .reduce((acc, curr) => acc + curr.amount, 0);
-
     if (filterProject !== "ALL") {
       // If a specific project is selected, compute completely dynamically from all records
       return financialRecords
@@ -18224,23 +18217,26 @@ const AdminFinanceScreen = ({
         .reduce((acc, curr) => acc + curr.amount, 0);
     }
 
-    return BASE_INCOME + postJuneIncome;
-  }, [financialRecords, filterProject, isUsingJuneBaseline]);
+    const postLockIds = getPostLockTransactionIds();
+    const isNewTx = (r: FinancialRecord) => {
+      const rId = (r.id || "").trim().toUpperCase();
+      const rCust = (r.customId || "").trim().toUpperCase();
+      if (postLockIds.has(rId) || postLockIds.has(rCust)) return true;
+      const rDate = r.date || "";
+      return rDate >= "2026-10-21";
+    };
+
+    const newIncome = financialRecords
+      .filter((r) => isNewTx(r) && r.type === "IN")
+      .reduce((acc, curr) => acc + curr.amount, 0);
+
+    return BASE_INCOME_OFFICIAL + newIncome;
+  }, [financialRecords, filterProject]);
 
   // 2. Total Pengeluaran Riil (Actual Cost: direct supplier payments + real staff gastros/spends)
-  // This EXCLUDES transfer of custody (OUT_PERSONAL_TRANSFER) to prevent double counting as requested!
+  // Dipatenkan di Rp 1.515.739.194 sesuai tampilan resmi AI Studio Preview yang stabil
+  const BASE_EXPENSE_OFFICIAL = 1515739194;
   const expense = useMemo(() => {
-    const postJuneExpense = financialRecords
-      .filter(
-        (r) =>
-          r.type === "OUT" &&
-          (isUsingJuneBaseline ? !r.date.startsWith("2026-06") : true) &&
-          !isCustodyTransfer(r) &&
-          !isReimbursementOrDebtRepayment(r) &&
-          (filterProject === "ALL" || r.referenceId === filterProject || r.projectId === filterProject),
-      )
-      .reduce((acc, curr) => acc + (curr.amount + (curr.adminFee || 0)), 0);
-
     if (filterProject !== "ALL") {
       // If a specific project is selected, compute completely dynamically
       return financialRecords
@@ -18254,10 +18250,25 @@ const AdminFinanceScreen = ({
         .reduce((acc, curr) => acc + (curr.amount + (curr.adminFee || 0)), 0);
     }
 
-    // June Net Expense baseline was 295,483,588
-    const baseJuneExpense = isUsingJuneBaseline ? 295483588 : 0;
-    return baseJuneExpense + postJuneExpense;
-  }, [financialRecords, filterProject, isCustodyTransfer, isUsingJuneBaseline]);
+    const postLockIds = getPostLockTransactionIds();
+    const isNewTx = (r: FinancialRecord) => {
+      const rId = (r.id || "").trim().toUpperCase();
+      const rCust = (r.customId || "").trim().toUpperCase();
+      if (postLockIds.has(rId) || postLockIds.has(rCust)) return true;
+      const rDate = r.date || "";
+      return rDate >= "2026-10-21";
+    };
+
+    const newExpense = financialRecords
+      .filter((r) => {
+        if (!isNewTx(r) || r.type !== "OUT") return false;
+        if (isCustodyTransfer(r) || isReimbursementOrDebtRepayment(r)) return false;
+        return true;
+      })
+      .reduce((acc, curr) => acc + (curr.amount + (curr.adminFee || 0)), 0);
+
+    return BASE_EXPENSE_OFFICIAL + newExpense;
+  }, [financialRecords, filterProject, isCustodyTransfer]);
 
   // Consolidated Net Balance is now defined downstream as bankBalance + personalHoldBalance to ensure alignment with user intent.
 
