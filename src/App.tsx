@@ -18201,13 +18201,10 @@ const AdminFinanceScreen = ({
     [effectiveDebtRecords, projects, financialRecords, editingTransaction]
   );
 
-  // Advanced PT Accounting Formulas with Official Consolidated Baseline
+  // Pure Dynamic PT Accounting Formulas (Bebas Kunci, Dinamis Sesuai Transaksi Riil)
   // 1. Total Pemasukan Riil (Income)
-  // Dipatenkan di Rp 1.728.295.627 sesuai tampilan resmi AI Studio Preview yang stabil
-  const BASE_INCOME_OFFICIAL = 1728295627;
   const income = useMemo(() => {
     if (filterProject !== "ALL") {
-      // If a specific project is selected, compute completely dynamically from all records
       return financialRecords
         .filter(
           (r) =>
@@ -18217,28 +18214,14 @@ const AdminFinanceScreen = ({
         .reduce((acc, curr) => acc + curr.amount, 0);
     }
 
-    const postLockIds = getPostLockTransactionIds();
-    const isNewTx = (r: FinancialRecord) => {
-      const rId = (r.id || "").trim().toUpperCase();
-      const rCust = (r.customId || "").trim().toUpperCase();
-      if (postLockIds.has(rId) || postLockIds.has(rCust)) return true;
-      const rDate = r.date || "";
-      return rDate >= "2026-10-21";
-    };
-
-    const newIncome = financialRecords
-      .filter((r) => isNewTx(r) && r.type === "IN")
+    return financialRecords
+      .filter((r) => r.type === "IN")
       .reduce((acc, curr) => acc + curr.amount, 0);
-
-    return BASE_INCOME_OFFICIAL + newIncome;
   }, [financialRecords, filterProject]);
 
-  // 2. Total Pengeluaran Riil (Actual Cost: direct supplier payments + real staff gastros/spends)
-  // Dipatenkan di Rp 1.515.739.194 sesuai tampilan resmi AI Studio Preview yang stabil
-  const BASE_EXPENSE_OFFICIAL = 1515739194;
+  // 2. Total Pengeluaran Riil (Actual Cost: Belanja proyek/operasional langsung + belanja riil staf)
   const expense = useMemo(() => {
     if (filterProject !== "ALL") {
-      // If a specific project is selected, compute completely dynamically
       return financialRecords
         .filter(
           (r) =>
@@ -18250,36 +18233,19 @@ const AdminFinanceScreen = ({
         .reduce((acc, curr) => acc + (curr.amount + (curr.adminFee || 0)), 0);
     }
 
-    const postLockIds = getPostLockTransactionIds();
-    const isNewTx = (r: FinancialRecord) => {
-      const rId = (r.id || "").trim().toUpperCase();
-      const rCust = (r.customId || "").trim().toUpperCase();
-      if (postLockIds.has(rId) || postLockIds.has(rCust)) return true;
-      const rDate = r.date || "";
-      return rDate >= "2026-10-21";
-    };
-
-    const newExpense = financialRecords
-      .filter((r) => {
-        if (!isNewTx(r) || r.type !== "OUT") return false;
-        if (isCustodyTransfer(r) || isReimbursementOrDebtRepayment(r)) return false;
-        return true;
-      })
+    return financialRecords
+      .filter(
+        (r) =>
+          r.type === "OUT" &&
+          !isCustodyTransfer(r) &&
+          !isReimbursementOrDebtRepayment(r),
+      )
       .reduce((acc, curr) => acc + (curr.amount + (curr.adminFee || 0)), 0);
-
-    return BASE_EXPENSE_OFFICIAL + newExpense;
   }, [financialRecords, filterProject, isCustodyTransfer]);
 
-  // Consolidated Net Balance is now defined downstream as bankBalance + personalHoldBalance to ensure alignment with user intent.
-
-  // 3. Saldo Bank Utama PT (Main PT Account)
-  // Dipatenkan di Rp 67.664.025 sesuai instruksi resmi user (konsolidasi laba bersih Rp 71.328.145)
-  // Saldo Paten Resmi Rekening Bank PT
-  const BASE_BANK_BALANCE = 67664025;
-
+  // 3. Saldo Bank Utama PT (Main PT Account) - Mutasi masuk kas bank PT dikurangi mutasi keluar bank PT
   const bankBalance = useMemo(() => {
     if (filterProject !== "ALL") {
-      // For specific project, compute completely dynamically
       const projIncome = financialRecords
         .filter((r) => r.type === "IN" && (r.referenceId === filterProject || r.projectId === filterProject))
         .reduce((acc, curr) => acc + curr.amount, 0);
@@ -18288,39 +18254,27 @@ const AdminFinanceScreen = ({
           (r) =>
             r.type === "OUT" &&
             (r.referenceId === filterProject || r.projectId === filterProject) &&
-            r.sumberDana === "REKENING PT" &&
+            (r.sumberDana === "REKENING PT" || !r.sumberDana) &&
             r.flowType !== "OUT_PERSONAL_SPEND"
         )
         .reduce((acc, curr) => acc + curr.amount + (curr.adminFee || 0), 0);
       return projIncome - projOutFromBank;
     }
 
-    const postLockIds = getPostLockTransactionIds();
-    const isNewTx = (r: FinancialRecord) => {
-      const rId = (r.id || "").trim().toUpperCase();
-      const rCust = (r.customId || "").trim().toUpperCase();
-      if (postLockIds.has(rId) || postLockIds.has(rCust)) return true;
-      const rDate = r.date || "";
-      return rDate >= "2026-10-21";
-    };
-
-    // Hitung hanya transaksi baru yang dicatat manual oleh user setelah penutupan resmi baseline
-    const newIncome = financialRecords
-      .filter((r) => isNewTx(r) && r.type === "IN")
+    const totalInBank = financialRecords
+      .filter((r) => r.type === "IN" && (r.sumberDana === "REKENING PT" || !r.sumberDana))
       .reduce((acc, curr) => acc + curr.amount, 0);
 
-    const newOutFromBank = financialRecords
-      .filter((r) => {
-        if (!isNewTx(r)) return false;
-        if (r.type !== "OUT") return false;
-        const s = (r.sumberDana || "").toUpperCase();
-        if (s !== "REKENING PT" && s !== "BANK PT" && s !== "PT" && s !== "") return false;
-        if (r.flowType === "OUT_PERSONAL_SPEND") return false;
-        return true;
-      })
+    const totalOutBank = financialRecords
+      .filter(
+        (r) =>
+          r.type === "OUT" &&
+          (r.sumberDana === "REKENING PT" || !r.sumberDana) &&
+          r.flowType !== "OUT_PERSONAL_SPEND"
+      )
       .reduce((acc, curr) => acc + curr.amount + (curr.adminFee || 0), 0);
 
-    return BASE_BANK_BALANCE + newIncome - newOutFromBank;
+    return totalInBank - totalOutBank;
   }, [financialRecords, filterProject]);
 
   // Clean, sanitized detailed list of all Sisa Talangan / Petty Cash per Bank ID
@@ -18999,14 +18953,11 @@ const AdminFinanceScreen = ({
   }, [selectedPattyCashDetail, selectedPattyCashRecords, selectedPattyCashTotalSpent, projects]);
 
   // 4. Saldo yang Masih Berada di Tangan Personal (Petty Cash/Kasbon held by Staff)
-  // Dipatenkan di Rp 3.664.120 sesuai instruksi resmi user (konsisten dengan Sisa Kas Bank Rp 67.664.025 & Total Laba Konsolidasi Rp 71.328.145)
-  // Paten stabil tanpa kedip / fluktuasi saat refresh maupun pindah menu
-  const BASE_PERSONAL_HOLD_BALANCE = 3664120;
-
+  // Menjumlahkan seluruh sisa talangan dari transaksi berkategori PATTYCASH di PENGELUARAN BANK PT DIRECT & transfer kasbon aktif
   const personalHoldBalance = useMemo(() => {
     if (filterProject !== "ALL") {
       const projTopups = financialRecords
-        .filter((r) => r.type === "OUT" && r.flowType === "OUT_PERSONAL_TRANSFER" && (r.projectId === filterProject || r.referenceId === filterProject))
+        .filter((r) => r.type === "OUT" && (r.flowType === "OUT_PERSONAL_TRANSFER" || isPattyCashCategory(r.category)) && (r.projectId === filterProject || r.referenceId === filterProject))
         .reduce((acc, curr) => acc + curr.amount, 0);
       const projSpends = financialRecords
         .filter((r) => r.type === "OUT" && r.flowType === "OUT_PERSONAL_SPEND" && (r.projectId === filterProject || r.referenceId === filterProject))
@@ -19014,26 +18965,9 @@ const AdminFinanceScreen = ({
       return Math.max(0, projTopups - projSpends);
     }
 
-    const postLockIds = getPostLockTransactionIds();
-    const isNewTx = (r: FinancialRecord) => {
-      const rId = (r.id || "").trim().toUpperCase();
-      const rCust = (r.customId || "").trim().toUpperCase();
-      if (postLockIds.has(rId) || postLockIds.has(rCust)) return true;
-      const rDate = r.date || "";
-      return rDate >= "2026-10-21";
-    };
-
-    // Hitung hanya transaksi kasbon/talangan baru yang dicatat manual oleh user setelah baseline paten
-    const newTopups = financialRecords
-      .filter((r) => isNewTx(r) && r.type === "OUT" && r.flowType === "OUT_PERSONAL_TRANSFER")
-      .reduce((acc, curr) => acc + curr.amount, 0);
-
-    const newSpends = financialRecords
-      .filter((r) => isNewTx(r) && r.type === "OUT" && r.flowType === "OUT_PERSONAL_SPEND")
-      .reduce((acc, curr) => acc + curr.amount, 0);
-
-    return Math.max(0, BASE_PERSONAL_HOLD_BALANCE + newTopups - newSpends);
-  }, [financialRecords, filterProject]);
+    // Menjumlahkan seluruh sisa talangan aktif di detailedTalanganList secara dinamis
+    return detailedTalanganList.reduce((sum, item) => sum + (item.balance || 0), 0);
+  }, [detailedTalanganList, filterProject, financialRecords, isPattyCashCategory]);
 
   const totalTransferKePribadiGlobal = useMemo(() => {
     return talanganSummary.reduce((sum, s) => sum + s.received, 0);
