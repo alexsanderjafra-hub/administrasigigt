@@ -19412,8 +19412,9 @@ const AdminFinanceScreen = ({
       allocationsToInsert = [{ bankId: formData.refIdBank || "", amount: Number(formData.amount) }];
     }
 
+    let currentRecordsList = [...financialRecords];
+
     try {
-      let currentRecordsList = [...financialRecords];
       
       for (let i = 0; i < allocationsToInsert.length; i++) {
         const alloc = allocationsToInsert[i];
@@ -32272,6 +32273,7 @@ export default function App() {
   const [boqProjects, setBoqProjects] = useState<any[]>([]);
   const [quoteNumber, setQuoteNumber] = useState("");
   const [quoteJobDesc, setQuoteJobDesc] = useState("");
+  const [quoteProjectName, setQuoteProjectName] = useState("");
   const [quoteRecipient, setQuoteRecipient] = useState("");
   const [quoteAttention, setQuoteAttention] = useState("");
   const [quoteDate, setQuoteDate] = useState("");
@@ -32292,7 +32294,7 @@ export default function App() {
   const [isImageRepoOpen, setIsImageRepoOpen] = useState(false);
   const [imageRepoTargetCategory, setImageRepoTargetCategory] = useState<"logo" | "signature" | "all">("all");
   const [quotePreparedByName, setQuotePreparedByName] = useState<string>("");
-  const [quotePreparedByTitle, setQuotePreparedByTitle] = useState<string>("Direktur");
+  const [quotePreparedByTitle, setQuotePreparedByTitle] = useState<string>("");
   const [includeDiscount, setIncludeDiscount] = useState<boolean>(false);
   const [quoteDiscountType, setQuoteDiscountType] = useState<"rupiah" | "percent">("rupiah");
   const [quoteDiscountVal, setQuoteDiscountVal] = useState<number>(0);
@@ -32349,7 +32351,7 @@ export default function App() {
             if ((!k1 || !seenKeys.has(k1)) && (!k2 || !seenKeys.has(k2))) {
               if (k1) seenKeys.add(k1);
               if (k2) seenKeys.add(k2);
-              records.push({ ...item, isManualUserCreated: true });
+              records.push({ ...item, isUserCreated: true } as FinancialRecord);
             }
           });
         }
@@ -32620,6 +32622,7 @@ export default function App() {
       if (viewingQuotation) {
         setQuoteNumber(viewingQuotation.number || "");
         setQuoteJobDesc(viewingQuotation.jobDescription || "");
+        setQuoteProjectName(viewingQuotation.projectName || "");
         setQuoteRecipient(viewingQuotation.recipient || "");
         setQuoteAttention(viewingQuotation.attention || "");
         setQuoteDate(viewingQuotation.date || new Date().toISOString().substring(0, 10));
@@ -32637,7 +32640,7 @@ export default function App() {
         setQuoteCompLogo(viewingQuotation.compLogoUrl || "");
         setQuoteSignature(viewingQuotation.digitalSignatureUrl || "");
         setQuotePreparedByName(viewingQuotation.preparedBy || currentUser?.name || "ALEXSANDER");
-        setQuotePreparedByTitle(viewingQuotation.preparedByTitle || "Direktur");
+        setQuotePreparedByTitle(viewingQuotation.preparedByTitle || "");
         setIncludeDiscount(viewingQuotation.includeDiscount !== undefined ? viewingQuotation.includeDiscount : false);
         setQuoteDiscountType(viewingQuotation.discountType || "rupiah");
         setQuoteDiscountVal(viewingQuotation.discountVal || 0);
@@ -32669,8 +32672,24 @@ export default function App() {
           setUploadedFileBase64("");
         }
       } else {
-        setQuoteNumber(`${Math.floor(1000 + Math.random() * 9000)}/SPH/GIA/${new Date().toLocaleString('en-US', { month: 'short' }).toUpperCase()}/${new Date().getFullYear()}`);
+        const monthStr = new Date().toLocaleString("en-US", { month: "short" }).toUpperCase();
+        const yearStr = new Date().getFullYear();
+        let nextSeq = 185;
+        if (quotations && quotations.length > 0) {
+          const seqs = quotations
+            .map((q) => {
+              const match = (q.number || "").match(/^(\d+)\/SPH\/GIGT/i);
+              return match ? parseInt(match[1], 10) : 0;
+            })
+            .filter((n) => !isNaN(n) && n > 0);
+          if (seqs.length > 0) {
+            const maxSeq = Math.max(...seqs);
+            if (maxSeq >= 185) nextSeq = maxSeq + 1;
+          }
+        }
+        setQuoteNumber(`${nextSeq}/SPH/GIGT/${monthStr}/${yearStr}`);
         setQuoteJobDesc("");
+        setQuoteProjectName("");
         setQuoteRecipient("");
         setQuoteAttention("");
         setQuoteDate(new Date().toISOString().substring(0, 10));
@@ -32693,7 +32712,7 @@ export default function App() {
         setQuoteSignature(savedSig || "");
 
         setQuotePreparedByName(currentUser?.name || "ALEXSANDER");
-        setQuotePreparedByTitle("Direktur");
+        setQuotePreparedByTitle("");
         setIncludeDiscount(false);
         setQuoteDiscountType("rupiah");
         setQuoteDiscountVal(0);
@@ -35961,6 +35980,7 @@ export default function App() {
       date: quoteDate || (formData.get("date") as string),
       recipient: quoteRecipient || (formData.get("recipient") as string),
       attention: quoteAttention || (formData.get("attention") as string),
+      projectName: quoteProjectName.trim(),
       jobDescription: quoteJobDesc || (formData.get("jobDescription") as string),
       items: finalItems,
       subTotal,
@@ -35981,7 +36001,7 @@ export default function App() {
       notes: quoteNotes,
       paymentTerms: quotePaymentTerms,
       preparedBy: quotePreparedByName || currentUser?.name || "ALEXSANDER",
-      preparedByTitle: quotePreparedByTitle || "Direktur",
+      preparedByTitle: quotePreparedByTitle?.trim() || "",
       compName: quoteCompName,
       compAddress: quoteCompAddress,
       compLogoUrl: quoteCompLogo,
@@ -35998,7 +36018,7 @@ export default function App() {
       imageRepositoryService.saveImage(quoteCompLogo, "logo", `Logo ${quoteCompName || "Perusahaan"}`);
     }
     if (quoteSignature) {
-      imageRepositoryService.saveImage(quoteSignature, "signature", `TTD ${quotePreparedByName || "Direktur"}`);
+      imageRepositoryService.saveImage(quoteSignature, "signature", `TTD ${quotePreparedByName || "Penanggung Jawab"}`);
     }
 
     try {
@@ -36201,13 +36221,15 @@ export default function App() {
     pdf.setDrawColor(203, 213, 225);
     pdf.setFillColor(248, 250, 252);
     pdf.setLineWidth(0.3);
-    pdf.roundedRect(15, 60, pageWidth - 30, 22, 1.5, 1.5, "FD");
+    const hasProjectName = !!quotation.projectName?.trim();
+    const boxHeight = hasProjectName ? 24 : 22;
+    pdf.roundedRect(15, 60, pageWidth - 30, boxHeight, 1.5, 1.5, "FD");
 
     pdf.setFontSize(8);
     pdf.setFont("helvetica", "normal");
     pdf.setTextColor(71, 85, 105);
 
-    // Left Column (Kepada, Up)
+    // Left Column (Kepada, Up, Proyek)
     const leftColX = 19;
     const leftColonX = 41;
     const leftValX = 44;
@@ -36224,6 +36246,16 @@ export default function App() {
     pdf.text(":", leftColonX, 72);
     pdf.setTextColor(15, 23, 42);
     pdf.text(quotation.attention || "-", leftValX, 72, { maxWidth: 62 });
+
+    if (hasProjectName) {
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(71, 85, 105);
+      pdf.text("Proyek", leftColX, 78);
+      pdf.text(":", leftColonX, 78);
+      pdf.setFont("helvetica", "bold");
+      pdf.setTextColor(15, 23, 42);
+      pdf.text(quotation.projectName!.trim(), leftValX, 78, { maxWidth: 62 });
+    }
 
     // Right Column (Nomor, Tanggal, Pekerjaan)
     const rightColStart = 110;
@@ -36252,15 +36284,16 @@ export default function App() {
     pdf.setTextColor(15, 23, 42);
     pdf.text(quotation.jobDescription || "-", rightValX, 78, { maxWidth: 62 });
 
+    const textStartY = hasProjectName ? 89 : 87;
     pdf.setFont("helvetica", "normal");
     pdf.setTextColor(30, 41, 59);
     pdf.text(
       "Bersama ini kami sampaikan penawaran harga dengan rincian spesifikasi sebagai berikut:",
       15,
-      87,
+      textStartY,
     );
 
-    let y = 91;
+    let y = textStartY + 4;
     // Adjusted widths: NO (12), URAIAN (78), VOL (15), SATUAN (20), HARGA (27), JUMLAH (28) = 180mm
     const cw = [12, 78, 15, 20, 27, 28];
     const h = ["NO", "URAIAN PEKERJAAN", "VOL", "SATUAN", "HARGA SATUAN", "TOTAL BIAYA"];
@@ -36500,7 +36533,7 @@ export default function App() {
     }
 
     const signerName = (quotation.preparedBy || "ALEXSANDER").toUpperCase();
-    const signerTitle = quotation.preparedByTitle || "Direktur";
+    const signerTitle = (quotation.preparedByTitle || "").trim();
     pdf.setFontSize(8.5);
     pdf.setFont("helvetica", "bold");
     pdf.setTextColor(15, 23, 42);
@@ -36511,10 +36544,12 @@ export default function App() {
     pdf.setLineWidth(0.4);
     pdf.line(sigLeftX, y + 1.2, sigLeftX + Math.max(nameW, 35), y + 1.2);
 
-    pdf.setFontSize(8);
-    pdf.setFont("helvetica", "normal");
-    pdf.setTextColor(71, 85, 105);
-    pdf.text(signerTitle, sigLeftX, y + 5.5);
+    if (signerTitle) {
+      pdf.setFontSize(8);
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(71, 85, 105);
+      pdf.text(signerTitle, sigLeftX, y + 5.5);
+    }
 
     // Check for referenced BOQ project
     const connectedBoq = quotation.boqProjectId ? boqProjects.find(b => b.id === quotation.boqProjectId) : null;
@@ -37308,7 +37343,7 @@ export default function App() {
 
             {/* 3. METADATA: KEPADA & UP (KIRI) | NOMOR, TANGGAL & PEKERJAAN (KANAN) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 pt-1">
-              {/* KOLOM KIRI: KEPADA & UP */}
+              {/* KOLOM KIRI: KEPADA & UP & PROYEK */}
               <div className="space-y-2.5 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
@@ -37338,6 +37373,19 @@ export default function App() {
                     className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                   />
                 </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    PROYEK
+                  </span>
+                  <input
+                    type="text"
+                    name="projectName"
+                    value={quoteProjectName}
+                    onChange={(e) => setQuoteProjectName(e.target.value)}
+                    placeholder="INPUT NAMA PROYEK (OPSIONAL)"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                  />
+                </div>
               </div>
 
               {/* KOLOM KANAN: NOMOR, TANGGAL, PEKERJAAN */}
@@ -37352,7 +37400,7 @@ export default function App() {
                     required
                     value={quoteNumber}
                     onChange={(e) => setQuoteNumber(e.target.value)}
-                    placeholder="INPUT NOMOR SPH"
+                    placeholder="185/SPH/GIGT/OCT/2026"
                     className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-mono font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                   />
                 </div>
@@ -37392,16 +37440,16 @@ export default function App() {
                 <table className="w-full text-left border-collapse font-sans text-xs">
                   <thead>
                     <tr className="bg-slate-100 border-b-2 border-slate-300 font-black text-slate-900 text-center uppercase tracking-wider text-[11px]">
-                      <th className="py-3 px-2 border-r-2 border-slate-300 w-12">NO</th>
-                      <th className="py-3 px-3 border-r-2 border-slate-300">DESKRIPSI</th>
-                      <th className="py-3 px-2 border-r-2 border-slate-300 w-20">QTY</th>
-                      <th className="py-3 px-2 border-r-2 border-slate-300 w-24">SATUAN</th>
-                      <th className="py-3 px-3 border-r-2 border-slate-300 w-36">HARGA SATUAN</th>
-                      <th className="py-3 px-3 border-r-2 border-slate-300 w-36 bg-amber-50/70 text-amber-900">
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-12 shrink-0">NO</th>
+                      <th className="py-3 px-3 border-r-2 border-slate-300 min-w-[200px]">DESKRIPSI</th>
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-28 min-w-[100px]">QTY</th>
+                      <th className="py-3 px-2 border-r-2 border-slate-300 w-32 min-w-[120px]">SATUAN</th>
+                      <th className="py-3 px-3 border-r-2 border-slate-300 w-44 min-w-[175px]">HARGA SATUAN</th>
+                      <th className="py-3 px-3 border-r-2 border-slate-300 w-44 min-w-[175px] bg-amber-50/70 text-amber-900">
                         HARGA MODAL
                         <span className="block text-[8px] font-bold text-amber-700/80 normal-case">(masuk e-katalog, tdk di pdf)</span>
                       </th>
-                      <th className="py-3 px-3 w-36">JUMLAH</th>
+                      <th className="py-3 px-3 w-44 min-w-[160px] whitespace-nowrap">JUMLAH</th>
                       <th className="py-3 px-2 w-10"></th>
                     </tr>
                   </thead>
@@ -37655,45 +37703,45 @@ export default function App() {
                               </div>
                             </div>
                           </td>
-                          <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
+                          <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center w-28 min-w-[100px]">
                             <input
                               type="number"
                               min={1}
                               value={item.vol || 1}
                               onChange={(e) => updateQuotationItem(idx, "vol", Math.max(1, parseFloat(e.target.value) || 1))}
-                              className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none"
+                              className="w-full px-2.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-center text-slate-900 focus:border-slate-800 outline-none transition-all shadow-xs"
                             />
                           </td>
-                          <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center">
+                          <td className="py-2.5 px-2 border-r-2 border-slate-300 text-center w-32 min-w-[120px]">
                             <input
                               type="text"
                               value={item.unit || "Unit"}
                               onChange={(e) => updateQuotationItem(idx, "unit", e.target.value)}
                               placeholder="Unit"
-                              className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none"
+                              className="w-full px-2.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-center text-slate-900 focus:border-slate-800 outline-none transition-all shadow-xs"
                             />
                           </td>
-                          <td className="py-2.5 px-3 border-r-2 border-slate-300 text-right">
+                          <td className="py-2.5 px-3 border-r-2 border-slate-300 text-right w-44 min-w-[175px]">
                             <input
                               type="number"
                               min={0}
                               value={item.unitPrice || 0}
                               onChange={(e) => updateQuotationItem(idx, "unitPrice", Math.max(0, parseFloat(e.target.value) || 0))}
-                              className="w-full px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono font-bold text-right text-slate-900 focus:border-slate-800 outline-none"
+                              className="w-full px-3 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-mono font-black text-right text-slate-900 focus:border-slate-800 outline-none transition-all shadow-xs"
                             />
                           </td>
-                          <td className="py-2.5 px-3 border-r-2 border-slate-300 text-right bg-amber-50/30">
+                          <td className="py-2.5 px-3 border-r-2 border-slate-300 text-right bg-amber-50/30 w-44 min-w-[175px]">
                             <input
                               type="number"
                               min={0}
                               value={item.costPrice || ""}
                               placeholder="0"
                               onChange={(e) => updateQuotationItem(idx, "costPrice" as any, Math.max(0, parseFloat(e.target.value) || 0))}
-                              className="w-full px-2.5 py-1.5 bg-white border border-amber-300 rounded-lg text-xs font-mono font-bold text-right text-amber-900 focus:border-amber-600 outline-none"
+                              className="w-full px-3 py-2 bg-white border-2 border-amber-300 rounded-xl text-xs font-mono font-black text-right text-amber-900 focus:border-amber-600 outline-none transition-all shadow-xs placeholder:text-amber-400"
                               title="Harga Modal (tersimpan ke E-Katalog, tidak ditampilkan di cetak PDF)"
                             />
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-black text-slate-900 text-xs">
+                          <td className="py-2.5 px-3 text-right font-mono font-black text-slate-900 text-xs w-44 min-w-[160px] whitespace-nowrap">
                             Rp {itemTotal.toLocaleString("id-ID")}
                           </td>
                           <td className="py-2.5 px-2 text-center">
@@ -38040,10 +38088,9 @@ export default function App() {
                   />
                   <input
                     type="text"
-                    required
                     value={quotePreparedByTitle}
                     onChange={(e) => setQuotePreparedByTitle(e.target.value)}
-                    placeholder="INPUT NAMA JABATAN (misal: Direktur / Direktur Utama)"
+                    placeholder="JABATAN (OPSIONAL - BISA DIKOSONGKAN)"
                     className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none"
                   />
                 </div>
