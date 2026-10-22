@@ -230,7 +230,7 @@ import { formatInvoicePdfFileName } from "./utils/invoiceFileName";
 import { DebtPaymentManager } from "./components/DebtPaymentManager";
 import { SyncBackupModal } from "./components/SyncBackupModal";
 import { autoBackupService } from "./services/autoBackupService";
-import { isQuotaExhausted, getDeletedCollectionIds } from "./services/db";
+import { isQuotaExhausted, getDeletedCollectionIds, getLocalCollectionStore } from "./services/db";
 import {
   initFinancialStorage,
   getFinancialOverrides,
@@ -243,6 +243,10 @@ import {
   removeDebtOverride,
   getPostLockTransactionIds,
   recordPostLockTransactionId,
+  getActiveUserTransactionIds,
+  recordActiveUserTransaction,
+  getActiveUserRecords,
+  removeActiveUserTransaction,
 } from "./services/financialStorage";
 
 export const isReimbursementOrDebtRepayment = (r: any) => {
@@ -18207,6 +18211,22 @@ const AdminFinanceScreen = ({
   const OFFICIAL_BASE_BANK = 67664025;
   const OFFICIAL_BASE_PERSONAL_HOLD = 3664120;
 
+  // Identify new transactions entered by the user
+  const isPostBaselineTransaction = useCallback(
+    (r: FinancialRecord) => {
+      if (!r) return false;
+      const k1 = (r.customId || "").trim().toUpperCase();
+      const k2 = (r.id || "").trim().toUpperCase();
+      const activeIds = getActiveUserTransactionIds();
+      return (
+        (k1 && activeIds.has(k1)) ||
+        (k2 && activeIds.has(k2)) ||
+        Boolean((r as any).isManualUserCreated)
+      );
+    },
+    []
+  );
+
   // 1. Total Pemasukan Riil (Income)
   const income = useMemo(() => {
     if (filterProject !== "ALL") {
@@ -18219,8 +18239,16 @@ const AdminFinanceScreen = ({
         .reduce((acc, curr) => acc + curr.amount, 0);
     }
 
-    return OFFICIAL_BASE_INCOME;
-  }, [financialRecords, filterProject]);
+    let postIncomeDelta = 0;
+    financialRecords.forEach((r) => {
+      if (!isPostBaselineTransaction(r)) return;
+      if (r.type === "IN") {
+        postIncomeDelta += r.amount;
+      }
+    });
+
+    return OFFICIAL_BASE_INCOME + postIncomeDelta;
+  }, [financialRecords, filterProject, isPostBaselineTransaction]);
 
   // 2. Total Pengeluaran Riil (Actual Cost: Belanja proyek/operasional langsung + belanja riil staf)
   const expense = useMemo(() => {
@@ -18236,8 +18264,16 @@ const AdminFinanceScreen = ({
         .reduce((acc, curr) => acc + (curr.amount + (curr.adminFee || 0)), 0);
     }
 
-    return OFFICIAL_BASE_EXPENSE;
-  }, [financialRecords, filterProject, isCustodyTransfer]);
+    let postExpenseDelta = 0;
+    financialRecords.forEach((r) => {
+      if (!isPostBaselineTransaction(r)) return;
+      if (r.type === "OUT" && !isCustodyTransfer(r) && !isReimbursementOrDebtRepayment(r)) {
+        postExpenseDelta += (r.amount + (r.adminFee || 0));
+      }
+    });
+
+    return OFFICIAL_BASE_EXPENSE + postExpenseDelta;
+  }, [financialRecords, filterProject, isCustodyTransfer, isPostBaselineTransaction]);
 
   // 3. Saldo Bank Utama PT (Main PT Account) - Mutasi masuk kas bank PT dikurangi mutasi keluar bank PT
   const bankBalance = useMemo(() => {
@@ -18257,8 +18293,25 @@ const AdminFinanceScreen = ({
       return projIncome - projOutFromBank;
     }
 
-    return OFFICIAL_BASE_BANK;
-  }, [financialRecords, filterProject]);
+    let postBankDelta = 0;
+    financialRecords.forEach((r) => {
+      if (!isPostBaselineTransaction(r)) return;
+      if (r.type === "IN") {
+        postBankDelta += r.amount;
+      } else if (r.type === "OUT") {
+        const s = (r.sumberDana || "").toUpperCase();
+        const isPersonal = r.flowType === "PERSONAL_TALANGAN_REIMBURSE" || s.includes("PRIBADI") || s.includes("NON-PT");
+        const isPattySpend = r.flowType === "OUT_PERSONAL_SPEND" || s.includes("PATTY") || s === "DANA PATTYCASH";
+        
+        // Outflow from bank PT: direct PT spending or transfer to patty cash/staff
+        if (!isPersonal && !isPattySpend) {
+          postBankDelta -= (r.amount + (r.adminFee || 0));
+        }
+      }
+    });
+
+    return OFFICIAL_BASE_BANK + postBankDelta;
+  }, [financialRecords, filterProject, isPostBaselineTransaction]);
 
   // Clean, sanitized detailed list of all Sisa Talangan / Petty Cash per Bank ID
   const detailedTalanganList = useMemo(() => {
@@ -18948,8 +19001,24 @@ const AdminFinanceScreen = ({
       return Math.max(0, projTopups - projSpends);
     }
 
-    return OFFICIAL_BASE_PERSONAL_HOLD;
-  }, [filterProject, financialRecords, isPattyCashCategory]);
+    let postHoldDelta = 0;
+    financialRecords.forEach((r) => {
+      if (!isPostBaselineTransaction(r)) return;
+      if (r.type === "OUT") {
+        const s = (r.sumberDana || "").toUpperCase();
+        const isPattySpend = r.flowType === "OUT_PERSONAL_SPEND" || s.includes("PATTY") || s === "DANA PATTYCASH";
+        const isTopup = r.flowType === "OUT_PERSONAL_TRANSFER";
+
+        if (isPattySpend) {
+          postHoldDelta -= r.amount;
+        } else if (isTopup) {
+          postHoldDelta += r.amount;
+        }
+      }
+    });
+
+    return Math.max(0, OFFICIAL_BASE_PERSONAL_HOLD + postHoldDelta);
+  }, [filterProject, financialRecords, isPattyCashCategory, isPostBaselineTransaction]);
 
   const totalTransferKePribadiGlobal = useMemo(() => {
     return talanganSummary.reduce((sum, s) => sum + s.received, 0);
@@ -19454,10 +19523,21 @@ const AdminFinanceScreen = ({
           eachRecord.linkedDebtId = targetDebtId;
         }
 
-        const finId = await dbService.createDocument("financialRecords", eachRecord);
-        const newRecordFull = { id: finId, ...eachRecord } as FinancialRecord;
+        let finId = eachCustomId;
+        try {
+          finId = await dbService.createDocument("financialRecords", eachRecord);
+        } catch (dbErr) {
+          console.warn("createDocument fallback:", dbErr);
+          finId = eachCustomId;
+        }
+        const newRecordFull = { 
+          id: finId || eachCustomId, 
+          ...eachRecord,
+          isManualUserCreated: true 
+        } as FinancialRecord;
         currentRecordsList.push(newRecordFull);
         saveFinancialOverride(newRecordFull);
+        recordActiveUserTransaction(newRecordFull);
         recordPostLockTransactionId(eachCustomId);
         if (finId) recordPostLockTransactionId(finId);
 
@@ -19971,6 +20051,15 @@ const AdminFinanceScreen = ({
       );
     } catch (err) {
       console.error(err);
+      if (currentRecordsList && currentRecordsList.length > 0) {
+        setFinancialRecords(currentRecordsList);
+        autoBackupService.saveInstantDataSnapshot(
+          currentRecordsList,
+          debtRecords,
+          projects,
+          `Catat Transaksi Baru ${formData.type} (Fallback)`
+        );
+      }
     }
   };
 
@@ -32231,6 +32320,40 @@ export default function App() {
           records = [...seedFinancialRecords] as FinancialRecord[];
         }
       }
+
+      // Also merge any transactions from local collection store (for newly inputted transactions across refresh)
+      try {
+        const localCol = getLocalCollectionStore<FinancialRecord>("financialRecords");
+        if (localCol && localCol.size > 0) {
+          const seenKeys = new Set(records.map((r) => (r.customId || r.id || "").trim().toUpperCase()));
+          localCol.forEach((item) => {
+            const k1 = (item?.customId || "").trim().toUpperCase();
+            const k2 = (item?.id || "").trim().toUpperCase();
+            if ((!k1 || !seenKeys.has(k1)) && (!k2 || !seenKeys.has(k2))) {
+              if (k1) seenKeys.add(k1);
+              if (k2) seenKeys.add(k2);
+              records.push(item);
+            }
+          });
+        }
+      } catch (_) {}
+
+      // Also merge any active user-created records
+      try {
+        const activeRecords = getActiveUserRecords();
+        if (activeRecords && activeRecords.length > 0) {
+          const seenKeys = new Set(records.map((r) => (r.customId || r.id || "").trim().toUpperCase()));
+          activeRecords.forEach((item) => {
+            const k1 = (item?.customId || "").trim().toUpperCase();
+            const k2 = (item?.id || "").trim().toUpperCase();
+            if ((!k1 || !seenKeys.has(k1)) && (!k2 || !seenKeys.has(k2))) {
+              if (k1) seenKeys.add(k1);
+              if (k2) seenKeys.add(k2);
+              records.push({ ...item, isManualUserCreated: true });
+            }
+          });
+        }
+      } catch (_) {}
       if (records.length > 0 && Object.keys(overrides).length > 0) {
         records = records.map((r) => {
           const k1 = (r.customId || "").trim().toUpperCase();
@@ -38836,7 +38959,10 @@ export default function App() {
         }
 
         // Put local first so local edits to user-created transactions take priority over stale DB
-        const combinedFin = [...allLocalFin, ...(data || [])];
+        const localColStore = getLocalCollectionStore<FinancialRecord>("financialRecords");
+        const fromLocalColStore = Array.from(localColStore.values());
+        const activeUserRecords = getActiveUserRecords();
+        const combinedFin = [...allLocalFin, ...fromLocalColStore, ...activeUserRecords, ...(data || [])];
         combinedFin.forEach((item) => {
           if (!item) return;
           if (item.customId && item.customId.startsWith("INC-060826-") && item.customId !== "INC-060826-001") return;
@@ -38893,7 +39019,7 @@ export default function App() {
             if (k2) prevMap.set(k2, r);
           });
 
-          return finalDeduped.map((item) => {
+          const dedupedResult = finalDeduped.map((item) => {
             const k1 = (item.customId || "").trim().toUpperCase();
             const k2 = (item.id || "").trim().toUpperCase();
             const ov = userOverrides[k1] || userOverrides[k2];
@@ -38918,6 +39044,23 @@ export default function App() {
             }
             return item;
           });
+
+          // Ensure any post-baseline or user-created records in prev that aren't yet in finalDeduped are safely preserved!
+          const resultKeys = new Set<string>();
+          dedupedResult.forEach((item) => {
+            if (item.id) resultKeys.add(item.id.trim().toUpperCase());
+            if (item.customId) resultKeys.add(item.customId.trim().toUpperCase());
+          });
+
+          const missingFromPrev = (prev || []).filter((p) => {
+            if (!p) return false;
+            const pk1 = (p.customId || "").trim().toUpperCase();
+            const pk2 = (p.id || "").trim().toUpperCase();
+            if ((pk1 && deletedIds.has(pk1)) || (pk2 && deletedIds.has(pk2))) return false;
+            return (!pk1 || !resultKeys.has(pk1)) && (!pk2 || !resultKeys.has(pk2));
+          });
+
+          return [...dedupedResult, ...missingFromPrev];
         });
         setIsFinanceLoaded(true);
       },

@@ -194,7 +194,7 @@ export function sanitizeFirestoreData<T>(data: T): T {
 const LOCAL_COL_PREFIX = "wf_local_col_";
 const DELETED_COL_PREFIX = "wf_deleted_col_";
 
-function getLocalCollectionStore<T>(collectionPath: string): Map<string, T> {
+export function getLocalCollectionStore<T>(collectionPath: string): Map<string, T> {
   const map = new Map<string, T>();
   try {
     if (typeof window !== "undefined") {
@@ -417,7 +417,7 @@ export const dbService = {
         updatedAt: Timestamp.now()
       }, { merge: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `${collectionPath}/${docId}`);
+      console.warn(`[dbService] setDocument warning on ${collectionPath}/${docId}, preserved locally:`, error);
     }
   },
 
@@ -446,7 +446,7 @@ export const dbService = {
       saveLocalCollectionStore(collectionPath, map);
       return docRef.id;
     } catch (error) {
-      handleFirestoreError(error, OperationType.CREATE, collectionPath);
+      console.warn(`[dbService] createDocument warning on ${collectionPath}, preserved locally with ID ${fallbackId}:`, error);
       return fallbackId;
     }
   },
@@ -472,7 +472,7 @@ export const dbService = {
         updatedAt: Timestamp.now()
       }, { merge: true });
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `${collectionPath}/${docId}`);
+      console.warn(`[dbService] updateDocument warning on ${collectionPath}/${docId}, preserved locally:`, error);
     }
   },
 
@@ -491,7 +491,7 @@ export const dbService = {
       const docRef = doc(db, collectionPath, String(docId));
       await deleteDoc(docRef);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `${collectionPath}/${docId}`);
+      console.warn(`[dbService] deleteDocument warning on ${collectionPath}/${docId}:`, error);
     }
   },
 

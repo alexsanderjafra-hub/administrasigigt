@@ -368,3 +368,93 @@ export const recordPostLockTransactionId = (idOrCustomId: string): void => {
     console.warn("[FinancialStorage] Failed to record post-lock transaction ID:", err);
   }
 };
+
+const ACTIVE_USER_TRANSACTIONS_KEY = "workflow_pro_active_user_transactions_v3";
+const ACTIVE_USER_RECORDS_KEY = "workflow_pro_active_user_records_v3";
+
+let inMemoryActiveUserTrxIds: Set<string> | null = null;
+
+export const getActiveUserTransactionIds = (): Set<string> => {
+  if (inMemoryActiveUserTrxIds) return inMemoryActiveUserTrxIds;
+  try {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(ACTIVE_USER_TRANSACTIONS_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          inMemoryActiveUserTrxIds = new Set(arr.map((k) => String(k).trim().toUpperCase()));
+          return inMemoryActiveUserTrxIds;
+        }
+      }
+    }
+  } catch (_) {}
+  inMemoryActiveUserTrxIds = new Set();
+  return inMemoryActiveUserTrxIds;
+};
+
+export const recordActiveUserTransaction = (record: any): void => {
+  if (!record) return;
+  const k1 = (record.customId || "").trim().toUpperCase();
+  const k2 = (record.id || "").trim().toUpperCase();
+  if (!k1 && !k2) return;
+
+  try {
+    const set = getActiveUserTransactionIds();
+    if (k1) set.add(k1);
+    if (k2) set.add(k2);
+    safeSetLocalStorage(ACTIVE_USER_TRANSACTIONS_KEY, JSON.stringify(Array.from(set)));
+
+    // Store record in persistent list
+    const rawList = localStorage.getItem(ACTIVE_USER_RECORDS_KEY);
+    let list: any[] = rawList ? JSON.parse(rawList) : [];
+    if (!Array.isArray(list)) list = [];
+    const exIdx = list.findIndex((r: any) => 
+      (k2 && r.id === k2) || (k1 && r.customId === k1)
+    );
+    const markedRecord = { ...record, isManualUserCreated: true };
+    if (exIdx >= 0) {
+      list[exIdx] = markedRecord;
+    } else {
+      list.push(markedRecord);
+    }
+    safeSetLocalStorage(ACTIVE_USER_RECORDS_KEY, JSON.stringify(list));
+    idbStorage.set("snapshots", ACTIVE_USER_RECORDS_KEY, list).catch(() => {});
+  } catch (err) {
+    console.warn("[FinancialStorage] Failed to record active user transaction:", err);
+  }
+};
+
+export const getActiveUserRecords = (): FinancialRecord[] => {
+  try {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(ACTIVE_USER_RECORDS_KEY);
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) return list;
+      }
+    }
+  } catch (_) {}
+  return [];
+};
+
+export const removeActiveUserTransaction = (idOrCustomId: string): void => {
+  if (!idOrCustomId) return;
+  const key = String(idOrCustomId).trim().toUpperCase();
+  try {
+    const set = getActiveUserTransactionIds();
+    set.delete(key);
+    safeSetLocalStorage(ACTIVE_USER_TRANSACTIONS_KEY, JSON.stringify(Array.from(set)));
+
+    const rawList = localStorage.getItem(ACTIVE_USER_RECORDS_KEY);
+    if (rawList) {
+      let list = JSON.parse(rawList);
+      if (Array.isArray(list)) {
+        list = list.filter((r: any) => 
+          (r.id || "").trim().toUpperCase() !== key && 
+          (r.customId || "").trim().toUpperCase() !== key
+        );
+        safeSetLocalStorage(ACTIVE_USER_RECORDS_KEY, JSON.stringify(list));
+      }
+    }
+  } catch (_) {}
+};
