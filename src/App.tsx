@@ -38489,14 +38489,6 @@ export default function App() {
               }
               return r;
             });
-            if (hasChanges) {
-              autoBackupService.saveInstantDataSnapshot(
-                updated,
-                debtRecords,
-                projects,
-                "Sinkronisasi override dari penyimpanan permanen"
-              );
-            }
             return hasChanges ? updated : prev;
           });
         }
@@ -38648,10 +38640,10 @@ export default function App() {
               if (k && !deletedDebtIds.has(k.toLowerCase())) {
                 const ex = dMap.get(k);
                 const ov = debtOv[k] || (cd.id ? debtOv[cd.id.toUpperCase()] : undefined);
-                const merged = ex ? { ...cd, ...ex, ...(ov || {}) } : { ...cd, ...(ov || {}) };
+                const merged = ex ? { ...ex, ...cd, ...(ov || {}) } : { ...cd, ...(ov || {}) };
                 if (ov || (ex && (ex as any).isUserEdited)) {
                   merged.isUserEdited = true;
-                  if (ov?.dueDate || ex?.dueDate) merged.dueDate = ov?.dueDate || ex?.dueDate;
+                  if (ov?.dueDate || cd?.dueDate || ex?.dueDate) merged.dueDate = ov?.dueDate || cd?.dueDate || ex?.dueDate;
                 }
                 dMap.set(k, merged);
               }
@@ -38690,20 +38682,20 @@ export default function App() {
               });
               const userEdit = userOverrides[cfId] || userOverrides[cfCust];
               if (exIdx >= 0) {
-                // Preserve local state & user overrides!
+                // Server cloud data updates local memory state!
                 deduped[exIdx] = {
-                  ...cf,
                   ...deduped[exIdx],
+                  ...cf,
                   ...(userEdit || {}),
-                  date: userEdit?.date || deduped[exIdx].date || cf.date,
-                  customId: userEdit?.customId || deduped[exIdx].customId || cf.customId,
-                  category: userEdit?.category || deduped[exIdx].category || cf.category,
-                  projectId: userEdit?.projectId !== undefined ? userEdit.projectId : (deduped[exIdx].projectId || cf.projectId || ""),
-                  referenceId: userEdit?.referenceId !== undefined ? userEdit.referenceId : (deduped[exIdx].referenceId || cf.referenceId || ""),
-                  description: userEdit?.description || deduped[exIdx].description || cf.description,
-                  amount: userEdit?.amount !== undefined ? userEdit.amount : (deduped[exIdx].amount ?? cf.amount),
-                  sumberDana: userEdit?.sumberDana || deduped[exIdx].sumberDana || cf.sumberDana,
-                  flowType: userEdit?.flowType || deduped[exIdx].flowType || cf.flowType,
+                  date: userEdit?.date || cf.date || deduped[exIdx].date,
+                  customId: userEdit?.customId || cf.customId || deduped[exIdx].customId,
+                  category: userEdit?.category || cf.category || deduped[exIdx].category,
+                  projectId: userEdit?.projectId !== undefined ? userEdit.projectId : (cf.projectId || deduped[exIdx].projectId || ""),
+                  referenceId: userEdit?.referenceId !== undefined ? userEdit.referenceId : (cf.referenceId || deduped[exIdx].referenceId || ""),
+                  description: userEdit?.description || cf.description || deduped[exIdx].description,
+                  amount: userEdit?.amount !== undefined ? userEdit.amount : (cf.amount ?? deduped[exIdx].amount),
+                  sumberDana: userEdit?.sumberDana || cf.sumberDana || deduped[exIdx].sumberDana,
+                  flowType: userEdit?.flowType || cf.flowType || deduped[exIdx].flowType,
                 };
               } else if (!((cfId && seenIds.has(cfId)) || (cfCust && seenCustomIds.has(cfCust)))) {
                 if (cfId) seenIds.add(cfId);
@@ -38757,18 +38749,18 @@ export default function App() {
             mergedMap.set(dp.id, dp);
           }
         });
-        // 2. Firestore projects (if any)
-        (data || []).forEach((dp) => {
-          if (dp && dp.id && !deletedProjIds.has(dp.id.trim().toUpperCase())) {
-            const ex = mergedMap.get(dp.id);
-            mergedMap.set(dp.id, ex ? { ...ex, ...dp } : dp);
-          }
-        });
-        // 3. User local/backup projects (preserves user-edited contract values & newly added projects with top priority)
+        // 2. User local/backup projects (offline cache fallback)
         localProjects.forEach((lp) => {
           if (lp && lp.id && !deletedProjIds.has(lp.id.trim().toUpperCase())) {
             const ex = mergedMap.get(lp.id);
             mergedMap.set(lp.id, ex ? { ...ex, ...lp } : lp);
+          }
+        });
+        // 3. Firestore live projects (highest priority: website edits & additions immediately reflect)
+        (data || []).forEach((dp) => {
+          if (dp && dp.id && !deletedProjIds.has(dp.id.trim().toUpperCase())) {
+            const ex = mergedMap.get(dp.id);
+            mergedMap.set(dp.id, ex ? { ...ex, ...dp } : dp);
           }
         });
 
@@ -38934,58 +38926,58 @@ export default function App() {
             }
           });
 
-          // Precedence: seed < fromDb < fromLocal < userEdit (user explicit edits have absolute priority)
+          // Precedence: seed < fromLocal < fromDb < userEdit (Firestore server data takes precedence over stale local cache)
           const resolvedCategory =
             userEdit?.category ||
-            (fromLocal?.category && fromLocal.category !== "TERMIN" ? fromLocal.category : undefined) ||
             (fromDb?.category && fromDb.category !== "TERMIN" ? fromDb.category : undefined) ||
-            fromLocal?.category ||
+            (fromLocal?.category && fromLocal.category !== "TERMIN" ? fromLocal.category : undefined) ||
             fromDb?.category ||
+            fromLocal?.category ||
             seed.category ||
             "OPERASIONAL";
 
           const enriched: FinancialRecord = {
             ...seed,
-            ...(fromDb || {}),
             ...(fromLocal || {}),
+            ...(fromDb || {}),
             ...(userEdit || {}),
             id: finalId,
             customId: finalCustomId,
-            date: userEdit?.date || fromLocal?.date || fromDb?.date || seed.date || "",
+            date: userEdit?.date || fromDb?.date || fromLocal?.date || seed.date || "",
             category: resolvedCategory,
-            isUserEdited: Boolean(userEdit?.isUserEdited || fromLocal?.isUserEdited || (resolvedCategory !== seed.category)),
+            isUserEdited: Boolean(userEdit?.isUserEdited || fromDb?.isUserEdited || fromLocal?.isUserEdited || (resolvedCategory !== seed.category)),
             projectId: userEdit?.projectId !== undefined
               ? userEdit.projectId
-              : (fromLocal?.projectId !== undefined
-                ? fromLocal.projectId
-                : (fromDb?.projectId !== undefined
-                  ? fromDb.projectId
+              : (fromDb?.projectId !== undefined
+                ? fromDb.projectId
+                : (fromLocal?.projectId !== undefined
+                  ? fromLocal.projectId
                   : (seed.projectId || ""))),
             referenceId: userEdit?.referenceId !== undefined
               ? userEdit.referenceId
-              : (fromLocal?.referenceId !== undefined
-                ? fromLocal.referenceId
-                : (fromDb?.referenceId !== undefined
-                  ? fromDb.referenceId
+              : (fromDb?.referenceId !== undefined
+                ? fromDb.referenceId
+                : (fromLocal?.referenceId !== undefined
+                  ? fromLocal.referenceId
                   : (seed.referenceId || seed.projectId || ""))),
-            description: userEdit?.description || fromLocal?.description || fromDb?.description || seed.description || "",
-            amount: userEdit?.amount !== undefined ? userEdit.amount : (fromLocal?.amount !== undefined ? fromLocal.amount : (fromDb?.amount ?? seed.amount ?? 0)),
-            adminFee: userEdit?.adminFee !== undefined ? userEdit.adminFee : (fromLocal?.adminFee !== undefined ? fromLocal.adminFee : (fromDb?.adminFee ?? seed.adminFee ?? 0)),
-            paymentMethod: userEdit?.paymentMethod || fromLocal?.paymentMethod || fromDb?.paymentMethod || seed.paymentMethod || "TRANSFER",
+            description: userEdit?.description || fromDb?.description || fromLocal?.description || seed.description || "",
+            amount: userEdit?.amount !== undefined ? userEdit.amount : (fromDb?.amount !== undefined ? fromDb.amount : (fromLocal?.amount !== undefined ? fromLocal.amount : (seed.amount ?? 0))),
+            adminFee: userEdit?.adminFee !== undefined ? userEdit.adminFee : (fromDb?.adminFee !== undefined ? fromDb.adminFee : (fromLocal?.adminFee !== undefined ? fromLocal.adminFee : (seed.adminFee ?? 0))),
+            paymentMethod: userEdit?.paymentMethod || fromDb?.paymentMethod || fromLocal?.paymentMethod || seed.paymentMethod || "TRANSFER",
             sumberDana: isPersonalFund
               ? "REKENING PRIBADI"
-              : (userEdit?.sumberDana ?? fromLocal?.sumberDana ?? fromDb?.sumberDana ?? seed.sumberDana ?? "REKENING PT"),
+              : (userEdit?.sumberDana ?? fromDb?.sumberDana ?? fromLocal?.sumberDana ?? seed.sumberDana ?? "REKENING PT"),
             flowType: isPersonalFund
               ? "PERSONAL_TALANGAN_REIMBURSE"
-              : (userEdit?.flowType ?? fromLocal?.flowType ?? fromDb?.flowType ?? seed.flowType),
-            personalHolder: userEdit?.personalHolder ?? fromLocal?.personalHolder ?? fromDb?.personalHolder ?? seed.personalHolder ?? "",
-            pemilikUangPribadi: userEdit?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? fromDb?.pemilikUangPribadi ?? (isPersonalFund ? "FAISAL MUSTOPA" : (seed.pemilikUangPribadi || "")),
-            rekPenerima: userEdit?.rekPenerima ?? fromLocal?.rekPenerima ?? ((fromDb?.rekPenerima && fromDb.rekPenerima !== "") ? fromDb.rekPenerima : (seed.rekPenerima ?? "")),
-            refIdBank: userEdit?.refIdBank !== undefined ? userEdit.refIdBank : (fromLocal?.refIdBank !== undefined ? fromLocal.refIdBank : (fromDb?.refIdBank ?? seed.refIdBank ?? "")),
-            refHutang: userEdit?.refHutang !== undefined ? userEdit.refHutang : (fromLocal?.refHutang !== undefined ? fromLocal.refHutang : ((fromDb?.refHutang && fromDb.refHutang !== "") ? fromDb.refHutang : (seed.refHutang ?? ""))),
-            linkedDebtId: userEdit?.linkedDebtId !== undefined ? userEdit.linkedDebtId : (fromLocal?.linkedDebtId !== undefined ? fromLocal.linkedDebtId : ((fromDb?.linkedDebtId && fromDb.linkedDebtId !== "") ? fromDb.linkedDebtId : (seed.linkedDebtId ?? ""))),
-            refPiutang: userEdit?.refPiutang !== undefined ? userEdit.refPiutang : (fromLocal?.refPiutang !== undefined ? fromLocal.refPiutang : (fromDb?.refPiutang ?? seed.refPiutang ?? "")),
-            senderName: userEdit?.senderName !== undefined ? userEdit.senderName : (fromLocal?.senderName ?? fromDb?.senderName ?? seed.senderName ?? ""),
+              : (userEdit?.flowType ?? fromDb?.flowType ?? fromLocal?.flowType ?? seed.flowType),
+            personalHolder: userEdit?.personalHolder ?? fromDb?.personalHolder ?? fromLocal?.personalHolder ?? seed.personalHolder ?? "",
+            pemilikUangPribadi: userEdit?.pemilikUangPribadi ?? fromDb?.pemilikUangPribadi ?? fromLocal?.pemilikUangPribadi ?? (isPersonalFund ? "FAISAL MUSTOPA" : (seed.pemilikUangPribadi || "")),
+            rekPenerima: userEdit?.rekPenerima ?? fromDb?.rekPenerima ?? fromLocal?.rekPenerima ?? (seed.rekPenerima ?? ""),
+            refIdBank: userEdit?.refIdBank !== undefined ? userEdit.refIdBank : (fromDb?.refIdBank !== undefined ? fromDb.refIdBank : (fromLocal?.refIdBank ?? seed.refIdBank ?? "")),
+            refHutang: userEdit?.refHutang !== undefined ? userEdit.refHutang : ((fromDb?.refHutang && fromDb.refHutang !== "") ? fromDb.refHutang : (fromLocal?.refHutang || seed.refHutang || "")),
+            linkedDebtId: userEdit?.linkedDebtId !== undefined ? userEdit.linkedDebtId : ((fromDb?.linkedDebtId && fromDb.linkedDebtId !== "") ? fromDb.linkedDebtId : (fromLocal?.linkedDebtId || seed.linkedDebtId || "")),
+            refPiutang: userEdit?.refPiutang !== undefined ? userEdit.refPiutang : (fromDb?.refPiutang ?? fromLocal?.refPiutang ?? seed.refPiutang ?? ""),
+            senderName: userEdit?.senderName !== undefined ? userEdit.senderName : (fromDb?.senderName ?? fromLocal?.senderName ?? seed.senderName ?? ""),
           } as FinancialRecord;
 
           deduped.push(enriched);
@@ -39072,21 +39064,13 @@ export default function App() {
             const ov = userOverrides[k1] || userOverrides[k2];
             const p = prevMap.get(k1) || prevMap.get(k2);
 
-            const isUserEdited = ov?.isUserEdited || p?.isUserEdited || item.isUserEdited;
-            const category =
-              ov?.category ||
-              (p?.isUserEdited && p.category ? p.category : undefined) ||
-              (p?.category && p.category !== item.category && p.category !== "TERMIN" ? p.category : undefined) ||
-              item.category;
-
-            if (ov || (p && p.isUserEdited) || (category && category !== item.category)) {
+            if (ov) {
               return {
                 ...item,
-                ...(p && p.isUserEdited ? p : {}),
-                ...(ov || {}),
-                category: category || item.category,
-                date: ov?.date || (p && p.isUserEdited ? p.date : undefined) || item.date,
-                isUserEdited: !!isUserEdited,
+                ...ov,
+                category: ov.category || item.category,
+                date: ov.date || item.date,
+                isUserEdited: true,
               };
             }
             return item;
@@ -39170,8 +39154,8 @@ export default function App() {
           const fromLocal = localDebtMap.get(rawCustomId) || localDebtMap.get(rawId) || localDebtMap.get(fallbackKey);
           const userEdit = debtOverrides[rawCustomId] || debtOverrides[rawId] || debtOverrides[fallbackKey];
           const source = fromDb || fromLocal;
-          // User explicit edits have absolute precedence
-          const baseRecord = (source ? { ...seed, ...(fromDb || {}), ...(fromLocal || {}), ...(userEdit || {}) } : { ...seed, ...(userEdit || {}) }) as DebtRecord;
+          // User explicit edits have absolute precedence, server data takes priority over local cache
+          const baseRecord = (source ? { ...seed, ...(fromLocal || {}), ...(fromDb || {}), ...(userEdit || {}) } : { ...seed, ...(userEdit || {}) }) as DebtRecord;
           if (userEdit) {
             baseRecord.isUserEdited = true;
             if (userEdit.dueDate) baseRecord.dueDate = userEdit.dueDate;
@@ -39256,17 +39240,17 @@ export default function App() {
           const localMatch = localDebtMapByKey.get(rawCustomId) || localDebtMapByKey.get(rawId) || localDebtMapByKey.get(fallbackKey);
           const userEdit = debtOverrides[rawCustomId] || debtOverrides[rawId] || debtOverrides[fallbackKey];
           const mergedDebt: DebtRecord = {
-            ...item,
             ...(localMatch || {}),
+            ...item,
             ...(userEdit || {}),
-            isUserEdited: Boolean(userEdit?.isUserEdited || localMatch?.isUserEdited || item.isUserEdited),
+            isUserEdited: Boolean(userEdit?.isUserEdited || item.isUserEdited || localMatch?.isUserEdited),
             originFinancialRecordId: item.originFinancialRecordId || localMatch?.originFinancialRecordId || (localMatch as any)?.originFinancialRecordId,
             originCustomId: item.originCustomId || localMatch?.originCustomId || (localMatch as any)?.originCustomId,
-            amount: userEdit?.amount !== undefined ? userEdit.amount : ((localMatch?.amount && localMatch.amount > 0) ? localMatch.amount : item.amount),
-            contactName: userEdit?.contactName || localMatch?.contactName || item.contactName,
-            title: userEdit?.title || localMatch?.title || item.title,
-            description: userEdit?.description || localMatch?.description || item.description,
-            dueDate: userEdit?.dueDate || localMatch?.dueDate || item.dueDate,
+            amount: userEdit?.amount !== undefined ? userEdit.amount : ((item.amount !== undefined && item.amount > 0) ? item.amount : (localMatch?.amount || 0)),
+            contactName: userEdit?.contactName || item.contactName || localMatch?.contactName,
+            title: userEdit?.title || item.title || localMatch?.title,
+            description: userEdit?.description || item.description || localMatch?.description,
+            dueDate: userEdit?.dueDate || item.dueDate || localMatch?.dueDate,
           };
           deduped.push(mergedDebt);
         });

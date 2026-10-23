@@ -226,7 +226,8 @@ export const autoBackupService = {
         }
 
         // Cloud Master Snapshot in Firestore (syncs data across AI Studio & Vercel, throttled to prevent quota exhaustion)
-        if (!isQuotaExhausted() && (now - lastCloudSyncTimestamp > CLOUD_SYNC_THROTTLE_MS)) {
+        // Guard: only push cloud snapshot if full dataset is loaded (>= 500 records) to prevent uninitialized client overwrites
+        if (!isQuotaExhausted() && (now - lastCloudSyncTimestamp > CLOUD_SYNC_THROTTLE_MS) && finalFin.length >= 500) {
           try {
             lastCloudSyncTimestamp = now;
             await dbService.setDocument("systemBackups", "latest_synced_data", {
