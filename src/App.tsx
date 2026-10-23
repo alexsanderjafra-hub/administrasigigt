@@ -39005,11 +39005,11 @@ export default function App() {
           }
         }
 
-        // Put local first so local edits to user-created transactions take priority over stale DB
+        // Server real-time data from Firestore takes precedence so newly created transactions from deployed website or other instances immediately show in preview!
         const localColStore = getLocalCollectionStore<FinancialRecord>("financialRecords");
         const fromLocalColStore = Array.from(localColStore.values());
         const activeUserRecords = getActiveUserRecords();
-        const combinedFin = [...allLocalFin, ...fromLocalColStore, ...activeUserRecords, ...(data || [])];
+        const combinedFin = [...(data || []), ...fromLocalColStore, ...activeUserRecords, ...allLocalFin];
         combinedFin.forEach((item) => {
           if (!item) return;
           if (item.customId && item.customId.startsWith("INC-060826-") && item.customId !== "INC-060826-001") return;

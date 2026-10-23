@@ -29,22 +29,13 @@ let quotaExhaustedUntil = 0;
 
 try {
   if (typeof window !== "undefined") {
-    const stored = window.localStorage?.getItem("firestore_write_quota_exhausted_until") ||
-      window.sessionStorage?.getItem("firestore_write_quota_exhausted_until");
-    if (stored) {
-      const until = Number(stored);
-      if (Date.now() < until) {
-        quotaExhaustedUntil = until;
-        isFirestoreWriteQuotaExhausted = true;
-      } else {
-        window.localStorage?.removeItem("firestore_write_quota_exhausted_until");
-        window.sessionStorage?.removeItem("firestore_write_quota_exhausted_until");
-      }
-    }
+    // Clear any legacy 12-hour lockout
+    window.localStorage?.removeItem("firestore_write_quota_exhausted_until");
+    window.sessionStorage?.removeItem("firestore_write_quota_exhausted_until");
   }
 } catch (e) {}
 
-export function markQuotaExhausted(durationMs: number = 12 * 60 * 60 * 1000) {
+export function markQuotaExhausted(durationMs: number = 60 * 1000) {
   isFirestoreWriteQuotaExhausted = true;
   quotaExhaustedUntil = Date.now() + durationMs;
   try {
@@ -53,7 +44,7 @@ export function markQuotaExhausted(durationMs: number = 12 * 60 * 60 * 1000) {
       window.sessionStorage?.setItem("firestore_write_quota_exhausted_until", String(quotaExhaustedUntil));
     }
   } catch (e) {}
-  console.warn(`[Firestore Circuit-Breaker Active] Batas kuota tulis Firestore tercapai. Circuit-breaker aktif selama ${Math.round(durationMs / 3600000)} jam; seluruh perubahan data tetap diproses dan tersimpan aman di LocalStorage.`);
+  console.warn(`[Firestore Circuit-Breaker Active] Batas kuota tulis Firestore tercapai. Circuit-breaker aktif selama ${Math.round(durationMs / 1000)} detik; seluruh perubahan data tetap diproses dan tersimpan aman di LocalStorage.`);
 }
 
 export function isQuotaExhausted(): boolean {
@@ -422,32 +413,28 @@ export const dbService = {
   },
 
   async createDocument(collectionPath: string, data: any): Promise<string> {
-    const fallbackId = data?.id || data?.customId || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const finalDocId = String(data?.customId || data?.id || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
     const map = getLocalCollectionStore(collectionPath);
-    map.set(String(fallbackId), { ...data, id: fallbackId, createdAt: Date.now(), updatedAt: new Date().toISOString() });
+    map.set(finalDocId, { ...data, id: finalDocId, createdAt: Date.now(), updatedAt: new Date().toISOString() });
     saveLocalCollectionStore(collectionPath, map);
-    removeDeletedCollectionId(collectionPath, String(fallbackId));
+    removeDeletedCollectionId(collectionPath, finalDocId);
 
     if (isQuotaExhausted()) {
-      return fallbackId;
+      return finalDocId;
     }
     try {
-      const sanitized = sanitizeFirestoreData(data) || {};
-      const colRef = collection(db, collectionPath);
-      const docRef = doc(colRef);
+      const sanitized = sanitizeFirestoreData({ ...data, id: finalDocId }) || {};
+      const docRef = doc(db, collectionPath, finalDocId);
       await setDoc(docRef, {
         ...sanitized,
-        id: docRef.id,
-        createdAt: Timestamp.now(),
+        id: finalDocId,
+        createdAt: sanitized.createdAt || Timestamp.now(),
         updatedAt: Timestamp.now()
-      });
-      map.delete(String(fallbackId));
-      map.set(String(docRef.id), { ...data, id: docRef.id, createdAt: Date.now(), updatedAt: new Date().toISOString() });
-      saveLocalCollectionStore(collectionPath, map);
-      return docRef.id;
+      }, { merge: true });
+      return finalDocId;
     } catch (error) {
-      console.warn(`[dbService] createDocument warning on ${collectionPath}, preserved locally with ID ${fallbackId}:`, error);
-      return fallbackId;
+      console.warn(`[dbService] createDocument warning on ${collectionPath}, preserved locally with ID ${finalDocId}:`, error);
+      return finalDocId;
     }
   },
 

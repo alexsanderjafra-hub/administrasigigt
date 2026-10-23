@@ -225,8 +225,8 @@ export const autoBackupService = {
           console.warn("[AutoBackup] Gagal memperbarui riwayat backup:", histErr);
         }
 
-        // Cloud Master Snapshot in Firestore (syncs data across AI Studio & Vercel)
-        if (!isQuotaExhausted()) {
+        // Cloud Master Snapshot in Firestore (syncs data across AI Studio & Vercel, throttled to prevent quota exhaustion)
+        if (!isQuotaExhausted() && (now - lastCloudSyncTimestamp > CLOUD_SYNC_THROTTLE_MS)) {
           try {
             lastCloudSyncTimestamp = now;
             await dbService.setDocument("systemBackups", "latest_synced_data", {
