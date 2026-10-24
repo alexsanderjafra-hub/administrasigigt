@@ -147,6 +147,7 @@ import {
   ArrowUpDown,
   SlidersHorizontal,
   FolderOpen,
+  Loader2,
 } from "lucide-react";
 import {
   BarChart,
@@ -17117,24 +17118,33 @@ const FastFormTextarea: React.FC<{
   required?: boolean;
 }> = ({ value, onChange, placeholder, className, rows = 3, required }) => {
   const [localVal, setLocalVal] = useState(value || "");
+  const isFocusedRef = useRef(false);
   const debounceTimerRef = useRef<any>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
 
+  // Only update localVal from prop when the user is NOT actively typing
   useEffect(() => {
-    setLocalVal(value || "");
+    if (!isFocusedRef.current) {
+      setLocalVal(value || "");
+    }
   }, [value]);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value.toUpperCase();
+    const val = e.target.value;
     setLocalVal(val);
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     debounceTimerRef.current = setTimeout(() => {
       onChangeRef.current(val);
-    }, 100);
+    }, 120);
+  };
+
+  const handleFocus = () => {
+    isFocusedRef.current = true;
   };
 
   const handleBlur = () => {
+    isFocusedRef.current = false;
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     onChangeRef.current(localVal);
   };
@@ -17147,6 +17157,7 @@ const FastFormTextarea: React.FC<{
       className={className}
       value={localVal}
       onChange={handleChange}
+      onFocus={handleFocus}
       onBlur={handleBlur}
     />
   );
@@ -17235,6 +17246,7 @@ const AdminFinanceScreen = ({
   const [filterFlowType, setFilterFlowType] = useState("ALL");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [isSubmittingTransaction, setIsSubmittingTransaction] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [selectedPattyCashDetail, setSelectedPattyCashDetail] = useState<{
     bankId?: string;
@@ -19403,7 +19415,10 @@ const AdminFinanceScreen = ({
 
   const handleAddTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingTransaction) return;
     if (!formData.amount || !formData.description) return;
+
+    setIsSubmittingTransaction(true);
 
     const isSalary = formData.category && formData.category.toLowerCase().includes("gaji");
     
@@ -19455,6 +19470,7 @@ const AdminFinanceScreen = ({
           recordedBy: user.name,
           timestamp: Date.now() + i, // slight time offset to preserve sequential order
           isUserCreated: true,
+          isManualUserCreated: true,
           customId: eachCustomId,
           sumberDana: formData.sumberDana || "",
           rekPenerima: formData.rekPenerima || "",
@@ -20061,6 +20077,8 @@ const AdminFinanceScreen = ({
           `Catat Transaksi Baru ${formData.type} (Fallback)`
         );
       }
+    } finally {
+      setIsSubmittingTransaction(false);
     }
   };
 
@@ -24951,7 +24969,7 @@ const AdminFinanceScreen = ({
               className="fixed inset-0 z-[210] flex items-center justify-center p-2 md:p-4"
             >
               <div
-                onClick={() => setShowAddModal(false)}
+                onClick={() => !isSubmittingTransaction && setShowAddModal(false)}
                 className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
               />
               <motion.div
@@ -24973,8 +24991,9 @@ const AdminFinanceScreen = ({
                     </div>
                     <button
                       type="button"
+                      disabled={isSubmittingTransaction}
                       onClick={() => setShowAddModal(false)}
-                      className="w-10 h-10 md:w-12 md:h-12 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center hover:bg-slate-100 transition-all"
+                      className="w-10 h-10 md:w-12 md:h-12 bg-slate-50 text-slate-400 rounded-2xl flex items-center justify-center hover:bg-slate-100 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <X size={20} />
                     </button>
@@ -26478,16 +26497,29 @@ const AdminFinanceScreen = ({
                   <div className="p-6 md:p-10 bg-slate-50 flex gap-6 shrink-0 border-t border-slate-100">
                     <button
                       type="button"
+                      disabled={isSubmittingTransaction}
                       onClick={() => setShowAddModal(false)}
-                      className="flex-1 py-5 bg-white text-slate-400 border border-slate-200 rounded-3xl font-black text-xs md:text-sm uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm"
+                      className="flex-1 py-5 bg-white text-slate-400 border border-slate-200 rounded-3xl font-black text-xs md:text-sm uppercase tracking-widest hover:bg-slate-50 transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Batal
                     </button>
                     <button
                       type="submit"
-                      className="flex-1 py-5 bg-slate-900 text-white rounded-3xl font-black text-xs md:text-sm uppercase tracking-widest hover:bg-primary transition-all shadow-xl"
+                      disabled={isSubmittingTransaction}
+                      className={`flex-1 py-5 rounded-3xl font-black text-xs md:text-sm uppercase tracking-widest transition-all shadow-xl flex items-center justify-center gap-2 ${
+                        isSubmittingTransaction
+                          ? "bg-slate-400 text-white cursor-not-allowed opacity-80"
+                          : "bg-slate-900 text-white hover:bg-primary"
+                      }`}
                     >
-                      Simpan Transaksi
+                      {isSubmittingTransaction ? (
+                        <>
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                          <span>Menyimpan...</span>
+                        </>
+                      ) : (
+                        <span>Simpan Transaksi</span>
+                      )}
                     </button>
                   </div>
                 </form>
@@ -32260,6 +32292,7 @@ export default function App() {
       return null;
     }
   });
+  const [firebaseAuthUser, setFirebaseAuthUser] = useState<any>(() => auth.currentUser);
   const [leaveRequests, setLeaveRequests] = useState<any[]>([]);
   const [todayAttendance, setTodayAttendance] = useState<any>(null);
   const [todayAttendanceOut, setTodayAttendanceOut] = useState<any>(null);
@@ -38527,6 +38560,7 @@ export default function App() {
   // Load reports and attendance from storage/Firebase
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (user) => {
+      setFirebaseAuthUser(user);
       if (user) {
         try {
           const userEmail = (user.email || "").toLowerCase();
@@ -38579,6 +38613,7 @@ export default function App() {
             // User exists in Auth but document is deleted from Firestore
             try { await auth.signOut(); } catch (e) {}
             setCurrentUser(null);
+            setFirebaseAuthUser(null);
             localStorage.removeItem("workflow_pro_user");
             localStorage.removeItem("workflow_pro_screen");
             setScreen("login");
@@ -38589,6 +38624,7 @@ export default function App() {
         }
       } else {
         setCurrentUser(null);
+        setFirebaseAuthUser(null);
         localStorage.removeItem("workflow_pro_user");
         localStorage.removeItem("workflow_pro_screen");
         setScreen((curr) => (curr === "register" ? "register" : "login"));
@@ -39558,7 +39594,7 @@ export default function App() {
       if (unsubscribeCatalog) unsubscribeCatalog();
       if (unsubscribeAudit) unsubscribeAudit();
     };
-  }, [currentUser]);
+  }, [currentUser, firebaseAuthUser]);
 
   // Auto-seed PDF data (financial records and debt records) - handled in-memory to prevent quota exhaustion
   useEffect(() => {
