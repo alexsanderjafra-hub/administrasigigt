@@ -39127,7 +39127,17 @@ export default function App() {
             return (!pk1 || !resultKeys.has(pk1)) && (!pk2 || !resultKeys.has(pk2));
           });
 
-          return [...dedupedResult, ...missingFromPrev];
+          const finalRecordsSnapshot = [...dedupedResult, ...missingFromPrev];
+          try {
+            autoBackupService.saveInstantDataSnapshot(
+              finalRecordsSnapshot,
+              [],
+              [],
+              "Sync live snapshot"
+            );
+          } catch (_) {}
+
+          return finalRecordsSnapshot;
         });
         setIsFinanceLoaded(true);
       },
