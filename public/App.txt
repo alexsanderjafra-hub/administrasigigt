@@ -18220,7 +18220,7 @@ const AdminFinanceScreen = ({
   // Official Consolidated Accounting Baseline Constants (Sesuai patokan resmi manajemen PT & tampilan baku)
   const OFFICIAL_BASE_INCOME = 1728295627;
   const OFFICIAL_BASE_EXPENSE = 1515739194;
-  const OFFICIAL_BASE_BANK = 36898525; // Dikalibrasi agar Sisa Kas di PT Bank tepat Rp 13.037.845 sesuai rekening riil PT
+  const OFFICIAL_BASE_BANK = 61498525; // Ditambah Rp 24.600.000 (36.898.525 + 24.600.000 = 61.498.525) sehingga Sisa Kas di PT Bank bertambah tepat Rp 24.600.000
   const OFFICIAL_BASE_PERSONAL_HOLD = 3664120;
 
   // Identify new transactions entered by the user
