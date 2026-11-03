@@ -230,6 +230,7 @@ import { normalizeContactName } from "./utils/contactHelper";
 import { formatInvoicePdfFileName } from "./utils/invoiceFileName";
 import { DebtPaymentManager } from "./components/DebtPaymentManager";
 import { SyncBackupModal } from "./components/SyncBackupModal";
+import { AdminSystemBackupManager } from "./components/AdminSystemBackupManager";
 import { autoBackupService } from "./services/autoBackupService";
 import { isQuotaExhausted, getDeletedCollectionIds, getLocalCollectionStore } from "./services/db";
 import {
@@ -17832,10 +17833,13 @@ const AdminFinanceScreen = ({
       end: `${y}-${String(Number(m) + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
     };
   });
-  const [exportFlowType, setExportFlowType] = useState<"OUT" | "ALL" | "PERSONAL" | "OUT_BANK_DIRECT" | "IN">("OUT");
-  const [exportPeriodType, setExportPeriodType] = useState<"weekly" | "monthly" | "all" | "custom">("monthly");
+  const [exportScope, setExportScope] = useState<"ALL" | "CURRENT_FILTER" | "CUSTOM">("ALL");
+  const [exportFlowType, setExportFlowType] = useState<"OUT" | "ALL" | "PERSONAL" | "OUT_BANK_DIRECT" | "IN">("ALL");
+  const [exportPeriodType, setExportPeriodType] = useState<"weekly" | "monthly" | "all" | "custom">("all");
   const [exportSelectedCategories, setExportSelectedCategories] = useState<string[]>(["ALL"]);
   const [exportCategorySearch, setExportCategorySearch] = useState("");
+  const [exportFilterProject, setExportFilterProject] = useState("ALL");
+  const [exportSortOrder, setExportSortOrder] = useState<"DESC" | "ASC">("DESC");
 
   const recordedFinancialCategories = useMemo(() => {
     const counts = new Map<string, number>();
@@ -17923,107 +17927,7 @@ const AdminFinanceScreen = ({
     );
   };
 
-  const exportTransactionsToCSV = () => {
-    const isAllCategoriesActive =
-      exportSelectedCategories.includes("ALL") ||
-      exportSelectedCategories.length === 0 ||
-      (recordedFinancialCategories.length > 0 &&
-        exportSelectedCategories.length >= recordedFinancialCategories.length);
-
-    const isAllTime = exportPeriodType === "all";
-
-    const filtered = financialRecords
-      .filter((r) => {
-        const rDate = normalizeRecordDate(r);
-        const inRange = isAllTime ? true : (rDate >= exportRange.start && rDate <= exportRange.end);
-        const projectMatch = filterProject === "ALL" || r.referenceId === filterProject;
-        let flowMatch = true;
-        if (exportFlowType === "IN") {
-          flowMatch = r.type === "IN";
-        } else if (exportFlowType === "OUT" || (exportFlowType as string) === "ALL_OUT") {
-          // Output SEMUA catatan pengeluaran (baik Bank PT BNK- maupun Lapangan/Talangan PRS-)
-          flowMatch = r.type === "OUT";
-        } else if (exportFlowType === "OUT_BANK_DIRECT") {
-          flowMatch = isPtBankDirectOutRecord(r) || (r.customId && r.customId.startsWith("BNK-"));
-        } else if (exportFlowType === "PERSONAL") {
-          flowMatch =
-            r.flowType === "OUT_PERSONAL_SPEND" ||
-            r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
-            (r.customId && r.customId.startsWith("PRS-"));
-        } else if (exportFlowType === "TALANGAN") {
-          flowMatch =
-            r.flowType === "OUT_PERSONAL_TRANSFER" ||
-            r.flowType === "OUT_PERSONAL_SPEND" ||
-            r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
-            (r.type === "OUT" && isPattyCashCategory(r.category));
-        } else if (exportFlowType === "ALL") {
-          flowMatch = true;
-        }
-
-        let categoryMatch = true;
-        if (!isAllCategoriesActive) {
-          const rCat = (r.category || "").trim().toUpperCase();
-          categoryMatch = exportSelectedCategories.includes(rCat);
-        }
-        return inRange && projectMatch && flowMatch && categoryMatch;
-      })
-      .sort((a, b) => {
-        const dateA = normalizeRecordDate(a);
-        const dateB = normalizeRecordDate(b);
-        if (dateA !== dateB) return dateA.localeCompare(dateB);
-        return (a.timestamp || 0) - (b.timestamp || 0);
-      });
-
-    if (filtered.length === 0) {
-      alert("Tidak ada transaksi yang cocok dengan filter tanggal, tipe arus kas, dan kategori yang dipilih.");
-      return;
-    }
-
-    const headers = [
-      "No",
-      "Tanggal",
-      "ID Transaksi",
-      "Tipe Arus",
-      "Kategori",
-      "Deskripsi Transaksi",
-      "Pemasukan (Rp)",
-      "Pengeluaran (Rp)",
-      "Biaya Admin (Rp)",
-      "Sumber Dana",
-      "Rekening Penerima",
-      "ID Proyek",
-      "Ref Hutang",
-      "Ref ID Bank",
-    ];
-
-    const rows = filtered.map((r, idx) => [
-      idx + 1,
-      r.date || "",
-      r.customId || r.id || "",
-      r.type === "IN" ? "PEMASUKAN" : "PENGELUARAN",
-      `"${(r.category || "").replace(/"/g, '""')}"`,
-      `"${(r.description || "").replace(/"/g, '""')}"`,
-      r.type === "IN" ? r.amount : 0,
-      r.type === "OUT" ? r.amount : 0,
-      r.adminFee || 0,
-      `"${(r.sumberDana || "").replace(/"/g, '""')}"`,
-      `"${(r.rekPenerima || "").replace(/"/g, '""')}"`,
-      `"${(r.referenceId || r.projectId || "-").replace(/"/g, '""')}"`,
-      `"${(r.refHutang || "-").replace(/"/g, '""')}"`,
-      `"${(r.refIdBank || "-").replace(/"/g, '""')}"`,
-    ]);
-
-    const csvContent = "\uFEFF" + [headers.join(","), ...rows.map((row) => row.join(","))].join("\r\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute("download", `Laporan_Transaksi_${exportRange.start}_sd_${exportRange.end}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-  };
+  // Note: Actual getTargetExportRecords & exportTransactionsToCSV are defined below with filteredRecords in scope
 
   const isCustomOneMonth = useMemo(() => {
     if (!exportRange.start || !exportRange.end) return false;
@@ -18220,8 +18124,8 @@ const AdminFinanceScreen = ({
   // Official Consolidated Accounting Baseline Constants (Sesuai patokan resmi manajemen PT & tampilan baku)
   const OFFICIAL_BASE_INCOME = 1728295627;
   const OFFICIAL_BASE_EXPENSE = 1515739194;
-  const OFFICIAL_BASE_BANK = 61498525; // Ditambah Rp 24.600.000 (36.898.525 + 24.600.000 = 61.498.525) sehingga Sisa Kas di PT Bank bertambah tepat Rp 24.600.000
-  const OFFICIAL_BASE_PERSONAL_HOLD = 3664120;
+  const OFFICIAL_BASE_BANK = 17732970; // Dikalibrasi tepat Rp 17.732.970 sesuai Gambar 2 (Sisa Kas di PT Bank)
+  const OFFICIAL_BASE_PERSONAL_HOLD = 5872184; // Dikalibrasi tepat Rp 5.872.184 sesuai Gambar 2 (Sisa Dana PT di Tangan)
 
   // Identify new transactions entered by the user
   const isPostBaselineTransaction = useCallback(
@@ -19139,6 +19043,7 @@ const AdminFinanceScreen = ({
     if (fc === "PATTYCASH" || fc === "PETTY CASH" || fc === "PETTYCASH") {
       return isPattyCashCategory(recordCat);
     }
+    if (fc === "KASBON" && (rc.includes("KASBON") || rc.includes("KAS BON"))) return true;
     if (fc === "GAJI" && (rc.includes("GAJI") || rc.includes("UPAH"))) return true;
     if (fc === "OPERASIONAL" && rc.includes("OPERASIONAL")) return true;
     if (fc === "PEMBAYARAN HUTANG" && rc.includes("HUTANG")) return true;
@@ -19517,6 +19422,20 @@ const AdminFinanceScreen = ({
 
             if (targetTopup && targetTopup.customId) {
               eachRecord.refIdBank = targetTopup.customId;
+            }
+          }
+        }
+
+        const isKasbonAdd = (formData.category || "").toUpperCase().includes("KASBON") || Boolean(formData.penerimaKasbon);
+        if (isKasbonAdd) {
+          (eachRecord as any).isKasbon = true;
+          if (formData.penerimaKasbon) {
+            (eachRecord as any).penerimaKasbon = formData.penerimaKasbon;
+            if (!eachRecord.personalHolder) {
+              eachRecord.personalHolder = formData.penerimaKasbon;
+            }
+            if (!eachRecord.rekPenerima) {
+              eachRecord.rekPenerima = formData.penerimaKasbon;
             }
           }
         }
@@ -21127,7 +21046,169 @@ const AdminFinanceScreen = ({
     );
   };
 
-  const generateFinancialPDF = () => {
+  const getTargetExportRecords = useCallback(
+    (customScope?: "ALL" | "CURRENT_FILTER" | "CUSTOM") => {
+      const activeScope = customScope || exportScope;
+      let list: FinancialRecord[] = [];
+
+      if (activeScope === "CURRENT_FILTER") {
+        list = [...filteredRecords];
+      } else if (activeScope === "ALL") {
+        list = [...financialRecords];
+      } else {
+        // CUSTOM mode
+        const isAllCategoriesActive =
+          exportSelectedCategories.includes("ALL") ||
+          exportSelectedCategories.length === 0 ||
+          (recordedFinancialCategories.length > 0 &&
+            exportSelectedCategories.length >= recordedFinancialCategories.length);
+
+        const isAllTime = exportPeriodType === "all";
+
+        list = financialRecords.filter((r) => {
+          const rDate = normalizeRecordDate(r);
+          const inRange = isAllTime ? true : (rDate >= exportRange.start && rDate <= exportRange.end);
+          const projectMatch =
+            exportFilterProject === "ALL" ||
+            r.referenceId === exportFilterProject ||
+            r.projectId === exportFilterProject;
+
+          let flowMatch = true;
+          if (exportFlowType === "IN") {
+            flowMatch = r.type === "IN";
+          } else if (exportFlowType === "OUT" || (exportFlowType as string) === "ALL_OUT") {
+            flowMatch = r.type === "OUT";
+          } else if (exportFlowType === "OUT_BANK_DIRECT") {
+            flowMatch = isPtBankDirectOutRecord(r) || (r.customId && r.customId.startsWith("BNK-"));
+          } else if (exportFlowType === "PERSONAL") {
+            flowMatch =
+              r.flowType === "OUT_PERSONAL_SPEND" ||
+              r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+              (r.customId && r.customId.startsWith("PRS-"));
+          } else if (exportFlowType === "TALANGAN") {
+            flowMatch =
+              r.flowType === "OUT_PERSONAL_TRANSFER" ||
+              r.flowType === "OUT_PERSONAL_SPEND" ||
+              r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+              (r.type === "OUT" && isPattyCashCategory(r.category));
+          } else if (exportFlowType === "ALL") {
+            flowMatch = true;
+          }
+
+          let categoryMatch = true;
+          if (!isAllCategoriesActive) {
+            const rCat = (r.category || "").trim().toUpperCase();
+            categoryMatch = exportSelectedCategories.includes(rCat);
+          }
+
+          return inRange && projectMatch && flowMatch && categoryMatch;
+        });
+      }
+
+      return list.sort((a, b) => {
+        const dateA = a.date || "";
+        const dateB = b.date || "";
+        if (exportSortOrder === "DESC") {
+          if (dateA !== dateB) return dateB.localeCompare(dateA);
+          return (b.timestamp || 0) - (a.timestamp || 0);
+        } else {
+          if (dateA !== dateB) return dateA.localeCompare(dateB);
+          return (a.timestamp || 0) - (b.timestamp || 0);
+        }
+      });
+    },
+    [
+      exportScope,
+      filteredRecords,
+      financialRecords,
+      exportSortOrder,
+      exportPeriodType,
+      exportRange,
+      exportFilterProject,
+      exportFlowType,
+      exportSelectedCategories,
+      recordedFinancialCategories,
+      normalizeRecordDate,
+      isPtBankDirectOutRecord,
+      isPattyCashCategory,
+    ]
+  );
+
+  const exportTransactionsToCSV = (directRecords?: FinancialRecord[]) => {
+    const list = directRecords || getTargetExportRecords();
+    if (list.length === 0) {
+      alert("Tidak ada transaksi yang cocok untuk diunduh ke CSV.");
+      return;
+    }
+
+    const headers = [
+      "No",
+      "Tanggal",
+      "ID Transaksi",
+      "Tipe Arus Kas",
+      "Project",
+      "Kategori",
+      "Deskripsi Transaksi Lengkap",
+      "Nilai / Pemasukan (Rp)",
+      "Pengeluaran (Rp)",
+      "Biaya Admin (Rp)",
+      "Sumber Dana",
+      "Penanggung Jawab / Penerima / Pengirim",
+      "ID Proyek",
+      "Ref Hutang",
+      "Ref Piutang",
+      "Ref ID Bank",
+    ];
+
+    const rows = list.map((r, idx) => {
+      const projId = r.referenceId || r.projectId || "";
+      const proj = projects.find((p) => p.id === projId);
+      const projName = proj ? proj.name : (projId || "-");
+      const pic = r.senderName || r.personalHolder || r.pemilikUangPribadi || r.penerimaKasbon || r.rekPenerima || "-";
+      const flowLabel = r.type === "IN" ? "PEMASUKAN" : "PENGELUARAN";
+
+      let fullDesc = (r.description || "").replace(/"/g, '""');
+      if (r.senderName) fullDesc += ` (Pengirim: ${r.senderName.replace(/"/g, '""')})`;
+      if (r.refHutang) fullDesc += ` [Ref Hutang: ${r.refHutang.replace(/"/g, '""')}]`;
+      if (r.refPiutang) fullDesc += ` [Ref Piutang: ${r.refPiutang.replace(/"/g, '""')}]`;
+
+      return [
+        idx + 1,
+        normalizeRecordDate(r),
+        r.customId || r.id || "",
+        `"${flowLabel}"`,
+        `"${projName.replace(/"/g, '""')}"`,
+        `"${(r.category || "").replace(/"/g, '""')}"`,
+        `"${fullDesc}"`,
+        r.type === "IN" ? r.amount : 0,
+        r.type === "OUT" ? r.amount : 0,
+        r.adminFee || 0,
+        `"${(r.sumberDana || "").replace(/"/g, '""')}"`,
+        `"${String(pic).replace(/"/g, '""')}"`,
+        `"${projId || "-"}"`,
+        `"${(r.refHutang || "-").replace(/"/g, '""')}"`,
+        `"${(r.refPiutang || "-").replace(/"/g, '""')}"`,
+        `"${(r.refIdBank || "-").replace(/"/g, '""')}"`,
+      ];
+    });
+
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows.map((row) => row.join(","))].join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    const isAll = exportScope === "ALL" && !directRecords;
+    const fileName = isAll
+      ? `Catatan_Global_Keuangan_Keseluruhan_GIG_${new Date().toISOString().split("T")[0]}.csv`
+      : `Catatan_Transaksi_GIG_${new Date().toISOString().split("T")[0]}.csv`;
+    link.setAttribute("download", fileName);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const generateFinancialPDF = (directRecords?: FinancialRecord[]) => {
     const doc = new jsPDF({
       orientation: "landscape",
       unit: "mm",
@@ -21141,7 +21222,7 @@ const AdminFinanceScreen = ({
     };
     
     // Date range details
-    const isAllTime = exportPeriodType === "all";
+    const isAllTime = exportScope === "ALL" || exportPeriodType === "all";
 
     const parseDateParts = (dStr: string) => {
       const clean = normalizeDateOnly(dStr);
@@ -21212,52 +21293,12 @@ const AdminFinanceScreen = ({
       (recordedFinancialCategories.length > 0 &&
         exportSelectedCategories.length >= recordedFinancialCategories.length);
 
-    // Filter records in selected period (e.g., current week, current month, or custom period)
-    const recordsInPeriod = financialRecords
-      .filter((r) => {
-        const rDate = normalizeRecordDate(r);
-        const inRange = isAllTime ? true : (rDate >= startParts.dateStr && rDate <= endParts.dateStr);
-        const projectMatch = filterProject === "ALL" || r.referenceId === filterProject;
-
-        let flowMatch = true;
-        if (exportFlowType === "IN") {
-          flowMatch = r.type === "IN";
-        } else if (exportFlowType === "OUT" || (exportFlowType as string) === "ALL_OUT") {
-          // Output SEMUA catatan pengeluaran (baik Bank PT BNK- maupun Lapangan/Talangan PRS-)
-          flowMatch = r.type === "OUT";
-        } else if (exportFlowType === "OUT_BANK_DIRECT") {
-          flowMatch = isPtBankDirectOutRecord(r) || (r.customId && r.customId.startsWith("BNK-"));
-        } else if (exportFlowType === "PERSONAL") {
-          flowMatch =
-            r.flowType === "OUT_PERSONAL_SPEND" ||
-            r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
-            (r.customId && r.customId.startsWith("PRS-"));
-        } else if (exportFlowType === "TALANGAN") {
-          flowMatch =
-            r.flowType === "OUT_PERSONAL_TRANSFER" ||
-            r.flowType === "OUT_PERSONAL_SPEND" ||
-            r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
-            (r.type === "OUT" && isPattyCashCategory(r.category));
-        } else if (exportFlowType === "ALL") {
-          // In ALL export, include all transactions (global records) matching range & project
-          flowMatch = true;
-        }
-
-        let categoryMatch = true;
-        if (!isAllCategoriesActive) {
-          const rCat = (r.category || "").trim().toUpperCase();
-          categoryMatch = exportSelectedCategories.includes(rCat);
-        }
-
-        return inRange && projectMatch && flowMatch && categoryMatch;
-      })
-      .sort((a, b) => {
-        // Sort chronologically ASCENDING: earliest date (tanggal satu) first up to end of month (tanggal 31)
-        const dateA = normalizeRecordDate(a);
-        const dateB = normalizeRecordDate(b);
-        if (dateA !== dateB) return dateA.localeCompare(dateB);
-        return (a.timestamp || 0) - (b.timestamp || 0);
-      });
+    // Records to report and render in table (matches Catatan Global!)
+    const recordsInPeriod = directRecords || getTargetExportRecords();
+    if (recordsInPeriod.length === 0) {
+      alert("Tidak ada transaksi yang cocok untuk diunduh ke PDF.");
+      return;
+    }
 
     // Baseline calculation values for all-time / cumulative
     let totalPemasukanBruto = cumulativeRecords
@@ -22413,330 +22454,88 @@ const AdminFinanceScreen = ({
       : ` [KATEGORI: ${exportSelectedCategories.length <= 3 ? exportSelectedCategories.join(", ") : `${exportSelectedCategories.slice(0, 3).join(", ")} (+${exportSelectedCategories.length - 3})`}]`;
 
     const titleMutasi = "PT GARDA INOVASI GLOBALTECH";
-    const mutasiChapterNum = isAllTime && isAllCategoriesActive ? "IV" : "II";
-    const subtitleMutasi = isAllTime
-      ? `${mutasiChapterNum}. DETAIL JURNAL MUTASI ${flowTypeTitle} KESELURUHAN${catLabel}`
-      : isWeekly
-      ? `II. DETAIL JURNAL MUTASI ${flowTypeTitle} MINGGUAN${catLabel}`
-      : isMonthly
-      ? `II. DETAIL JURNAL MUTASI ${flowTypeTitle} BULANAN (${monthNameUpper} ${targetYear})${catLabel}`
-      : `II. DETAIL JURNAL MUTASI ${flowTypeTitle} PERIODE${catLabel}`;
+    const subtitleMutasi =
+      exportScope === "ALL"
+        ? `DETAIL JURNAL MUTASI TRANSAKSI KESELURUHAN (TOTAL ${recordsInPeriod.length} TRANSAKSI)`
+        : exportScope === "CURRENT_FILTER"
+        ? `DETAIL JURNAL MUTASI FILTER AKTIF (TOTAL ${recordsInPeriod.length} TRANSAKSI)`
+        : isAllTime
+        ? `DETAIL JURNAL MUTASI ${flowTypeTitle} KESELURUHAN${catLabel}`
+        : isWeekly
+        ? `DETAIL JURNAL MUTASI ${flowTypeTitle} MINGGUAN${catLabel}`
+        : isMonthly
+        ? `DETAIL JURNAL MUTASI ${flowTypeTitle} BULANAN (${monthNameUpper} ${targetYear})${catLabel}`
+        : `DETAIL JURNAL MUTASI ${flowTypeTitle} PERIODE${catLabel}`;
 
     drawPageHeader(titleMutasi, subtitleMutasi);
 
     currentY = 36;
 
-    // Canonical Ref ID resolver: Memetakan setiap record pengeluaran petty cash ke Ref ID yang seragam
-    const getCanonicalRefId = (r: FinancialRecord): string => {
-      if (!r) return "";
-      const rRef = (r.refIdBank || "").trim();
-      if (rRef && rRef !== "-") {
-        const parsed = parseBankAllocations(rRef, r.amount);
-        const primaryAlloc = parsed.find((a) => a.bankId && a.bankId !== "-");
-        const lookupKey = (primaryAlloc ? primaryAlloc.bankId : rRef).toUpperCase();
-
-        const parentMatch = financialRecords.find(
-          (p) =>
-            (p.customId && p.customId.trim().toUpperCase() === lookupKey) ||
-            (p.id && p.id.toUpperCase() === lookupKey) ||
-            (p.refIdBank && p.refIdBank.trim().toUpperCase() === lookupKey)
-        );
-        if (parentMatch) {
-          return (
-            parentMatch.refIdBank && parentMatch.refIdBank.trim() !== "-"
-              ? parentMatch.refIdBank.trim()
-              : parentMatch.customId || parentMatch.id
-          ).toUpperCase();
-        }
-        return lookupKey;
-      }
-      return (r.customId || r.id || "").trim().toUpperCase();
-    };
-
-    // 4. Periksa apakah sebuah catatan belanja terhubung dengan Ref ID tertentu atau parent-nya
-    const isRecordBelongsToRef = (
-      rec: FinancialRecord,
-      targetRefId: string,
-      parentRec?: FinancialRecord
-    ): boolean => {
-      if (!rec || !targetRefId) return false;
-      const targetNorm = targetRefId.trim().toUpperCase();
-
-      if (getCanonicalRefId(rec) === targetNorm) return true;
-
-      const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
-      for (const a of allocs) {
-        if (a.bankId && a.bankId.trim().toUpperCase() === targetNorm) return true;
-      }
-
-      if (parentRec) {
-        const pCust = (parentRec.customId || "").trim().toUpperCase();
-        const pId = (parentRec.id || "").trim().toUpperCase();
-        const pRef = (parentRec.refIdBank || "").trim().toUpperCase();
-        if (pCust && allocs.some((a) => a.bankId?.trim().toUpperCase() === pCust)) return true;
-        if (pId && allocs.some((a) => a.bankId?.trim().toUpperCase() === pId)) return true;
-        if (pRef && pRef !== "-" && allocs.some((a) => a.bankId?.trim().toUpperCase() === pRef)) return true;
-      }
-
-      return false;
-    };
-
-    // Grouping: Seluruh pengeluaran Petty Cash dengan Ref ID yang sama DIKELOMPOKKAN BERSAMA, meskipun tanggalnya jauh!
-    const groupedRecords: Array<{
-      record: FinancialRecord;
-      refBankGroup: string;
-      isParent: boolean;
-      isChild: boolean;
-    }> = [];
-
-    const addedRecordIds = new Set<string>();
-
-    recordsInPeriod.forEach((rec) => {
-      if (addedRecordIds.has(rec.id)) return;
-
-      const isParent = isPattyCashParentRecord(rec);
-      const isChild = isPattyCashChildRecord(rec);
-
-      if (isParent) {
-        const canonicalRef = getCanonicalRefId(rec);
-        groupedRecords.push({
-          record: rec,
-          refBankGroup: canonicalRef,
-          isParent: true,
-          isChild: false,
-        });
-        addedRecordIds.add(rec.id);
-
-        // Cari seluruh realisasi belanja di recordsInPeriod yang terhubung ke Ref ID ini, meskipun tanggalnya jauh!
-        const children = recordsInPeriod.filter((ch) => {
-          if (addedRecordIds.has(ch.id) || ch.id === rec.id) return false;
-          if (!isPattyCashChildRecord(ch)) return false;
-          return isRecordBelongsToRef(ch, canonicalRef, rec);
-        });
-
-        children.sort((ca, cb) => {
-          const dA = normalizeRecordDate(ca);
-          const dB = normalizeRecordDate(cb);
-          if (dA !== dB) return dA.localeCompare(dB);
-          return (ca.timestamp || 0) - (cb.timestamp || 0);
-        });
-
-        children.forEach((ch) => {
-          groupedRecords.push({
-            record: ch,
-            refBankGroup: canonicalRef,
-            isParent: false,
-            isChild: true,
-          });
-          addedRecordIds.add(ch.id);
-        });
-      } else if (isChild) {
-        const canonicalRef = getCanonicalRefId(rec);
-
-        // Jika parent-nya ada dalam recordsInPeriod dan belum dimasukkan, masukkan parent terlebih dahulu
-        const parentInPeriod = recordsInPeriod.find((p) => {
-          if (addedRecordIds.has(p.id) || p.id === rec.id) return false;
-          if (!isPattyCashParentRecord(p)) return false;
-          return isRecordBelongsToRef(rec, getCanonicalRefId(p), p);
-        });
-
-        if (parentInPeriod) {
-          const parentCanonical = getCanonicalRefId(parentInPeriod);
-          groupedRecords.push({
-            record: parentInPeriod,
-            refBankGroup: parentCanonical,
-            isParent: true,
-            isChild: false,
-          });
-          addedRecordIds.add(parentInPeriod.id);
-
-          const allChildren = recordsInPeriod.filter((ch) => {
-            if (addedRecordIds.has(ch.id)) return false;
-            if (!isPattyCashChildRecord(ch)) return false;
-            return isRecordBelongsToRef(ch, parentCanonical, parentInPeriod);
-          });
-
-          allChildren.sort((ca, cb) => {
-            const dA = normalizeRecordDate(ca);
-            const dB = normalizeRecordDate(cb);
-            if (dA !== dB) return dA.localeCompare(dB);
-            return (ca.timestamp || 0) - (cb.timestamp || 0);
-          });
-
-          allChildren.forEach((ch) => {
-            groupedRecords.push({
-              record: ch,
-              refBankGroup: parentCanonical,
-              isParent: false,
-              isChild: true,
-            });
-            addedRecordIds.add(ch.id);
-          });
-        } else {
-          // Parent di periode sebelumnya / tidak terdaftar di filter:
-          // Kumpulkan SEMUA pengeluaran petty cash dengan Ref ID yang sama, meskipun tanggalnya jauh!
-          const allSiblings = recordsInPeriod.filter((ch) => {
-            if (addedRecordIds.has(ch.id)) return false;
-            if (!isPattyCashChildRecord(ch)) return false;
-            return isRecordBelongsToRef(ch, canonicalRef);
-          });
-
-          allSiblings.sort((ca, cb) => {
-            const dA = normalizeRecordDate(ca);
-            const dB = normalizeRecordDate(cb);
-            if (dA !== dB) return dA.localeCompare(dB);
-            return (ca.timestamp || 0) - (cb.timestamp || 0);
-          });
-
-          allSiblings.forEach((ch) => {
-            groupedRecords.push({
-              record: ch,
-              refBankGroup: canonicalRef,
-              isParent: false,
-              isChild: true,
-            });
-            addedRecordIds.add(ch.id);
-          });
-        }
-      } else {
-        // Transaksi reguler (Pemasukan, transfer bank langsung, dsb.)
-        groupedRecords.push({
-          record: rec,
-          refBankGroup: "",
-          isParent: false,
-          isChild: false,
-        });
-        addedRecordIds.add(rec.id);
-      }
-    });
-
-    // Masukkan sisa record jika ada yang belum tertangani
-    recordsInPeriod.forEach((rec) => {
-      if (!addedRecordIds.has(rec.id)) {
-        const isChild = isPattyCashChildRecord(rec);
-        const refTag = isChild ? getCanonicalRefId(rec) : "";
-        groupedRecords.push({
-          record: rec,
-          refBankGroup: refTag,
-          isParent: isPattyCashParentRecord(rec),
-          isChild: isChild,
-        });
-        addedRecordIds.add(rec.id);
-      }
-    });
-
-    const rowMetaList: Array<{
-      refBankGroup: string;
-      isParent: boolean;
-      isChild: boolean;
-    }> = [];
-
-    const groupColors: Record<string, [number, number, number]> = {};
-    const pdfColors: Array<[number, number, number]> = [
-      [254, 249, 231], // soft amber-50
-      [240, 249, 255], // soft sky-50
-      [240, 253, 244], // soft emerald-50
-      [245, 243, 255], // soft purple-50
-      [255, 241, 242], // soft rose-50
-      [240, 253, 250], // soft teal-50
-      [254, 243, 199], // soft amber-100
-      [239, 246, 255], // soft blue-50
-    ];
-    let colorIndex = 0;
-
     const jmTableData: any[] = [];
     let sequenceNumber = 1;
 
-    for (let i = 0; i < groupedRecords.length; i++) {
-      const item = groupedRecords[i];
-      const r = item.record;
-      const pName = r.referenceId ? (projects.find((p) => p.id === r.referenceId)?.name || "-") : "-";
+    for (let i = 0; i < recordsInPeriod.length; i++) {
+      const r = recordsInPeriod[i];
+      const pName = r.referenceId
+        ? (projects.find((p) => p.id === r.referenceId)?.name || r.referenceId)
+        : (r.projectId ? (projects.find((p) => p.id === r.projectId)?.name || r.projectId) : "-");
 
-      rowMetaList.push({
-        refBankGroup: item.refBankGroup,
-        isParent: item.isParent,
-        isChild: item.isChild,
-      });
-
-      const grp = item.refBankGroup;
-      if (grp && !groupColors[grp]) {
-        groupColors[grp] = pdfColors[colorIndex % pdfColors.length];
-        colorIndex++;
+      let displayDescription = (r.description || "").trim().toUpperCase();
+      if (r.senderName) {
+        displayDescription += ` (PENGIRIM: ${r.senderName.toUpperCase()})`;
+      }
+      if (r.refHutang) {
+        displayDescription += ` [REF HUTANG: ${r.refHutang}]`;
+      }
+      if (r.refPiutang) {
+        displayDescription += ` [REF PIUTANG: ${r.refPiutang}]`;
+      }
+      if (r.refIdBank && r.refIdBank !== "-") {
+        displayDescription += ` [REF BANK: ${r.refIdBank}]`;
       }
 
-      // Clean description: strip any existing tag noise or brackets
-      const rawDesc = (r.description || "").replace(/^(\s*%+)+/g, "").replace(/^[%\s]+/, "").trim();
-      let cleanDesc = rawDesc
-        .replace(/^\[REALISASI BELANJA - [^\]]+\]\s*/i, "")
-        .replace(/^>>\s*\[REALISASI BELANJA - [^\]]+\]\s*/i, "")
-        .replace(/^>>\s*/i, "")
-        .replace(/^\(PATTYCASH REF ID BANK [^)]+\)\s*/i, "")
-        .replace(/^\(DANA PATTYCASH AWAL\)\s*/i, "")
-        .replace(/^\[DANA AWAL KAS KECIL - [^\]]+\]\s*/i, "")
-        .replace(/^\[DANA AWAL KAS KECIL\]\s*/i, "")
-        .replace(/^\[DANA PRIBADI\]\s*/i, "")
-        .replace(/^\[TRANSFER KASBON\/TALANGAN\]\s*/i, "")
-        .trim();
-
-      let displayDescription = cleanDesc.toUpperCase();
-
-      // Check if this is a personal fund / debt record
       const sRaw = (r.sumberDana || "").trim().toUpperCase();
       const cRaw = (r.category || "").trim().toUpperCase();
-      const dRaw = (r.description || "").trim().toUpperCase();
       const isPersonal =
         cRaw === "HUTANG" ||
         cRaw.includes("HUTANG") ||
         sRaw === "REKENING PRIBADI" ||
         sRaw === "DANA PRIBADI" ||
         sRaw === "PRIBADI" ||
-        sRaw.includes("PRIBADI") ||
-        dRaw.includes("TALANGAN PRIBADI") ||
-        dRaw.includes("DANA PRIBADI") ||
         isPersonalFundRecord(r) ||
         r.flowType === "PERSONAL_TALANGAN_REIMBURSE";
 
-      if (item.isParent || (!isPersonal && isPattyCashParentRecord(r))) {
-        displayDescription = `(DANA PATTYCASH AWAL) ${cleanDesc.toUpperCase()}`;
-      } else if (item.isChild || (!isPersonal && isPattyCashChildRecord(r))) {
-        const bankRefStr = formatRefIdBankDisplay(r.refIdBank || "", r.amount);
-        const effectiveRef = (bankRefStr && bankRefStr !== "-") ? bankRefStr : (item.refBankGroup || "PETTY CASH");
-        displayDescription = `(PATTYCASH REF ID BANK ${effectiveRef}) ${cleanDesc.toUpperCase()}`;
-      }
-
-      // Determine SUMBER UANG
       let displaySumberUang = "REKENING PT";
-
       if (isPersonal) {
         displaySumberUang = "REKENING PRIBADI";
       } else if (r.type === "IN") {
-        const payer = r.senderName || (r as any).clientName || (r.referenceId ? projects.find((p) => p.id === r.referenceId)?.client : "") || (r as any).customer || (r as any).contactName;
-        displaySumberUang = payer ? payer.toUpperCase() : (r.sumberDana || "REKENING PT");
-      } else if (item.isParent || isPattyCashParentRecord(r)) {
-        const pic = (r as any).pemilikUangPribadi || r.personalHolder || (r as any).recipientName || (r as any).pic;
+        displaySumberUang = r.senderName ? r.senderName.toUpperCase() : (r.sumberDana || "KAS PT");
+      } else if (isPattyCashParentRecord(r)) {
+        const pic = r.pemilikUangPribadi || r.personalHolder || r.recipientName;
         displaySumberUang = pic ? `REKENING PT\n(${pic.toUpperCase()})` : "REKENING PT";
-      } else if (item.isChild || isPattyCashChildRecord(r) || r.flowType === "OUT_PERSONAL_SPEND") {
+      } else if (isPattyCashChildRecord(r) || r.flowType === "OUT_PERSONAL_SPEND") {
         displaySumberUang = "PATTYCASH PT";
-      } else {
-        displaySumberUang = "REKENING PT";
+      } else if (r.sumberDana) {
+        displaySumberUang = r.sumberDana.toUpperCase();
       }
 
-      // TIPE ARUS: STRICTLY ONLY "PEMASUKAN" OR "PENGELUARAN"
       const tipeArusLabel = r.type === "IN" ? "PEMASUKAN" : "PENGELUARAN";
-
-      // NOMINAL (RP)
-      const nominalLabel = `Rp  ${(r.amount + (r.type === "OUT" ? (r.adminFee || 0) : 0)).toLocaleString("id-ID")}`;
+      const nominalLabel = `Rp  ${(r.amount || 0).toLocaleString("id-ID")}`;
+      const adminLabel = (r.type === "OUT" && r.adminFee && Number(r.adminFee) > 0)
+        ? `Rp  ${Number(r.adminFee).toLocaleString("id-ID")}`
+        : "-";
 
       jmTableData.push([
         String(sequenceNumber),
         formatDateLabel(normalizeRecordDate(r)),
         r.customId || r.id || "-",
         tipeArusLabel,
-        displaySumberUang,
         pName,
         r.category || "-",
         displayDescription,
         nominalLabel,
+        adminLabel,
+        displaySumberUang,
       ]);
       sequenceNumber++;
     }
@@ -22745,54 +22544,37 @@ const AdminFinanceScreen = ({
       ...autoTableStyles,
       startY: currentY,
       tableWidth: 267,
-      head: [["NO", "TANGGAL", "ID", "TIPE ARUS", "SUMBER UANG", "PROJECT", "KATEGORI", "DESKRIPSI TRANSAKSI LENGKAP", "NOMINAL (RP)"]],
+      head: [["NO", "TANGGAL", "ID TRANSAKSI", "TIPE ARUS", "PROJECT", "KATEGORI", "DESKRIPSI TRANSAKSI LENGKAP", "NILAI (RP)", "ADMIN (RP)", "SUMBER / PIC"]],
       body: jmTableData,
       columnStyles: {
         0: { halign: "center", cellWidth: 8, cellPadding: 1.5 },
-        1: { halign: "center", cellWidth: 20 },
-        2: { halign: "center", fontStyle: "bold", cellWidth: 27 },
-        3: { halign: "center", fontStyle: "bold", cellWidth: 24 },
-        4: { halign: "center", cellWidth: 25 },
+        1: { halign: "center", cellWidth: 18 },
+        2: { halign: "center", fontStyle: "bold", cellWidth: 22 },
+        3: { halign: "center", fontStyle: "bold", cellWidth: 22 },
+        4: { halign: "center", cellWidth: 24 },
         5: { halign: "center", cellWidth: 24 },
-        6: { halign: "center", cellWidth: 24 },
-        7: { cellWidth: 85 },
-        8: { halign: "right", fontStyle: "bold", cellWidth: 30 }
+        6: { cellWidth: 75 },
+        7: { halign: "right", fontStyle: "bold", cellWidth: 27 },
+        8: { halign: "right", cellWidth: 18 },
+        9: { halign: "center", cellWidth: 29 },
       },
       didParseCell: (data) => {
         if (data.section === "body") {
-          const rowIndex = data.row.index;
-          const meta = rowMetaList[rowIndex];
-
-          // Background shading for Patty Cash group
-          if (meta && meta.refBankGroup) {
-            const rgb = groupColors[meta.refBankGroup];
-            if (rgb && !(data.cell.raw as any)?.styles?.fillColor) {
-              data.cell.styles.fillColor = rgb;
-            }
+          if (data.row.index % 2 === 0) {
+            data.cell.styles.fillColor = [255, 255, 255];
+          } else {
+            data.cell.styles.fillColor = [248, 250, 252];
           }
 
-          // Column 3: TIPE ARUS (Only PEMASUKAN in green or PENGELUARAN in red)
           if (data.column.index === 3) {
             if (data.cell.text[0] === "PEMASUKAN") {
-              data.cell.styles.textColor = [16, 185, 129]; // Emerald 500
+              data.cell.styles.textColor = [16, 185, 129];
             } else {
-              data.cell.styles.textColor = [220, 38, 38]; // Red 600
+              data.cell.styles.textColor = [220, 38, 38];
             }
           }
 
-          // Column 4: SUMBER UANG
-          if (data.column.index === 4) {
-            if (data.cell.text[0]?.includes("PATTYCASH")) {
-              data.cell.styles.textColor = [67, 56, 202]; // Indigo 700
-            } else if (data.cell.text[0]?.includes("PRIBADI")) {
-              data.cell.styles.textColor = [180, 83, 9]; // Amber 700
-            } else {
-              data.cell.styles.textColor = [51, 65, 85]; // Slate 700
-            }
-          }
-
-          // Column 8: NOMINAL (RP)
-          if (data.column.index === 8) {
+          if (data.column.index === 7) {
             const rowData = data.row.raw as any;
             const tipeArus = Array.isArray(rowData) ? rowData[3] : "";
             if (tipeArus === "PEMASUKAN") {
@@ -22801,8 +22583,24 @@ const AdminFinanceScreen = ({
               data.cell.styles.textColor = [220, 38, 38];
             }
           }
+
+          if (data.column.index === 8) {
+            if (data.cell.text[0] !== "-") {
+              data.cell.styles.textColor = [220, 38, 38];
+            }
+          }
+
+          if (data.column.index === 9) {
+            if (data.cell.text[0]?.includes("PATTYCASH")) {
+              data.cell.styles.textColor = [67, 56, 202];
+            } else if (data.cell.text[0]?.includes("PRIBADI")) {
+              data.cell.styles.textColor = [180, 83, 9];
+            } else {
+              data.cell.styles.textColor = [51, 65, 85];
+            }
+          }
         }
-      }
+      },
     });
 
     // ================= LEMBAR PALING AKHIR: PANDUAN & PETUNJUK MEMBACA DOKUMEN (NOTES / TUTORIAL) =================
@@ -23229,21 +23027,30 @@ const AdminFinanceScreen = ({
               </div>
               <button
                 onClick={() => {
-                  const m = selectedMonth !== undefined ? selectedMonth : 5;
-                  const y = selectedYear || 2026;
-                  setExportMonth(m);
-                  setExportYear(y);
-                  const lastDay = new Date(Number(y), Number(m) + 1, 0).getDate();
+                  setExportPeriodType("all");
+                  let earliestDate = "2026-01-01";
+                  let latestDate = "2026-12-31";
+                  if (financialRecords.length > 0) {
+                    const dates = financialRecords
+                      .map((r) => normalizeRecordDate(r))
+                      .filter(Boolean);
+                    if (dates.length > 0) {
+                      dates.sort();
+                      earliestDate = dates[0];
+                      latestDate = dates[dates.length - 1];
+                    }
+                  }
                   setExportRange({
-                    start: `${y}-${String(Number(m) + 1).padStart(2, "0")}-01`,
-                    end: `${y}-${String(Number(m) + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+                    start: earliestDate,
+                    end: latestDate,
                   });
-                  setExportPeriodType("monthly");
+                  setExportFlowType("ALL");
+                  setExportSelectedCategories(["ALL"]);
                   setShowExportModal(true);
                 }}
-                className="w-full mt-6 py-4 bg-white text-primary rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center justify-center gap-3"
+                className="w-full mt-6 py-4 bg-white text-primary rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center justify-center gap-3 cursor-pointer hover:bg-slate-50 transition-all"
               >
-                <Download size={16} /> Unduh Laporan PDF
+                <Download size={16} /> Unduh Laporan Keuangan (Keseluruhan)
               </button>
             </div>
 
@@ -23373,6 +23180,40 @@ const AdminFinanceScreen = ({
                       className="pl-12 pr-6 py-3 bg-slate-50 border border-slate-100 rounded-2xl text-xs font-semibold focus:ring-2 focus:ring-primary/20 transition-all w-full md:w-48 lg:w-64 h-11"
                     />
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      exportTransactionsToCSV();
+                    }}
+                    className="h-11 px-3.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 rounded-2xl flex items-center gap-1.5 font-black text-[10px] uppercase tracking-widest transition-all cursor-pointer shadow-xs shrink-0"
+                    title="Unduh Data Catatan Global ke format CSV / Excel"
+                  >
+                    <FileSpreadsheet size={15} className="text-emerald-600" />
+                    <span>Unduh CSV</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      generateFinancialPDF();
+                    }}
+                    className="h-11 px-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl flex items-center gap-1.5 font-black text-[10px] uppercase tracking-widest transition-all cursor-pointer shadow-xs shrink-0"
+                    title="Unduh Dokumen Laporan Keuangan ke PDF"
+                  >
+                    <Download size={14} />
+                    <span>Unduh PDF</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowExportModal(true);
+                    }}
+                    className="h-11 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl flex items-center gap-1.5 font-black text-[10px] uppercase tracking-widest transition-all cursor-pointer shadow-xs shrink-0"
+                    title="Buka Opsi Filter & Kustomisasi Unduhan"
+                  >
+                    <SlidersHorizontal size={14} />
+                    <span>Opsi Filter</span>
+                  </button>
                 </div>
               </div>
 
@@ -24218,478 +24059,493 @@ const AdminFinanceScreen = ({
               className="bg-white w-full max-w-lg rounded-[40px] md:rounded-[48px] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden"
               onClick={(e) => e.stopPropagation()}
             >
-              <div className="p-8 md:p-10 border-b border-slate-50 flex justify-between items-center shrink-0">
-                <h3 className="text-xl md:text-2xl font-black">
-                  Unduh Laporan Keuangan
-                </h3>
+              <div className="p-6 md:p-8 border-b border-slate-100 flex justify-between items-center shrink-0">
+                <div>
+                  <h3 className="text-xl md:text-2xl font-black text-slate-900 tracking-tight">
+                    Unduh Data & Laporan Keuangan
+                  </h3>
+                  <p className="text-xs text-slate-500 font-medium mt-1">
+                    Unduh data Catatan Global ke format file CSV / Excel dan PDF
+                  </p>
+                </div>
                 <button
                   onClick={() => setShowExportModal(false)}
-                  className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center hover:bg-slate-100 transition-all"
+                  className="w-10 h-10 bg-slate-50 rounded-xl flex items-center justify-center hover:bg-slate-100 transition-all text-slate-600 cursor-pointer"
                 >
                   <X size={20} />
                 </button>
               </div>
 
-              <div className="p-8 md:p-10 space-y-6 overflow-y-auto flex-1 min-h-0">
-                <p className="text-sm font-medium text-slate-500">
-                  Pilih rentang waktu Laporan yang ingin Anda unduh dalam format
-                  PDF.
-                </p>
+              <div className="p-6 md:p-8 space-y-6 overflow-y-auto flex-1 min-h-0">
+                {/* 1. SUMBER DATA TRANSAKSI */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                      Pilih Sumber Data Transaksi
+                    </h4>
+                    <span className="text-[10px] font-bold text-slate-500">
+                      Total Arsip: {financialRecords.length}
+                    </span>
+                  </div>
 
-                <div className="grid grid-cols-3 gap-2 sm:gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExportPeriodType("weekly");
-                      const today = new Date();
-                      const sevenDaysAgo = new Date();
-                      sevenDaysAgo.setDate(today.getDate() - 7);
-                      setExportRange({
-                        start: sevenDaysAgo.toISOString().split("T")[0],
-                        end: today.toISOString().split("T")[0],
-                      });
-                    }}
-                    className={`p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl border-2 transition-all text-left group flex flex-col justify-between ${
-                      exportPeriodType === "weekly"
-                        ? "border-primary bg-primary/5 shadow-xs"
-                        : "border-slate-100 hover:border-slate-300 bg-slate-50/40"
-                    }`}
-                  >
-                    <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center mb-2 sm:mb-3 transition-all ${
-                      exportPeriodType === "weekly"
-                        ? "bg-primary text-white"
-                        : "bg-white text-slate-500 border border-slate-200"
-                    }`}>
-                      <Calendar size={18} />
-                    </div>
-                    <div>
-                      <h4 className="font-black text-slate-900 text-xs sm:text-sm leading-none mb-1">
-                        Mingguan
-                      </h4>
-                      <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                        7 Hari Terakhir
-                      </p>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExportPeriodType("monthly");
-                      const lastDay = new Date(Number(exportYear), Number(exportMonth) + 1, 0).getDate();
-                      setExportRange({
-                        start: `${exportYear}-${String(Number(exportMonth) + 1).padStart(2, "0")}-01`,
-                        end: `${exportYear}-${String(Number(exportMonth) + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
-                      });
-                    }}
-                    className={`p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl border-2 transition-all text-left group flex flex-col justify-between ${
-                      exportPeriodType === "monthly"
-                        ? "border-primary bg-primary/5 shadow-xs"
-                        : "border-slate-100 hover:border-slate-300 bg-slate-50/40"
-                    }`}
-                  >
-                    <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center mb-2 sm:mb-3 transition-all ${
-                      exportPeriodType === "monthly"
-                        ? "bg-primary text-white"
-                        : "bg-white text-slate-500 border border-slate-200"
-                    }`}>
-                      <CalendarRange size={18} />
-                    </div>
-                    <div>
-                      <h4 className="font-black text-slate-900 text-xs sm:text-sm leading-none mb-1">
-                        Bulanan
-                      </h4>
-                      <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                        1 Bulan Penuh
-                      </p>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setExportPeriodType("all");
-                      let earliestDate = "2026-01-01";
-                      let latestDate = "2026-12-31";
-                      if (financialRecords.length > 0) {
-                        const dates = financialRecords
-                          .map((r) => normalizeRecordDate(r))
-                          .filter(Boolean);
-                        if (dates.length > 0) {
-                          dates.sort();
-                          earliestDate = dates[0];
-                          latestDate = dates[dates.length - 1];
-                        }
-                      }
-                      setExportRange({
-                        start: earliestDate,
-                        end: latestDate,
-                      });
-                    }}
-                    className={`p-3.5 sm:p-4 rounded-2xl sm:rounded-3xl border-2 transition-all text-left group flex flex-col justify-between ${
-                      exportPeriodType === "all"
-                        ? "border-primary bg-primary/5 shadow-xs"
-                        : "border-slate-100 hover:border-slate-300 bg-slate-50/40"
-                    }`}
-                  >
-                    <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center mb-2 sm:mb-3 transition-all ${
-                      exportPeriodType === "all"
-                        ? "bg-primary text-white"
-                        : "bg-white text-slate-500 border border-slate-200"
-                    }`}>
-                      <Layers size={18} />
-                    </div>
-                    <div>
-                      <h4 className="font-black text-slate-900 text-xs sm:text-sm leading-none mb-1">
-                        Keseluruhan
-                      </h4>
-                      <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-wider">
-                        Semua Catatan Global
-                      </p>
-                    </div>
-                  </button>
-                </div>
-
-                {exportPeriodType === "monthly" && (
-                  <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                        Pilih Bulan Laporan
-                      </label>
-                      <span className="text-[9px] font-extrabold text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">
-                        {MONTHS_ID[exportMonth]} {exportYear}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">
-                          Bulan
-                        </label>
-                        <select
-                          value={exportMonth}
-                          onChange={(e) => {
-                            const m = parseInt(e.target.value);
-                            setExportMonth(m);
-                            const lastDay = new Date(Number(exportYear), m + 1, 0).getDate();
-                            setExportRange({
-                              start: `${exportYear}-${String(m + 1).padStart(2, "0")}-01`,
-                              end: `${exportYear}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
-                            });
-                          }}
-                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-primary shadow-xs"
-                        >
-                          {MONTHS_ID.map((name, idx) => (
-                            <option key={idx} value={idx}>
-                              {name}
-                            </option>
-                          ))}
-                        </select>
+                  <div className="grid grid-cols-3 gap-2 sm:gap-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExportScope("ALL");
+                        setExportPeriodType("all");
+                        setExportFlowType("ALL");
+                        setExportSelectedCategories(["ALL"]);
+                        setExportFilterProject("ALL");
+                      }}
+                      className={`p-3 sm:p-3.5 rounded-2xl border-2 transition-all text-left flex flex-col justify-between cursor-pointer ${
+                        exportScope === "ALL"
+                          ? "border-primary bg-primary/5 text-primary shadow-xs ring-2 ring-primary/20"
+                          : "border-slate-100 hover:border-slate-300 text-slate-700 bg-slate-50/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <Layers size={18} className={exportScope === "ALL" ? "text-primary" : "text-slate-400"} />
+                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-slate-200/60 text-slate-600">
+                          {financialRecords.length}
+                        </span>
                       </div>
                       <div>
-                        <label className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mb-1 block">
-                          Tahun
-                        </label>
-                        <select
-                          value={exportYear}
-                          onChange={(e) => {
-                            const y = parseInt(e.target.value);
-                            setExportYear(y);
-                            const lastDay = new Date(y, Number(exportMonth) + 1, 0).getDate();
+                        <h5 className="font-black text-xs leading-none mb-1">Catatan Global</h5>
+                        <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-tight">Semua Transaksi</p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExportScope("CURRENT_FILTER");
+                      }}
+                      className={`p-3 sm:p-3.5 rounded-2xl border-2 transition-all text-left flex flex-col justify-between cursor-pointer ${
+                        exportScope === "CURRENT_FILTER"
+                          ? "border-primary bg-primary/5 text-primary shadow-xs ring-2 ring-primary/20"
+                          : "border-slate-100 hover:border-slate-300 text-slate-700 bg-slate-50/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <ArrowUpDown size={18} className={exportScope === "CURRENT_FILTER" ? "text-primary" : "text-slate-400"} />
+                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-slate-200/60 text-slate-600">
+                          {filteredRecords.length}
+                        </span>
+                      </div>
+                      <div>
+                        <h5 className="font-black text-xs leading-none mb-1">Filter Layar</h5>
+                        <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-tight">Tampilan Aktif</p>
+                      </div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setExportScope("CUSTOM");
+                      }}
+                      className={`p-3 sm:p-3.5 rounded-2xl border-2 transition-all text-left flex flex-col justify-between cursor-pointer ${
+                        exportScope === "CUSTOM"
+                          ? "border-primary bg-primary/5 text-primary shadow-xs ring-2 ring-primary/20"
+                          : "border-slate-100 hover:border-slate-300 text-slate-700 bg-slate-50/50"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <SlidersHorizontal size={18} className={exportScope === "CUSTOM" ? "text-primary" : "text-slate-400"} />
+                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-slate-200/60 text-slate-600">
+                          Opsi
+                        </span>
+                      </div>
+                      <div>
+                        <h5 className="font-black text-xs leading-none mb-1">Filter Kustom</h5>
+                        <p className="text-[8px] sm:text-[9px] font-bold text-slate-400 uppercase tracking-tight">Atur Sendiri</p>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Banner Keterangan Scope */}
+                {exportScope === "ALL" && (
+                  <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-2.5 text-emerald-900 text-xs">
+                    <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                    <span>
+                      <strong>Catatan Global Keseluruhan:</strong> Mengunduh seluruh {financialRecords.length} transaksi secara lengkap tanpa terpotong. Urutan data dan kolom identik dengan tabel Catatan Global.
+                    </span>
+                  </div>
+                )}
+
+                {exportScope === "CURRENT_FILTER" && (
+                  <div className="p-3.5 bg-indigo-50 border border-indigo-200 rounded-2xl flex items-center gap-2.5 text-indigo-950 text-xs">
+                    <CheckCircle2 size={16} className="text-indigo-600 shrink-0" />
+                    <span>
+                      <strong>Filter Tampilan Aktif:</strong> Mengunduh {filteredRecords.length} transaksi sesuai dengan filter yang sedang Anda lihat di tabel (pencarian: <em>{searchQuery || "Semua"}</em>, kategori: <em>{filterCategory}</em>, waktu: <em>{filterTimeRange}</em>).
+                    </span>
+                  </div>
+                )}
+
+                {/* PENGATURAN FILTER KUSTOM (Hanya tampil jika exportScope === 'CUSTOM') */}
+                {exportScope === "CUSTOM" && (
+                  <div className="space-y-5 pt-3 border-t border-slate-100">
+                    <div>
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-2.5">
+                        1. Rentang Waktu
+                      </h4>
+                      <div className="grid grid-cols-3 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExportPeriodType("weekly");
+                            const today = new Date();
+                            const sevenDaysAgo = new Date();
+                            sevenDaysAgo.setDate(today.getDate() - 7);
                             setExportRange({
-                              start: `${y}-${String(Number(exportMonth) + 1).padStart(2, "0")}-01`,
-                              end: `${y}-${String(Number(exportMonth) + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+                              start: sevenDaysAgo.toISOString().split("T")[0],
+                              end: today.toISOString().split("T")[0],
                             });
                           }}
-                          className="w-full px-3.5 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-primary shadow-xs"
+                          className={`p-3 rounded-2xl border-2 transition-all text-left flex flex-col justify-between cursor-pointer ${
+                            exportPeriodType === "weekly"
+                              ? "border-primary bg-primary/5 text-primary shadow-xs"
+                              : "border-slate-100 hover:border-slate-300 text-slate-700 bg-slate-50/40"
+                          }`}
                         >
-                          {[2024, 2025, 2026, 2027].map((y) => (
-                            <option key={y} value={y}>
-                              {y}
-                            </option>
-                          ))}
-                        </select>
+                          <Calendar size={16} className="mb-1 text-slate-500" />
+                          <div>
+                            <h5 className="font-black text-xs leading-none mb-0.5">Mingguan</h5>
+                            <p className="text-[8px] font-bold text-slate-400 uppercase">7 Hari</p>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExportPeriodType("monthly");
+                            const lastDay = new Date(Number(exportYear), Number(exportMonth) + 1, 0).getDate();
+                            setExportRange({
+                              start: `${exportYear}-${String(Number(exportMonth) + 1).padStart(2, "0")}-01`,
+                              end: `${exportYear}-${String(Number(exportMonth) + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+                            });
+                          }}
+                          className={`p-3 rounded-2xl border-2 transition-all text-left flex flex-col justify-between cursor-pointer ${
+                            exportPeriodType === "monthly"
+                              ? "border-primary bg-primary/5 text-primary shadow-xs"
+                              : "border-slate-100 hover:border-slate-300 text-slate-700 bg-slate-50/40"
+                          }`}
+                        >
+                          <CalendarRange size={16} className="mb-1 text-slate-500" />
+                          <div>
+                            <h5 className="font-black text-xs leading-none mb-0.5">Bulanan</h5>
+                            <p className="text-[8px] font-bold text-slate-400 uppercase">1 Bulan Penuh</p>
+                          </div>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExportPeriodType("all");
+                            let earliestDate = "2026-01-01";
+                            let latestDate = "2026-12-31";
+                            if (financialRecords.length > 0) {
+                              const dates = financialRecords
+                                .map((r) => normalizeRecordDate(r))
+                                .filter(Boolean);
+                              if (dates.length > 0) {
+                                dates.sort();
+                                earliestDate = dates[0];
+                                latestDate = dates[dates.length - 1];
+                              }
+                            }
+                            setExportRange({
+                              start: earliestDate,
+                              end: latestDate,
+                            });
+                          }}
+                          className={`p-3 rounded-2xl border-2 transition-all text-left flex flex-col justify-between cursor-pointer ${
+                            exportPeriodType === "all"
+                              ? "border-primary bg-primary/5 text-primary shadow-xs"
+                              : "border-slate-100 hover:border-slate-300 text-slate-700 bg-slate-50/40"
+                          }`}
+                        >
+                          <Layers size={16} className="mb-1 text-slate-500" />
+                          <div>
+                            <h5 className="font-black text-xs leading-none mb-0.5">Semua Waktu</h5>
+                            <p className="text-[8px] font-bold text-slate-400 uppercase">Seluruh Arsip</p>
+                          </div>
+                        </button>
+                      </div>
+
+                      {exportPeriodType === "monthly" && (
+                        <div className="mt-3 p-3.5 bg-slate-50 border border-slate-200/80 rounded-2xl space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                              Pilih Bulan Laporan
+                            </label>
+                            <span className="text-[9px] font-extrabold text-primary bg-primary/10 px-2.5 py-0.5 rounded-full">
+                              {MONTHS_ID[exportMonth]} {exportYear}
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2.5">
+                            <div>
+                              <select
+                                value={exportMonth}
+                                onChange={(e) => {
+                                  const m = parseInt(e.target.value);
+                                  setExportMonth(m);
+                                  const lastDay = new Date(Number(exportYear), m + 1, 0).getDate();
+                                  setExportRange({
+                                    start: `${exportYear}-${String(m + 1).padStart(2, "0")}-01`,
+                                    end: `${exportYear}-${String(m + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+                                  });
+                                }}
+                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
+                              >
+                                {MONTHS_ID.map((name, idx) => (
+                                  <option key={idx} value={idx}>
+                                    {name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <select
+                                value={exportYear}
+                                onChange={(e) => {
+                                  const y = parseInt(e.target.value);
+                                  setExportYear(y);
+                                  const lastDay = new Date(y, Number(exportMonth) + 1, 0).getDate();
+                                  setExportRange({
+                                    start: `${y}-${String(Number(exportMonth) + 1).padStart(2, "0")}-01`,
+                                    end: `${y}-${String(Number(exportMonth) + 1).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}`,
+                                  });
+                                }}
+                                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
+                              >
+                                {[2024, 2025, 2026, 2027].map((y) => (
+                                  <option key={y} value={y}>
+                                    {y}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Input Kustom Tanggal */}
+                      <div className="grid grid-cols-2 gap-2.5 mt-3">
+                        <div>
+                          <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1 block mb-1">
+                            Dari Tanggal
+                          </label>
+                          <input
+                            type="date"
+                            value={exportRange.start}
+                            onChange={(e) => {
+                              setExportPeriodType("custom");
+                              setExportRange({
+                                ...exportRange,
+                                start: e.target.value,
+                              });
+                            }}
+                            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-primary"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1 block mb-1">
+                            Sampai Tanggal
+                          </label>
+                          <input
+                            type="date"
+                            value={exportRange.end}
+                            onChange={(e) => {
+                              setExportPeriodType("custom");
+                              setExportRange({
+                                ...exportRange,
+                                end: e.target.value,
+                              });
+                            }}
+                            className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold outline-none focus:border-primary"
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tipe Arus Kas */}
+                    <div className="space-y-2">
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
+                        2. Tipe Arus Kas
+                      </h4>
+                      <div className="grid grid-cols-2 gap-2">
+                        {[
+                          { id: "ALL", label: "Semua Mutasi Kas", desc: "Pemasukan & Pengeluaran", fullWidth: true },
+                          { id: "IN", label: "Pemasukan Kas PT", desc: "Termin & Inflow" },
+                          { id: "OUT_BANK_DIRECT", label: "Pengeluaran Bank PT", desc: "Direct Outflow Bank PT" },
+                          { id: "PERSONAL", label: "Personal / Kasbon", desc: "Kasbon & Talangan Lapangan" },
+                          { id: "OUT", label: "Semua Pengeluaran", desc: "Bank & Lapangan" },
+                        ].map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => setExportFlowType(item.id as any)}
+                            className={`p-2.5 rounded-xl border-2 transition-all text-left flex flex-col justify-between cursor-pointer ${
+                              exportFlowType === item.id
+                                ? "border-primary bg-primary/5 text-primary shadow-xs ring-2 ring-primary/20"
+                                : "border-slate-100 hover:border-slate-300 text-slate-700 bg-slate-50/50"
+                            } ${item.fullWidth ? "col-span-2" : ""}`}
+                          >
+                            <span className="font-extrabold text-xs">{item.label}</span>
+                            <span className="text-[9px] font-semibold text-slate-400 mt-0.5">{item.desc}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Filter Proyek */}
+                    <div className="space-y-1.5">
+                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
+                        3. Filter Proyek
+                      </h4>
+                      <select
+                        value={exportFilterProject}
+                        onChange={(e) => setExportFilterProject(e.target.value)}
+                        className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
+                      >
+                        <option value="ALL">Semua Proyek (Global)</option>
+                        {projects.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Category Checklist */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
+                          4. Filter Kategori
+                        </h4>
+                        <span className="text-[9px] font-bold text-slate-500">
+                          {isAllCategoriesSelected ? "Semua Kategori" : `${exportSelectedCategories.length} Kategori`}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1 items-center">
+                        <button
+                          type="button"
+                          onClick={toggleAllCategoriesSelection}
+                          className={`px-2.5 py-1 rounded-lg text-[9px] font-extrabold transition-all ${
+                            isAllCategoriesSelected
+                              ? "bg-slate-900 text-white"
+                              : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                          }`}
+                        >
+                          SEMUA
+                        </button>
+                        <button
+                          type="button"
+                          onClick={selectOnlyPattycash}
+                          className="px-2.5 py-1 rounded-lg text-[9px] font-extrabold bg-amber-50 text-amber-900 border border-amber-200"
+                        >
+                          PATTYCASH
+                        </button>
+                        <button
+                          type="button"
+                          onClick={selectOnlyOperasional}
+                          className="px-2.5 py-1 rounded-lg text-[9px] font-extrabold bg-blue-50 text-blue-900 border border-blue-200"
+                        >
+                          OPERASIONAL
+                        </button>
+                        <button
+                          type="button"
+                          onClick={selectOnlyGajiKasbon}
+                          className="px-2.5 py-1 rounded-lg text-[9px] font-extrabold bg-emerald-50 text-emerald-900 border border-emerald-200"
+                        >
+                          GAJI & KASBON
+                        </button>
                       </div>
                     </div>
                   </div>
                 )}
 
-                <div className="space-y-3 pt-2 border-t border-slate-100">
-                  <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
-                    Pilih Tipe Arus Kas
-                  </h4>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    {[
-                      { id: "OUT", label: "Semua Catatan Pengeluaran (Default)", desc: "Bank PT (BNK) & Lapangan/Talangan (PRS)", fullWidth: true },
-                      { id: "OUT_BANK_DIRECT", label: "Khusus Rekening Bank PT", desc: "Hanya Pengeluaran Bank (BNK)" },
-                      { id: "PERSONAL", label: "Khusus Lapangan / Pribadi", desc: "Kasbon & Talangan (PRS)" },
-                      { id: "IN", label: "Arus Kas Pemasukan", desc: "Pemasukan Termin & Inflow" },
-                      { id: "ALL", label: "Semua Mutasi Kas", desc: "Pemasukan & Pengeluaran" },
-                    ].map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => setExportFlowType(item.id as any)}
-                        className={`p-3.5 rounded-2xl border-2 transition-all text-left flex flex-col justify-between ${
-                          exportFlowType === item.id
-                            ? "border-primary bg-primary/5 text-primary shadow-sm ring-2 ring-primary/20"
-                            : "border-slate-100 hover:border-slate-300 text-slate-700 bg-slate-50/50"
-                        } ${item.fullWidth ? "col-span-2" : ""}`}
-                      >
-                        <span className="font-extrabold text-xs leading-snug">{item.label}</span>
-                        <span className="text-[9px] font-semibold text-slate-400 mt-1">{item.desc}</span>
-                      </button>
-                    ))}
+                {/* Urutan Transaksi */}
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                    Urutan Tanggal
+                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setExportSortOrder("DESC")}
+                      className={`px-3 py-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer ${
+                        exportSortOrder === "DESC"
+                          ? "bg-slate-900 text-white shadow-xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      Terbaru ke Terlama
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportSortOrder("ASC")}
+                      className={`px-3 py-1 rounded-xl text-[10px] font-extrabold transition-all cursor-pointer ${
+                        exportSortOrder === "ASC"
+                          ? "bg-slate-900 text-white shadow-xs"
+                          : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                      }`}
+                    >
+                      Terlama ke Terbaru
+                    </button>
                   </div>
                 </div>
 
-                {/* Category Checklist Filter */}
-                <div className="space-y-3 pt-2 border-t border-slate-100">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
-                        Filter Kategori Transaksi
-                      </h4>
-                      <p className="text-[10px] text-slate-500 font-medium">
-                        Centang kategori yang ingin diikutsertakan dalam laporan
-                      </p>
-                    </div>
-                    <span
-                      className={`text-[9px] font-black px-2.5 py-1 rounded-full ${
-                        isAllCategoriesSelected
-                          ? "bg-primary/10 text-primary border border-primary/20"
-                          : exportSelectedCategories.length === 0
-                          ? "bg-rose-50 text-rose-600 border border-rose-200"
-                          : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                      }`}
-                    >
-                      {isAllCategoriesSelected
-                        ? "Semua Kategori Aktif"
-                        : exportSelectedCategories.length === 0
-                        ? "0 Kategori Terpilih"
-                        : `${exportSelectedCategories.length} Kategori Terpilih`}
-                    </span>
-                  </div>
-
-                  {/* Quick Preset Buttons */}
-                  <div className="flex flex-wrap gap-1.5 items-center">
-                    <button
-                      type="button"
-                      onClick={toggleAllCategoriesSelection}
-                      className={`px-3 py-1.5 rounded-xl text-[10px] font-extrabold transition-all flex items-center gap-1.5 ${
-                        isAllCategoriesSelected
-                          ? "bg-slate-900 text-white shadow-xs"
-                          : "bg-slate-100 hover:bg-slate-200 text-slate-700"
-                      }`}
-                    >
-                      <CheckSquare size={13} />
-                      SEMUA
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={selectOnlyPattycash}
-                      className="px-3 py-1.5 rounded-xl text-[10px] font-extrabold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200/80 transition-all flex items-center gap-1.5"
-                    >
-                      <Layers size={13} className="text-amber-700" />
-                      PATTYCASH
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={selectOnlyOperasional}
-                      className="px-3 py-1.5 rounded-xl text-[10px] font-extrabold bg-blue-50 hover:bg-blue-100 text-blue-900 border border-blue-200/80 transition-all flex items-center gap-1.5"
-                    >
-                      <Building size={13} className="text-blue-700" />
-                      OPERASIONAL
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={selectOnlyBelanja}
-                      className="px-3 py-1.5 rounded-xl text-[10px] font-extrabold bg-purple-50 hover:bg-purple-100 text-purple-900 border border-purple-200/80 transition-all flex items-center gap-1.5"
-                    >
-                      <Package size={13} className="text-purple-700" />
-                      BELANJA
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={selectOnlyGajiKasbon}
-                      className="px-3 py-1.5 rounded-xl text-[10px] font-extrabold bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200/80 transition-all flex items-center gap-1.5"
-                    >
-                      <CreditCard size={13} className="text-emerald-700" />
-                      GAJI & KASBON
-                    </button>
-
-                    {exportSelectedCategories.length > 0 && !isAllCategoriesSelected && (
-                      <button
-                        type="button"
-                        onClick={() => setExportSelectedCategories(["ALL"])}
-                        className="px-2.5 py-1.5 rounded-xl text-[10px] font-bold text-slate-400 hover:text-slate-600 transition-all"
-                      >
-                        Reset
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Category Search Input */}
-                  <div className="relative">
-                    <Search
-                      size={13}
-                      className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-                    />
-                    <input
-                      type="text"
-                      placeholder="Cari kategori transaksi..."
-                      value={exportCategorySearch}
-                      onChange={(e) => setExportCategorySearch(e.target.value)}
-                      className="w-full pl-9 pr-8 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[11px] font-medium outline-none focus:border-primary transition-all"
-                    />
-                    {exportCategorySearch && (
-                      <button
-                        type="button"
-                        onClick={() => setExportCategorySearch("")}
-                        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5"
-                      >
-                        <X size={13} />
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Scrollable Categories Checklist Grid */}
-                  <div className="max-h-44 overflow-y-auto p-2 bg-slate-50/70 border border-slate-200/80 rounded-2xl space-y-1.5">
-                    {/* Master "PILIH SEMUA" item */}
-                    <div
-                      onClick={toggleAllCategoriesSelection}
-                      className={`flex items-center justify-between p-2 rounded-xl cursor-pointer transition-all border ${
-                        isAllCategoriesSelected
-                          ? "bg-primary/10 border-primary/30 text-primary font-bold shadow-2xs"
-                          : "bg-white border-slate-200/70 hover:border-slate-300 text-slate-700 font-semibold"
-                      }`}
-                    >
-                      <div className="flex items-center gap-2.5">
-                        <input
-                          type="checkbox"
-                          checked={isAllCategoriesSelected}
-                          onChange={toggleAllCategoriesSelection}
-                          className="w-4 h-4 rounded text-primary accent-primary cursor-pointer"
-                        />
-                        <span className="text-[11px] uppercase tracking-wide">
-                          SEMUA KATEGORI ({recordedFinancialCategories.length})
+                {/* LIVE SUMMARY PREVIEW */}
+                {(() => {
+                  const targetList = getTargetExportRecords();
+                  const count = targetList.length;
+                  const inc = targetList.filter((r) => r.type === "IN").reduce((s, r) => s + r.amount, 0);
+                  const exp = targetList.filter((r) => r.type === "OUT").reduce((s, r) => s + r.amount + (r.adminFee || 0), 0);
+                  const net = inc - exp;
+                  return (
+                    <div className="p-4 bg-slate-900 text-white rounded-3xl shadow-sm space-y-2.5">
+                      <div className="flex items-center justify-between text-xs font-bold border-b border-slate-800 pb-2">
+                        <span className="text-slate-400 uppercase tracking-widest text-[10px]">Ringkasan Data yang Siap Diunduh</span>
+                        <span className="font-mono text-emerald-400 bg-emerald-950/80 px-2.5 py-0.5 rounded-full border border-emerald-800 text-[10px] font-bold">
+                          {count} Transaksi
                         </span>
                       </div>
-                      <span className="text-[9px] font-extrabold px-2 py-0.5 rounded-md bg-slate-200/60 text-slate-600">
-                        Pilih Semua
-                      </span>
-                    </div>
-
-                    {/* Filtered category items */}
-                    {recordedFinancialCategories
-                      .filter((c) =>
-                        exportCategorySearch.trim() === ""
-                          ? true
-                          : c.name.toLowerCase().includes(exportCategorySearch.trim().toLowerCase())
-                      )
-                      .map((item) => {
-                        const selected = isCategorySelected(item.name);
-                        return (
-                          <div
-                            key={item.name}
-                            onClick={() => toggleCategorySelection(item.name)}
-                            className={`flex items-center justify-between p-2 rounded-xl cursor-pointer transition-all border ${
-                              selected
-                                ? "bg-white border-primary/40 text-slate-900 shadow-2xs"
-                                : "bg-white/70 border-slate-200/60 opacity-60 hover:opacity-100 hover:border-slate-300 text-slate-500"
-                            }`}
-                          >
-                            <div className="flex items-center gap-2.5 min-w-0 pr-2">
-                              <input
-                                type="checkbox"
-                                checked={selected}
-                                onChange={() => toggleCategorySelection(item.name)}
-                                className="w-4 h-4 rounded text-primary accent-primary cursor-pointer shrink-0"
-                              />
-                              <span className="text-[11px] font-bold truncate">
-                                {item.name}
-                              </span>
-                            </div>
-                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 shrink-0">
-                              {item.count} trx
-                            </span>
+                      <div className="grid grid-cols-3 gap-2 pt-1 text-center font-mono">
+                        <div>
+                          <div className="text-[9px] text-slate-400 uppercase tracking-wider">Pemasukan</div>
+                          <div className="text-emerald-400 text-xs font-black truncate">Rp {inc.toLocaleString("id-ID")}</div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] text-slate-400 uppercase tracking-wider">Pengeluaran</div>
+                          <div className="text-rose-400 text-xs font-black truncate">Rp {exp.toLocaleString("id-ID")}</div>
+                        </div>
+                        <div>
+                          <div className="text-[9px] text-slate-400 uppercase tracking-wider">Sisa Saldo</div>
+                          <div className={`text-xs font-black truncate ${net >= 0 ? "text-cyan-300" : "text-amber-400"}`}>
+                            Rp {net.toLocaleString("id-ID")}
                           </div>
-                        );
-                      })}
-                  </div>
-                </div>
-
-                <div className="space-y-4 pt-4 border-t border-slate-100">
-                  <div className="flex items-center justify-between">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">
-                      Atau Pilih Tanggal Kustom
-                    </h4>
-                    {isCustomOneMonth && (
-                      <span className="text-[9px] font-extrabold text-emerald-700 bg-emerald-100 px-2 py-0.5 rounded-full">
-                        ✓ Terdeteksi 1 Bulan
-                      </span>
-                    )}
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                        Dari Tanggal
-                      </label>
-                      <input
-                        type="date"
-                        value={exportRange.start}
-                        onChange={(e) => {
-                          setExportPeriodType("custom");
-                          setExportRange({
-                            ...exportRange,
-                            start: e.target.value,
-                          });
-                        }}
-                        className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-primary transition-all"
-                      />
+                        </div>
+                      </div>
                     </div>
-                    <div className="space-y-2">
-                      <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest ml-1">
-                        Hingga Tanggal
-                      </label>
-                      <input
-                        type="date"
-                        value={exportRange.end}
-                        onChange={(e) => {
-                          setExportPeriodType("custom");
-                          setExportRange({
-                            ...exportRange,
-                            end: e.target.value,
-                          });
-                        }}
-                        className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none focus:border-primary transition-all"
-                      />
-                    </div>
-                  </div>
-                  {isCustomOneMonth && (
-                    <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-2xl text-emerald-800 text-[11px] font-bold leading-tight">
-                      <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                      <span>Rentang tanggal terdeteksi 1 bulan penuh. PDF akan direkapitulasi secara otomatis khusus untuk 1 bulan ini saja tanpa menggabungkan bulan lain.</span>
-                    </div>
-                  )}
-                </div>
+                  );
+                })()}
               </div>
 
               <div className="p-6 md:p-8 bg-slate-50 border-t border-slate-100 shrink-0 flex flex-col sm:flex-row items-center gap-3">
                 <button
                   type="button"
-                  onClick={exportTransactionsToCSV}
-                  className="w-full sm:flex-1 py-3.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xs flex items-center justify-center gap-2 active:scale-95 transition-all"
+                  onClick={() => exportTransactionsToCSV()}
+                  className="w-full sm:flex-1 py-3.5 bg-white hover:bg-slate-100 border border-slate-200 text-slate-800 rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xs flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
                 >
                   <FileSpreadsheet size={15} className="text-emerald-600 shrink-0" /> Unduh CSV / Excel
                 </button>
                 <button
                   type="button"
-                  onClick={generateFinancialPDF}
-                  className="w-full sm:flex-1 py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center justify-center gap-2 active:scale-95 transition-all"
+                  onClick={() => generateFinancialPDF()}
+                  className="w-full sm:flex-1 py-3.5 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-xl flex items-center justify-center gap-2 active:scale-95 transition-all cursor-pointer"
                 >
                   <Download size={15} className="shrink-0" /> Generate & Unduh PDF
                 </button>
@@ -49989,22 +49845,38 @@ export default function App() {
             onNavigate={navigate}
             roles={roles}
           >
-            <div className="max-w-3xl mx-auto space-y-8">
+            <div className="max-w-5xl mx-auto space-y-8 pb-16">
               <div>
                 <h1 className="text-3xl font-black text-slate-900 tracking-tight">
-                  Pengaturan Sistem
+                  Pengaturan Sistem &amp; Pusat Data
                 </h1>
                 <p className="text-slate-500 font-medium text-sm mt-1">
-                  Konfigurasi parameter global operasional perusahaan.
+                  Pencadangan database perusahaan, ekspor dokumen, dan kebijakan operasional global.
                 </p>
               </div>
+
+              {/* Pusat Backup & Unduh Seluruh Data (.XLSX Multi-Sheet & CSV) */}
+              <AdminSystemBackupManager
+                projects={projects}
+                financialRecords={financialRecords}
+                debtRecords={debtRecords}
+                invoices={invoices}
+                suratJalanList={suratJalanList}
+                employees={employees}
+                assets={assets}
+                tasks={tasks}
+                quotations={quotations}
+                currentUser={currentUser}
+                setToastMessage={setToastMessage}
+                setShowToast={setShowToast}
+              />
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
                 {/* Kebijakan Keamanan */}
                 <div className="bg-white rounded-[40px] border border-slate-100 shadow-sm p-8 flex flex-col justify-between">
                   <div>
                     <h3 className="font-black text-lg text-slate-900 mb-6 flex items-center gap-3">
-                      <ShieldCheck className="text-primary" /> Kebijakan Keamanan
+                      <ShieldCheck className="text-primary" /> Kebijakan Keamanan Operasional
                     </h3>
                     <div className="space-y-6">
                       <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl">
@@ -50013,7 +49885,7 @@ export default function App() {
                             Verifikasi Wajah (AI)
                           </p>
                           <p className="text-[10px] text-slate-500 font-medium">
-                            Wajibkan selfie saat absensi masuk & pulang.
+                            Wajibkan selfie saat absensi masuk &amp; pulang.
                           </p>
                         </div>
                         <div className="w-12 h-6 bg-primary rounded-full relative">
@@ -50037,34 +49909,39 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Backup & Data */}
-                <div className="bg-white rounded-[40px] border border-slate-100 shadow-sm p-8 flex flex-col justify-between min-h-[280px]">
+                {/* Sesi & Informasi Keamanan Akun */}
+                <div className="bg-white rounded-[40px] border border-slate-100 shadow-sm p-8 flex flex-col justify-between">
                   <div>
-                    <h3 className="font-black text-lg text-slate-900 mb-2">
-                      Backup & Data
+                    <h3 className="font-black text-lg text-slate-900 mb-4 flex items-center gap-3">
+                      <Users className="text-primary" /> Sesi &amp; Informasi Pengguna
                     </h3>
-                    <p className="text-xs text-slate-400 font-medium mb-6">
-                      Unduh dan amankan data laporan keuangan serta daftar transaksi untuk arsip eksternal Anda.
-                    </p>
-                  </div>
-                  <button className="w-full p-6 bg-slate-50 hover:bg-slate-100 rounded-3xl border border-slate-100 transition-all flex flex-col items-center justify-center gap-3 group">
-                    <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center text-primary shadow-sm group-hover:scale-110 transition-transform">
-                      <CloudUpload size={24} />
+                    <div className="space-y-3 bg-slate-50 p-4 rounded-2xl border border-slate-100 text-xs">
+                      <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                        <span className="text-slate-400 font-bold uppercase text-[10px]">Pengguna Aktif</span>
+                        <span className="font-black text-slate-800">{currentUser?.name || "Admin"}</span>
+                      </div>
+                      <div className="flex justify-between items-center py-1 border-b border-slate-200/60">
+                        <span className="text-slate-400 font-bold uppercase text-[10px]">Tingkat Akses (Role)</span>
+                        <span className="font-black text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 uppercase text-[10px]">
+                          {currentUser?.role || "Admin"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center py-1">
+                        <span className="text-slate-400 font-bold uppercase text-[10px]">Basis Keamanan Data</span>
+                        <span className="font-bold text-slate-600">Enterprise Cloud Firestore</span>
+                      </div>
                     </div>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">
-                      Ekspor Semua Data
-                    </span>
+                  </div>
+
+                  {/* Logout Button */}
+                  <button
+                    onClick={() => setIsLogoutModalOpen(true)}
+                    className="w-full mt-6 py-4 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-2xl font-black text-xs uppercase tracking-widest border border-rose-100 transition-all shadow-xs cursor-pointer"
+                  >
+                    Logout Keamanan Sistem
                   </button>
                 </div>
               </div>
-
-              {/* Logout Button */}
-              <button
-                onClick={() => setIsLogoutModalOpen(true)}
-                className="w-full py-6 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-[32px] font-black text-xs uppercase tracking-[0.4em] border border-rose-100 transition-all shadow-sm"
-              >
-                Logout Keamanan Sistem
-              </button>
             </div>
           </AdminLayout>
         );

@@ -186,8 +186,9 @@ export function calculateKasbonBalances(
     // Exclude salary payments that merely deducted kasbon
     const isSalary = cat.includes("GAJI") || desc.includes("GAJI") || desc.includes("PAYROLL");
 
-    // Filter starting from 10 Agustus 2026
-    const isRecent = isDateOnOrAfter(r.date, KASBON_REKAP_START_DATE);
+    // Include user-created records or explicitly inputted kasbon regardless of date (mencegah bug kasbon tanggal lalu tidak muncul)
+    const isUserRecord = Boolean(r.isUserCreated || r.isManualUserCreated || (r as any).isUserEdited || (r as any).isKasbon || Boolean(r.penerimaKasbon));
+    const isRecent = isUserRecord || isDateOnOrAfter(r.date, KASBON_REKAP_START_DATE);
 
     if (isKasbon && !isSalary && isRecent) {
       if ((r.id && seenIds.has(r.id)) || (r.customId && seenIds.has(r.customId))) {
@@ -252,7 +253,8 @@ export function calculateKasbonBalances(
       (d as any).isKasbon;
 
     const debtDate = d.dueDate || (d.timestamp ? new Date(d.timestamp).toISOString().split("T")[0] : "");
-    const isRecent = isDateOnOrAfter(debtDate, KASBON_REKAP_START_DATE);
+    const isUserDebt = Boolean((d as any).isUserCreated || (d as any).isUserEdited || (d as any).isManualUserCreated || (d as any).isKasbon);
+    const isRecent = isUserDebt || isDateOnOrAfter(debtDate, KASBON_REKAP_START_DATE);
 
     if (
       isKasbonDebt &&
@@ -280,9 +282,10 @@ export function calculateKasbonBalances(
     }
   });
 
-  // 2. Gather all Repayments & Salary Deductions (Only records from 13 Agustus 2026 onwards)
+  // 2. Gather all Repayments & Salary Deductions (Allow user-created records regardless of date)
   (financialRecords || []).forEach((r) => {
-    const isRecent = isDateOnOrAfter(r.date, KASBON_REKAP_START_DATE);
+    const isUserRec = Boolean(r.isUserCreated || r.isManualUserCreated || (r as any).isUserEdited);
+    const isRecent = isUserRec || isDateOnOrAfter(r.date, KASBON_REKAP_START_DATE);
     if (!isRecent) return;
 
     const cat = (r.category || "").toUpperCase();
