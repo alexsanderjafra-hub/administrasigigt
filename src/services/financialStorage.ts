@@ -458,3 +458,57 @@ export const removeActiveUserTransaction = (idOrCustomId: string): void => {
     }
   } catch (_) {}
 };
+
+const LIVE_POST_BASELINE_IDS_KEY = "workflow_pro_live_post_baseline_ids_v4";
+let inMemoryLivePostBaselineIds: Set<string> | null = null;
+
+export const getLivePostBaselineIds = (): Set<string> => {
+  if (inMemoryLivePostBaselineIds) return inMemoryLivePostBaselineIds;
+  try {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(LIVE_POST_BASELINE_IDS_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          inMemoryLivePostBaselineIds = new Set(arr.map((k) => String(k).trim().toUpperCase()));
+          return inMemoryLivePostBaselineIds;
+        }
+      }
+    }
+  } catch (_) {}
+  inMemoryLivePostBaselineIds = new Set();
+  return inMemoryLivePostBaselineIds;
+};
+
+export const recordLivePostBaselineId = (idOrCustomId: string): void => {
+  if (!idOrCustomId) return;
+  const key = String(idOrCustomId).trim().toUpperCase();
+  if (!key) return;
+  try {
+    const set = getLivePostBaselineIds();
+    set.add(key);
+    safeSetLocalStorage(LIVE_POST_BASELINE_IDS_KEY, JSON.stringify(Array.from(set)));
+  } catch (err) {
+    console.warn("[FinancialStorage] Failed to record live post-baseline ID:", err);
+  }
+};
+
+export const removeLivePostBaselineId = (idOrCustomId: string): void => {
+  if (!idOrCustomId) return;
+  const key = String(idOrCustomId).trim().toUpperCase();
+  try {
+    const set = getLivePostBaselineIds();
+    set.delete(key);
+    safeSetLocalStorage(LIVE_POST_BASELINE_IDS_KEY, JSON.stringify(Array.from(set)));
+  } catch (_) {}
+};
+
+export const isLivePostBaselineTransaction = (r: any): boolean => {
+  if (!r) return false;
+  if (r.isLiveNewTransaction) return true;
+  const k1 = (r.customId || "").trim().toUpperCase();
+  const k2 = (r.id || "").trim().toUpperCase();
+  const set = getLivePostBaselineIds();
+  return Boolean((k1 && set.has(k1)) || (k2 && set.has(k2)));
+};
+

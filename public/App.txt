@@ -249,6 +249,9 @@ import {
   recordActiveUserTransaction,
   getActiveUserRecords,
   removeActiveUserTransaction,
+  recordLivePostBaselineId,
+  removeLivePostBaselineId,
+  isLivePostBaselineTransaction,
 } from "./services/financialStorage";
 
 export const isReimbursementOrDebtRepayment = (r: any) => {
@@ -18139,7 +18142,14 @@ const AdminFinanceScreen = ({
         )
         .reduce((acc, curr) => acc + curr.amount, 0);
     }
-    return OFFICIAL_BASE_INCOME;
+    let newIncomeDelta = 0;
+    financialRecords.forEach((r) => {
+      if (!isLivePostBaselineTransaction(r)) return;
+      if (r.type === "IN") {
+        newIncomeDelta += r.amount;
+      }
+    });
+    return OFFICIAL_BASE_INCOME + newIncomeDelta;
   }, [financialRecords, filterProject]);
 
   // 2. Total Pengeluaran Riil (Actual Cost: Belanja proyek/operasional langsung + belanja riil staf)
@@ -18155,7 +18165,14 @@ const AdminFinanceScreen = ({
         )
         .reduce((acc, curr) => acc + (curr.amount + (curr.adminFee || 0)), 0);
     }
-    return OFFICIAL_BASE_EXPENSE;
+    let newExpenseDelta = 0;
+    financialRecords.forEach((r) => {
+      if (!isLivePostBaselineTransaction(r)) return;
+      if (r.type === "OUT" && !isCustodyTransfer(r) && !isReimbursementOrDebtRepayment(r)) {
+        newExpenseDelta += (r.amount + (r.adminFee || 0));
+      }
+    });
+    return OFFICIAL_BASE_EXPENSE + newExpenseDelta;
   }, [financialRecords, filterProject, isCustodyTransfer]);
 
   // 3. Saldo Bank Utama PT (Main PT Account) - Mutasi masuk kas bank PT dikurangi mutasi keluar bank PT
@@ -18176,7 +18193,24 @@ const AdminFinanceScreen = ({
       return projIncome - projOutFromBank;
     }
 
-    return OFFICIAL_BASE_BANK;
+    let newBankDelta = 0;
+    financialRecords.forEach((r) => {
+      if (!isLivePostBaselineTransaction(r)) return;
+      if (r.type === "IN") {
+        newBankDelta += r.amount;
+      } else if (r.type === "OUT") {
+        const s = (r.sumberDana || "").toUpperCase();
+        const isPersonal = r.flowType === "PERSONAL_TALANGAN_REIMBURSE" || s.includes("PRIBADI") || s.includes("NON-PT");
+        const isPattySpend = r.flowType === "OUT_PERSONAL_SPEND" || s.includes("PATTY") || s === "DANA PATTYCASH";
+        
+        // Outflow from bank PT: direct PT spending or transfer to patty cash/staff
+        if (!isPersonal && !isPattySpend) {
+          newBankDelta -= (r.amount + (r.adminFee || 0));
+        }
+      }
+    });
+
+    return OFFICIAL_BASE_BANK + newBankDelta;
   }, [financialRecords, filterProject]);
 
   // Clean, sanitized detailed list of all Sisa Talangan / Petty Cash per Bank ID
@@ -18855,7 +18889,6 @@ const AdminFinanceScreen = ({
   }, [selectedPattyCashDetail, selectedPattyCashRecords, selectedPattyCashTotalSpent, projects]);
 
   // 4. Saldo yang Masih Berada di Tangan Personal (Petty Cash/Kasbon held by Staff)
-  // Menjumlahkan seluruh sisa talangan dari transaksi berkategori PATTYCASH di PENGELUARAN BANK PT DIRECT & transfer kasbon aktif
   const personalHoldBalance = useMemo(() => {
     if (filterProject !== "ALL") {
       const projTopups = financialRecords
@@ -18867,7 +18900,23 @@ const AdminFinanceScreen = ({
       return Math.max(0, projTopups - projSpends);
     }
 
-    return OFFICIAL_BASE_PERSONAL_HOLD;
+    let newHoldDelta = 0;
+    financialRecords.forEach((r) => {
+      if (!isLivePostBaselineTransaction(r)) return;
+      if (r.type === "OUT") {
+        const s = (r.sumberDana || "").toUpperCase();
+        const isPattySpend = r.flowType === "OUT_PERSONAL_SPEND" || s.includes("PATTY") || s === "DANA PATTYCASH";
+        const isTopup = r.flowType === "OUT_PERSONAL_TRANSFER" || isPattyCashCategory(r.category);
+
+        if (isPattySpend) {
+          newHoldDelta -= r.amount;
+        } else if (isTopup) {
+          newHoldDelta += r.amount;
+        }
+      }
+    });
+
+    return Math.max(0, OFFICIAL_BASE_PERSONAL_HOLD + newHoldDelta);
   }, [filterProject, financialRecords, isPattyCashCategory]);
 
   const totalTransferKePribadiGlobal = useMemo(() => {
@@ -18879,13 +18928,8 @@ const AdminFinanceScreen = ({
   }, [talanganSummary]);
 
   // Consolidated Net Balance is the sum of Sisa Kas di Rekening PT (bankBalance) and Sisa Dana PT di Tangan (personalHoldBalance)
-  // Dikunci tepat Rp 23.605.154 saat filterProject === "ALL" sesuai patokan resmi Gambar 2 tanpa resiko flickering
-  const balance = useMemo(() => {
-    if (filterProject !== "ALL") {
-      return bankBalance + personalHoldBalance;
-    }
-    return OFFICIAL_BASE_BALANCE;
-  }, [filterProject, bankBalance, personalHoldBalance]);
+  // Tepat Rp 23.605.154 saat awal, dan terpotong secara live saat user menginput transaksi baru
+  const balance = bankBalance + personalHoldBalance;
 
   // Dynamic Holder Registry & Kasbon Balance Summary per employee/owner
   const personalHoldersSummary = useMemo(() => {
@@ -19164,6 +19208,11 @@ const AdminFinanceScreen = ({
         matchesTimeRange = r.timestamp >= firstDayOfThisMonth;
       }
 
+      // Pastikan transaksi baru yang diinput user selalu terlihat di tabel dan tidak hilang karena tanggal lampau
+      if (isLivePostBaselineTransaction(r)) {
+        matchesTimeRange = true;
+      }
+
       return matchesSearch && matchesProject && matchesCategory && matchesFlowType && matchesTimeRange;
     }).sort((a, b) => {
       const dateA = a.date || "";
@@ -19409,13 +19458,16 @@ const AdminFinanceScreen = ({
         const newRecordFull = { 
           id: finId || eachCustomId, 
           ...eachRecord,
-          isManualUserCreated: true 
+          isManualUserCreated: true,
+          isLiveNewTransaction: true,
         } as FinancialRecord;
         currentRecordsList.push(newRecordFull);
         saveFinancialOverride(newRecordFull);
         recordActiveUserTransaction(newRecordFull);
         recordPostLockTransactionId(eachCustomId);
         if (finId) recordPostLockTransactionId(finId);
+        recordLivePostBaselineId(eachCustomId);
+        if (finId) recordLivePostBaselineId(finId);
 
         await logActivity(
           "FINANCE",
@@ -20723,6 +20775,8 @@ const AdminFinanceScreen = ({
       }
       removeFinancialOverride(id);
       if (targetFin?.customId) removeFinancialOverride(targetFin.customId);
+      removeLivePostBaselineId(id);
+      if (targetFin?.customId) removeLivePostBaselineId(targetFin.customId);
 
       // Automatically delete any debt records that originated from this financial transaction
       const targetCustomId = targetFin?.customId;
