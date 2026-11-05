@@ -196,7 +196,7 @@ import {
   isProjectActive,
 } from "./types";
 import { dbService } from "./services/db";
-import { seedFinancialRecords, seedDebtRecords } from "./services/seedData";
+import { seedFinancialRecords, seedDebtRecords, isSeedFinancialRecord } from "./services/seedData";
 import {
   where,
   orderBy,
@@ -252,6 +252,7 @@ import {
   recordLivePostBaselineId,
   removeLivePostBaselineId,
   isLivePostBaselineTransaction,
+  BASELINE_LOCK_DATE,
 } from "./services/financialStorage";
 
 export const isReimbursementOrDebtRepayment = (r: any) => {
@@ -18124,12 +18125,14 @@ const AdminFinanceScreen = ({
     [effectiveDebtRecords, projects, financialRecords, editingTransaction]
   );
 
-  // Official Consolidated Accounting Baseline Constants (Sesuai patokan resmi manajemen PT & tampilan baku Gambar 2)
+  // Official Consolidated Accounting Baseline Constants (Terkunci per 31 Oktober 2026)
+  // Seluruh catatan keuangan tanggal 31 Oktober 2026 ke bawah dikunci di baseline ini dan tidak mengubah angka saldo ini.
+  // Transaksi baru tanggal setelah 31 Oktober 2026 (November 2026 ke atas) memotong saldo bank atau pattycash secara live.
   const OFFICIAL_BASE_INCOME = 1728295627;
   const OFFICIAL_BASE_EXPENSE = 1515739194;
-  const OFFICIAL_BASE_BANK = 17732970; // Dikalibrasi tepat Rp 17.732.970 sesuai Gambar 2 (Sisa Kas di PT Bank)
-  const OFFICIAL_BASE_PERSONAL_HOLD = 5872184; // Dikalibrasi tepat Rp 5.872.184 sesuai Gambar 2 (Sisa Dana PT di Tangan)
-  const OFFICIAL_BASE_BALANCE = 23605154; // Sesuai Gambar 2 (Saldo Laba Bersih PT Konsolidasi: 17.732.970 + 5.872.184)
+  const OFFICIAL_BASE_BANK = 17732970; // Terkunci tepat Rp 17.732.970 per 31 Oktober 2026 (Sisa Kas di PT Bank)
+  const OFFICIAL_BASE_PERSONAL_HOLD = 5872184; // Terkunci tepat Rp 5.872.184 per 31 Oktober 2026 (Sisa Dana PT di Tangan)
+  const OFFICIAL_BASE_BALANCE = 23605154; // Terkunci tepat Rp 23.605.154 (Saldo Laba Bersih PT Konsolidasi: 17.732.970 + 5.872.184)
 
   // 1. Total Pemasukan Riil (Income)
   const income = useMemo(() => {
@@ -19181,34 +19184,45 @@ const AdminFinanceScreen = ({
       if (filterFlowType === "IN") {
         matchesFlowType = r.type === "IN";
       } else if (filterFlowType === "OUT_BANK_DIRECT") {
-        matchesFlowType = isPtBankDirectOutRecord(r);
+        matchesFlowType =
+          isPtBankDirectOutRecord(r) ||
+          ((r.sumberDana === "REKENING PT" || !r.sumberDana) &&
+            (Boolean((r as any).isKasbon) || (r.category || "").toUpperCase().includes("KASBON")));
       } else if (filterFlowType === "PERSONAL") {
         matchesFlowType =
           r.flowType === "OUT_PERSONAL_SPEND" ||
-          r.flowType === "PERSONAL_TALANGAN_REIMBURSE";
+          r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+          Boolean((r as any).isKasbon) ||
+          (r.category || "").toUpperCase().includes("KASBON");
       } else if (filterFlowType === "TALANGAN") {
         matchesFlowType =
           r.flowType === "OUT_PERSONAL_TRANSFER" ||
           r.flowType === "OUT_PERSONAL_SPEND" ||
           r.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
+          Boolean((r as any).isKasbon) ||
+          (r.category || "").toUpperCase().includes("KASBON") ||
           (r.type === "OUT" && isPattyCashCategory(r.category));
       }
 
       // Time Range filter (last week, month, monthly rolling)
       let matchesTimeRange = true;
+      const rTime = typeof r.timestamp === "number"
+        ? r.timestamp
+        : ((r.timestamp as any)?.seconds ? (r.timestamp as any).seconds * 1000 : (r.date ? new Date(r.date).getTime() : Date.now()));
+
       if (filterTimeRange === "7_DAYS") {
         const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        matchesTimeRange = r.timestamp >= sevenDaysAgo;
+        matchesTimeRange = rTime >= sevenDaysAgo;
       } else if (filterTimeRange === "30_DAYS") {
         const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
-        matchesTimeRange = r.timestamp >= thirtyDaysAgo;
+        matchesTimeRange = rTime >= thirtyDaysAgo;
       } else if (filterTimeRange === "THIS_MONTH") {
         const now = new Date();
         const firstDayOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-        matchesTimeRange = r.timestamp >= firstDayOfThisMonth;
+        matchesTimeRange = rTime >= firstDayOfThisMonth;
       }
 
-      // Pastikan transaksi baru yang diinput user selalu terlihat di tabel dan tidak hilang karena tanggal lampau
+      // Pastikan transaksi baru yang diinput user selalu terlihat di tabel dan tidak terfilter oleh tanggal lampau
       if (isLivePostBaselineTransaction(r)) {
         matchesTimeRange = true;
       }
@@ -19218,7 +19232,9 @@ const AdminFinanceScreen = ({
       const dateA = a.date || "";
       const dateB = b.date || "";
       if (dateA !== dateB) return dateB.localeCompare(dateA);
-      return (b.timestamp || 0) - (a.timestamp || 0);
+      const timeA = typeof a.timestamp === "number" ? a.timestamp : ((a.timestamp as any)?.seconds ? (a.timestamp as any).seconds * 1000 : 0);
+      const timeB = typeof b.timestamp === "number" ? b.timestamp : ((b.timestamp as any)?.seconds ? (b.timestamp as any).seconds * 1000 : 0);
+      return timeB - timeA;
     });
   }, [financialRecords, searchQuery, filterProject, filterCategory, filterFlowType, filterTimeRange, isPattyCashCategory]);
 
@@ -19365,6 +19381,7 @@ const AdminFinanceScreen = ({
           timestamp: Date.now() + i, // slight time offset to preserve sequential order
           isUserCreated: true,
           isManualUserCreated: true,
+          isLiveNewTransaction: true,
           customId: eachCustomId,
           sumberDana: formData.sumberDana || "",
           rekPenerima: formData.rekPenerima || "",
@@ -19418,14 +19435,13 @@ const AdminFinanceScreen = ({
         const isKasbonAdd = (formData.category || "").toUpperCase().includes("KASBON") || Boolean(formData.penerimaKasbon);
         if (isKasbonAdd) {
           (eachRecord as any).isKasbon = true;
-          if (formData.penerimaKasbon) {
-            (eachRecord as any).penerimaKasbon = formData.penerimaKasbon;
-            if (!eachRecord.personalHolder) {
-              eachRecord.personalHolder = formData.penerimaKasbon;
-            }
-            if (!eachRecord.rekPenerima) {
-              eachRecord.rekPenerima = formData.penerimaKasbon;
-            }
+          const resolvedPenerima = formData.penerimaKasbon || formData.personalHolder || user?.name || "Karyawan / PIC";
+          (eachRecord as any).penerimaKasbon = resolvedPenerima;
+          if (!eachRecord.personalHolder) {
+            eachRecord.personalHolder = resolvedPenerima;
+          }
+          if (!eachRecord.rekPenerima) {
+            eachRecord.rekPenerima = resolvedPenerima;
           }
         }
 
@@ -19450,7 +19466,14 @@ const AdminFinanceScreen = ({
 
         let finId = eachCustomId;
         try {
-          finId = await dbService.createDocument("financialRecords", eachRecord);
+          finId = await dbService.createDocument("financialRecords", {
+            ...eachRecord,
+            id: eachCustomId,
+            customId: eachCustomId,
+            isLiveNewTransaction: true,
+            isManualUserCreated: true,
+            isUserCreated: true,
+          });
         } catch (dbErr) {
           console.warn("createDocument fallback:", dbErr);
           finId = eachCustomId;
@@ -19459,6 +19482,7 @@ const AdminFinanceScreen = ({
           id: finId || eachCustomId, 
           ...eachRecord,
           isManualUserCreated: true,
+          isUserCreated: true,
           isLiveNewTransaction: true,
         } as FinancialRecord;
         currentRecordsList.push(newRecordFull);
@@ -19466,8 +19490,8 @@ const AdminFinanceScreen = ({
         recordActiveUserTransaction(newRecordFull);
         recordPostLockTransactionId(eachCustomId);
         if (finId) recordPostLockTransactionId(finId);
-        recordLivePostBaselineId(eachCustomId);
-        if (finId) recordLivePostBaselineId(finId);
+        recordLivePostBaselineId(eachCustomId, eachRecord.date);
+        if (finId) recordLivePostBaselineId(finId, eachRecord.date);
 
         await logActivity(
           "FINANCE",
@@ -19937,6 +19961,14 @@ const AdminFinanceScreen = ({
       setUseManualRefPiutang(false);
       setUseManualRefHutang(false);
       setUseManualRefIdBank(false);
+      // Ensure the saved transaction is immediately visible in the active table
+      setFilterCategory("ALL");
+      setFilterTimeRange("ALL");
+      setSearchQuery("");
+      const isKasbonCreated = (formData.category || "").toUpperCase().includes("KASBON") || Boolean(formData.penerimaKasbon);
+      if (isKasbonCreated && filterFlowType !== "ALL" && filterFlowType !== "PERSONAL") {
+        setFilterFlowType("PERSONAL");
+      }
       setFormData({
         date: new Date().toISOString().split("T")[0],
         type: "OUT",
@@ -19977,6 +20009,11 @@ const AdminFinanceScreen = ({
         projects,
         `Catat Transaksi Baru ${formData.type}`
       );
+      autoBackupService.forceSyncToCloud(
+        currentRecordsList,
+        debtRecords,
+        projects
+      ).catch(() => {});
     } catch (err) {
       console.error(err);
       if (currentRecordsList && currentRecordsList.length > 0) {
@@ -19987,6 +20024,11 @@ const AdminFinanceScreen = ({
           projects,
           `Catat Transaksi Baru ${formData.type} (Fallback)`
         );
+        autoBackupService.forceSyncToCloud(
+          currentRecordsList,
+          debtRecords,
+          projects
+        ).catch(() => {});
       }
     } finally {
       setIsSubmittingTransaction(false);
@@ -25156,7 +25198,6 @@ const AdminFinanceScreen = ({
                                 }
                               }}
                               className="w-full px-6 py-5 md:py-6 bg-white border border-indigo-100 rounded-3xl text-sm md:text-base font-bold outline-none cursor-pointer"
-                              required
                             >
                               <option value="">-- Pilih Penerima Kasbon --</option>
                               {personnelOptions.map((opt) => (
@@ -26835,7 +26876,6 @@ const AdminFinanceScreen = ({
                                 }
                               }}
                               className="w-full px-6 py-5 md:py-6 bg-white border border-indigo-100 rounded-3xl text-sm md:text-base font-bold outline-none cursor-pointer"
-                              required
                             >
                               <option value="">-- Pilih Penerima Kasbon --</option>
                               {personnelOptions.map((opt) => (
@@ -32229,12 +32269,15 @@ export default function App() {
         if (activeRecords && activeRecords.length > 0) {
           const seenKeys = new Set(records.map((r) => (r.customId || r.id || "").trim().toUpperCase()));
           activeRecords.forEach((item) => {
+            if (isSeedFinancialRecord(item)) return;
+            const rDate = String(item?.date || "").trim();
+            if (rDate && rDate <= BASELINE_LOCK_DATE) return;
             const k1 = (item?.customId || "").trim().toUpperCase();
             const k2 = (item?.id || "").trim().toUpperCase();
             if ((!k1 || !seenKeys.has(k1)) && (!k2 || !seenKeys.has(k2))) {
               if (k1) seenKeys.add(k1);
               if (k2) seenKeys.add(k2);
-              records.push({ ...item, isUserCreated: true } as FinancialRecord);
+              records.push({ ...item, isUserCreated: true, isLiveNewTransaction: true } as FinancialRecord);
             }
           });
         }
@@ -32257,20 +32300,24 @@ export default function App() {
           .map((r) => {
             const k1 = (r.customId || "").trim().toUpperCase();
             const k2 = (r.id || "").trim().toUpperCase();
+            const rDate = String(r.date || "").trim();
+            const isLocked = isSeedFinancialRecord(r) || (rDate && rDate <= BASELINE_LOCK_DATE);
+            let updated = isLocked ? { ...r, isLiveNewTransaction: false } : r;
+
             if (
               k1 === "BNK-290726-002" || k2 === "BNK-290726-002" || 
               k1 === "BNK-070826-001" || k2 === "BNK-070826-001" ||
               k1 === "BNK-260926-002" || k2 === "BNK-260926-002"
             ) {
-              return {
-                ...r,
-                amount: (k1 === "BNK-260926-002" || k2 === "BNK-260926-002") ? 10000000 : r.amount,
+              updated = {
+                ...updated,
+                amount: (k1 === "BNK-260926-002" || k2 === "BNK-260926-002") ? 10000000 : updated.amount,
                 refHutang: "HTG-003",
                 linkedDebtId: "HTG-003",
                 rekPenerima: "PAK DODO INVESTOR",
               };
             }
-            return r;
+            return updated;
           });
       }
       return records;
@@ -38568,25 +38615,35 @@ export default function App() {
               });
               const userEdit = userOverrides[cfId] || userOverrides[cfCust];
               if (exIdx >= 0) {
+                const ex = deduped[exIdx];
+                const resDate = userEdit?.date || cf.date || ex.date;
+                const isLocked = isSeedFinancialRecord(ex) || isSeedFinancialRecord(cf) || (resDate && resDate <= BASELINE_LOCK_DATE);
+                const isLive = isLocked ? false : Boolean(isLivePostBaselineTransaction(ex) || isLivePostBaselineTransaction(cf));
                 // Server cloud data updates local memory state!
                 deduped[exIdx] = {
-                  ...deduped[exIdx],
+                  ...ex,
                   ...cf,
                   ...(userEdit || {}),
-                  date: userEdit?.date || cf.date || deduped[exIdx].date,
-                  customId: userEdit?.customId || cf.customId || deduped[exIdx].customId,
-                  category: userEdit?.category || cf.category || deduped[exIdx].category,
-                  projectId: userEdit?.projectId !== undefined ? userEdit.projectId : (cf.projectId || deduped[exIdx].projectId || ""),
-                  referenceId: userEdit?.referenceId !== undefined ? userEdit.referenceId : (cf.referenceId || deduped[exIdx].referenceId || ""),
-                  description: userEdit?.description || cf.description || deduped[exIdx].description,
-                  amount: userEdit?.amount !== undefined ? userEdit.amount : (cf.amount ?? deduped[exIdx].amount),
-                  sumberDana: userEdit?.sumberDana || cf.sumberDana || deduped[exIdx].sumberDana,
-                  flowType: userEdit?.flowType || cf.flowType || deduped[exIdx].flowType,
+                  isLiveNewTransaction: isLive,
+                  isManualUserCreated: Boolean(ex.isManualUserCreated || cf.isManualUserCreated),
+                  isUserCreated: Boolean(ex.isUserCreated || cf.isUserCreated),
+                  date: userEdit?.date || cf.date || ex.date,
+                  customId: userEdit?.customId || cf.customId || ex.customId,
+                  category: userEdit?.category || cf.category || ex.category,
+                  projectId: userEdit?.projectId !== undefined ? userEdit.projectId : (cf.projectId || ex.projectId || ""),
+                  referenceId: userEdit?.referenceId !== undefined ? userEdit.referenceId : (cf.referenceId || ex.referenceId || ""),
+                  description: userEdit?.description || cf.description || ex.description,
+                  amount: userEdit?.amount !== undefined ? userEdit.amount : (cf.amount ?? ex.amount),
+                  sumberDana: userEdit?.sumberDana || cf.sumberDana || ex.sumberDana,
+                  flowType: userEdit?.flowType || cf.flowType || ex.flowType,
                 };
               } else if (!((cfId && seenIds.has(cfId)) || (cfCust && seenCustomIds.has(cfCust)))) {
                 if (cfId) seenIds.add(cfId);
                 if (cfCust) seenCustomIds.add(cfCust);
-                deduped.push(userEdit ? { ...cf, ...userEdit, date: userEdit.date || cf.date, customId: userEdit.customId || cf.customId, category: userEdit.category || cf.category, isUserEdited: true } : cf);
+                const resDate = userEdit?.date || cf.date;
+                const isLocked = isSeedFinancialRecord(cf) || (resDate && resDate <= BASELINE_LOCK_DATE);
+                const isLive = isLocked ? false : Boolean(isLivePostBaselineTransaction(cf));
+                deduped.push(userEdit ? { ...cf, ...userEdit, date: userEdit.date || cf.date, customId: userEdit.customId || cf.customId, category: userEdit.category || cf.category, isUserEdited: true, isLiveNewTransaction: isLive } : { ...cf, isLiveNewTransaction: isLive });
               }
             });
             return deduped;
@@ -38890,6 +38947,7 @@ export default function App() {
         const combinedFin = [...(data || []), ...fromLocalColStore, ...activeUserRecords, ...allLocalFin];
         combinedFin.forEach((item) => {
           if (!item) return;
+          if (isSeedFinancialRecord(item)) return;
           if (item.customId && item.customId.startsWith("INC-060826-") && item.customId !== "INC-060826-001") return;
           if (item.customId === "BNK-110926-001" || item.id === "BNK-110926-001") return;
           const rawId = (item.id || "").trim().toUpperCase();
@@ -38949,17 +39007,21 @@ export default function App() {
             const k2 = (item.id || "").trim().toUpperCase();
             const ov = userOverrides[k1] || userOverrides[k2];
             const p = prevMap.get(k1) || prevMap.get(k2);
+            const targetDate = ov?.date || item.date || p?.date;
+            const isLocked = isSeedFinancialRecord(item) || (p && isSeedFinancialRecord(p)) || (targetDate && targetDate <= BASELINE_LOCK_DATE);
+            const isLive = isLocked ? false : Boolean(isLivePostBaselineTransaction(item) || (p && isLivePostBaselineTransaction(p)));
 
-            if (ov) {
-              return {
-                ...item,
-                ...ov,
-                category: ov.category || item.category,
-                date: ov.date || item.date,
-                isUserEdited: true,
-              };
-            }
-            return item;
+            return {
+              ...(p || {}),
+              ...item,
+              ...(ov || {}),
+              category: ov?.category || item.category || p?.category,
+              date: ov?.date || item.date || p?.date,
+              isUserEdited: Boolean(ov?.isUserEdited || item.isUserEdited || p?.isUserEdited),
+              isLiveNewTransaction: isLive,
+              isManualUserCreated: Boolean(item.isManualUserCreated || p?.isManualUserCreated),
+              isUserCreated: Boolean(item.isUserCreated || p?.isUserCreated),
+            };
           });
 
           // Ensure any post-baseline or user-created records in prev that aren't yet in finalDeduped are safely preserved!
@@ -38977,12 +39039,18 @@ export default function App() {
             return (!pk1 || !resultKeys.has(pk1)) && (!pk2 || !resultKeys.has(pk2));
           });
 
-          const finalRecordsSnapshot = [...dedupedResult, ...missingFromPrev];
+          const finalRecordsSnapshot = [...dedupedResult, ...missingFromPrev].map((r) => {
+            const rDate = String(r.date || "").trim();
+            if (isSeedFinancialRecord(r) || (rDate && rDate <= BASELINE_LOCK_DATE)) {
+              if (r.isLiveNewTransaction) return { ...r, isLiveNewTransaction: false };
+            }
+            return r;
+          });
           try {
             autoBackupService.saveInstantDataSnapshot(
               finalRecordsSnapshot,
-              [],
-              [],
+              debtRecords,
+              projects,
               "Sync live snapshot"
             );
           } catch (_) {}

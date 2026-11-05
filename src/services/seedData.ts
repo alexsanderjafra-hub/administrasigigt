@@ -10896,3 +10896,16 @@ export const seedDebtRecords: Partial<DebtRecord>[] = [
     ]
   }
 ];
+
+const seedFinIdSet = new Set<string>();
+seedFinancialRecords.forEach((s) => {
+  if (s.id) seedFinIdSet.add(s.id.trim().toUpperCase());
+  if (s.customId) seedFinIdSet.add(s.customId.trim().toUpperCase());
+});
+
+export const isSeedFinancialRecord = (r: any): boolean => {
+  if (!r) return false;
+  const k1 = (r.customId || "").trim().toUpperCase();
+  const k2 = (r.id || "").trim().toUpperCase();
+  return Boolean((k1 && seedFinIdSet.has(k1)) || (k2 && seedFinIdSet.has(k2)));
+};

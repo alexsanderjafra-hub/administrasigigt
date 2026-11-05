@@ -318,6 +318,9 @@ export interface FinancialRecord {
   refHutang?: string; // Reference supplier debt link
   linkedDebtId?: string; // Explicitly stored reference to the linked debt/receivable ID
   isUserCreated?: boolean;
+  isManualUserCreated?: boolean;
+  isLiveNewTransaction?: boolean;
+  isKasbon?: boolean;
   debtAllocations?: {
     debtId: string;
     customId?: string;

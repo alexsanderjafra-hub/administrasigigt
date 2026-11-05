@@ -1,5 +1,6 @@
 import { FinancialRecord, DebtRecord } from "../types";
 import { idbStorage } from "./indexedDbStorage";
+import { isSeedFinancialRecord } from "./seedData";
 
 const FINANCIAL_OVERRIDES_KEY = "workflow_pro_financial_overrides";
 const DELETED_FINANCIAL_IDS_KEY = "workflow_pro_deleted_financial_ids";
@@ -9,6 +10,39 @@ const DEBT_OVERRIDES_KEY = "workflow_pro_debt_overrides";
 let inMemoryOverrides: Record<string, Partial<FinancialRecord>> = {};
 let inMemoryDebtOverrides: Record<string, Partial<DebtRecord>> = {};
 let isInitializedFromDisk = false;
+
+/**
+ * Clean legacy dirty keys from previous sessions to prevent balance distortion
+ */
+function cleanLegacyDirtyKeys(): void {
+  try {
+    if (typeof window === "undefined") return;
+    const legacyKeys = [
+      "workflow_pro_active_user_transactions_v2",
+      "workflow_pro_active_user_transactions_v3",
+      "workflow_pro_active_user_transactions_v4",
+      "workflow_pro_active_user_transactions_v5",
+      "workflow_pro_active_user_transactions_v6",
+      "workflow_pro_active_user_records_v2",
+      "workflow_pro_active_user_records_v3",
+      "workflow_pro_active_user_records_v4",
+      "workflow_pro_active_user_records_v5",
+      "workflow_pro_active_user_records_v6",
+      "workflow_pro_live_post_baseline_ids_v2",
+      "workflow_pro_live_post_baseline_ids_v3",
+      "workflow_pro_live_post_baseline_ids_v4",
+      "workflow_pro_live_post_baseline_ids_v5",
+      "workflow_pro_live_post_baseline_ids_v6",
+      "workflow_pro_post_lock_transaction_ids",
+    ];
+    legacyKeys.forEach((k) => {
+      try {
+        localStorage.removeItem(k);
+        idbStorage.delete("snapshots", k).catch(() => {});
+      } catch (_) {}
+    });
+  } catch (_) {}
+}
 
 /**
  * Clean bulky temporary localStorage keys if quota is exceeded
@@ -57,7 +91,10 @@ function safeSetLocalStorage(key: string, value: string): void {
  * Call on application mount to ensure 100% persistence across reloads and tab closures.
  */
 export const initFinancialStorage = async (): Promise<Record<string, Partial<FinancialRecord>>> => {
-  // 1. First sync from localStorage
+  // 1. Clean legacy dirty keys from old test runs
+  cleanLegacyDirtyKeys();
+
+  // 2. First sync from localStorage
   try {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(FINANCIAL_OVERRIDES_KEY);
@@ -90,8 +127,15 @@ export const initFinancialStorage = async (): Promise<Record<string, Partial<Fin
     }
   } catch (_) {}
 
-  // 2. Then merge from IndexedDB (source of truth for unlimited persistence)
+  // 3. Then merge from IndexedDB (source of truth for unlimited persistence)
   try {
+    // Delete legacy snapshots in IndexedDB
+    try {
+      idbStorage.delete("snapshots", "workflow_pro_live_post_baseline_ids_v4").catch(() => {});
+      idbStorage.delete("snapshots", "workflow_pro_live_post_baseline_ids_v3").catch(() => {});
+      idbStorage.delete("snapshots", "workflow_pro_active_user_records_v3").catch(() => {});
+    } catch (_) {}
+
     const idbData = await idbStorage.getAll<Partial<FinancialRecord>>("overrides");
     if (idbData && Object.keys(idbData).length > 0) {
       Object.entries(idbData).forEach(([k, v]) => {
@@ -110,6 +154,15 @@ export const initFinancialStorage = async (): Promise<Record<string, Partial<Fin
       safeSetLocalStorage(FINANCIAL_OVERRIDES_KEY, JSON.stringify(inMemoryOverrides));
       safeSetLocalStorage(DEBT_OVERRIDES_KEY, JSON.stringify(inMemoryDebtOverrides));
     }
+
+    try {
+      const idbBaseline = await idbStorage.get<string[]>("snapshots", LIVE_POST_BASELINE_IDS_KEY);
+      if (Array.isArray(idbBaseline) && idbBaseline.length > 0) {
+        const set = getLivePostBaselineIds();
+        idbBaseline.forEach((id) => set.add(String(id).trim().toUpperCase()));
+        safeSetLocalStorage(LIVE_POST_BASELINE_IDS_KEY, JSON.stringify(Array.from(set)));
+      }
+    } catch (_) {}
   } catch (e) {
     console.warn("[FinancialStorage] IndexedDB read warning:", e);
   }
@@ -369,8 +422,8 @@ export const recordPostLockTransactionId = (idOrCustomId: string): void => {
   }
 };
 
-const ACTIVE_USER_TRANSACTIONS_KEY = "workflow_pro_active_user_transactions_v3";
-const ACTIVE_USER_RECORDS_KEY = "workflow_pro_active_user_records_v3";
+const ACTIVE_USER_TRANSACTIONS_KEY = "workflow_pro_active_user_transactions_v7";
+const ACTIVE_USER_RECORDS_KEY = "workflow_pro_active_user_records_v7";
 
 let inMemoryActiveUserTrxIds: Set<string> | null = null;
 
@@ -394,6 +447,11 @@ export const getActiveUserTransactionIds = (): Set<string> => {
 
 export const recordActiveUserTransaction = (record: any): void => {
   if (!record) return;
+  // Never record historical seed records or pre-baseline records as new active transactions
+  if (isSeedFinancialRecord(record)) return;
+  const rDate = String(record.date || "").trim();
+  if (rDate && rDate <= BASELINE_LOCK_DATE) return;
+
   const k1 = (record.customId || "").trim().toUpperCase();
   const k2 = (record.id || "").trim().toUpperCase();
   if (!k1 && !k2) return;
@@ -411,7 +469,7 @@ export const recordActiveUserTransaction = (record: any): void => {
     const exIdx = list.findIndex((r: any) => 
       (k2 && r.id === k2) || (k1 && r.customId === k1)
     );
-    const markedRecord = { ...record, isManualUserCreated: true };
+    const markedRecord = { ...record, isManualUserCreated: true, isLiveNewTransaction: true };
     if (exIdx >= 0) {
       list[exIdx] = markedRecord;
     } else {
@@ -430,7 +488,15 @@ export const getActiveUserRecords = (): FinancialRecord[] => {
       const raw = localStorage.getItem(ACTIVE_USER_RECORDS_KEY);
       if (raw) {
         const list = JSON.parse(raw);
-        if (Array.isArray(list)) return list;
+        if (Array.isArray(list)) {
+          return list.filter((r: any) => {
+            if (!r) return false;
+            if (isSeedFinancialRecord(r)) return false;
+            const rDate = String(r.date || "").trim();
+            if (rDate && rDate <= BASELINE_LOCK_DATE) return false;
+            return true;
+          });
+        }
       }
     }
   } catch (_) {}
@@ -459,7 +525,7 @@ export const removeActiveUserTransaction = (idOrCustomId: string): void => {
   } catch (_) {}
 };
 
-const LIVE_POST_BASELINE_IDS_KEY = "workflow_pro_live_post_baseline_ids_v4";
+const LIVE_POST_BASELINE_IDS_KEY = "workflow_pro_live_post_baseline_ids_v7";
 let inMemoryLivePostBaselineIds: Set<string> | null = null;
 
 export const getLivePostBaselineIds = (): Set<string> => {
@@ -480,14 +546,19 @@ export const getLivePostBaselineIds = (): Set<string> => {
   return inMemoryLivePostBaselineIds;
 };
 
-export const recordLivePostBaselineId = (idOrCustomId: string): void => {
+export const recordLivePostBaselineId = (idOrCustomId: string, recordDate?: string): void => {
   if (!idOrCustomId) return;
   const key = String(idOrCustomId).trim().toUpperCase();
   if (!key) return;
+  // Guard against adding seed IDs or pre-baseline records
+  if (isSeedFinancialRecord({ customId: key, id: key })) return;
+  if (recordDate && recordDate <= BASELINE_LOCK_DATE) return;
+
   try {
     const set = getLivePostBaselineIds();
     set.add(key);
     safeSetLocalStorage(LIVE_POST_BASELINE_IDS_KEY, JSON.stringify(Array.from(set)));
+    idbStorage.set("snapshots", LIVE_POST_BASELINE_IDS_KEY, Array.from(set)).catch(() => {});
   } catch (err) {
     console.warn("[FinancialStorage] Failed to record live post-baseline ID:", err);
   }
@@ -500,15 +571,45 @@ export const removeLivePostBaselineId = (idOrCustomId: string): void => {
     const set = getLivePostBaselineIds();
     set.delete(key);
     safeSetLocalStorage(LIVE_POST_BASELINE_IDS_KEY, JSON.stringify(Array.from(set)));
+    idbStorage.set("snapshots", LIVE_POST_BASELINE_IDS_KEY, Array.from(set)).catch(() => {});
   } catch (_) {}
 };
 
+export const BASELINE_LOCK_DATE = "2026-10-31";
+
+/**
+ * Authoritative check whether a financial transaction is a live user transaction
+ * created after the official accounting baseline.
+ * Guaranteed:
+ * - All historical records up to 31 October 2026 are permanently locked into baseline and DO NOT alter saldo.
+ * - Transactions dated after 31 October 2026 (> "2026-10-31") affect saldo live!
+ * - Historical records are NEVER deleted, they remain 100% intact in the table.
+ */
 export const isLivePostBaselineTransaction = (r: any): boolean => {
   if (!r) return false;
-  if (r.isLiveNewTransaction) return true;
-  const k1 = (r.customId || "").trim().toUpperCase();
-  const k2 = (r.id || "").trim().toUpperCase();
-  const set = getLivePostBaselineIds();
-  return Boolean((k1 && set.has(k1)) || (k2 && set.has(k2)));
+  // 1. Any record that belongs to the official baseline seed dataset is permanently locked
+  if (isSeedFinancialRecord(r)) return false;
+
+  const rDate = String(r.date || "").trim();
+  // 2. Strict baseline lock cutoff: Any transaction dated on or before 31 October 2026 is locked and CANNOT alter baseline saldo
+  if (rDate && rDate <= BASELINE_LOCK_DATE) {
+    return false;
+  }
+
+  // 3. Any transaction dated after 31 October 2026 (November 2026 onward) affects saldo
+  if (rDate && rDate > BASELINE_LOCK_DATE) {
+    return true;
+  }
+
+  // 4. Live new transaction explicitly created by user post-cutoff (and not seed)
+  if (r.isLiveNewTransaction === true) {
+    const k1 = (r.customId || "").trim().toUpperCase();
+    const k2 = (r.id || "").trim().toUpperCase();
+    if (isSeedFinancialRecord({ customId: k1, id: k2 })) return false;
+    return true;
+  }
+
+  return false;
 };
+
 
