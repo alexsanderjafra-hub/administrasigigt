@@ -157,7 +157,7 @@ export const autoBackupService = {
       }
     } catch (_) {}
 
-    // 1. In-Memory and Primary Persistent Cache - WRITE SYNCHRONOUSLY & INSTANTLY
+    // 1. In-Memory Primary Cache - UPDATE SYNCHRONOUSLY & INSTANTLY (0ms, zero lag!)
     const payload: PersistentDataPayload = {
       financialRecords: finalFin,
       debtRecords: finalDebts,
@@ -168,27 +168,38 @@ export const autoBackupService = {
     };
     cachedInMemoryPayload = payload;
 
-    try {
-      safeSetLocalStorage(PERSISTENT_CACHE_KEY, JSON.stringify(payload));
-
-      // Dedicated per-entity fallback storage
-      if (finalProjects.length > 0) safeSetLocalStorage(PROJECTS_CACHE_KEY, JSON.stringify(finalProjects));
-      if (finalDebts.length > 0) safeSetLocalStorage(DEBTS_CACHE_KEY, JSON.stringify(finalDebts));
-      if (finalFin.length > 0) safeSetLocalStorage(FINANCE_CACHE_KEY, JSON.stringify(finalFin));
-    } catch (lsErr) {
-      console.warn("[AutoBackup] Synchronous localStorage save warning:", lsErr);
+    // Safety fallback: ensure beforeunload flushes current in-memory cache to disk
+    if (typeof window !== "undefined" && !(window as any).__hasBackupBeforeUnload) {
+      (window as any).__hasBackupBeforeUnload = true;
+      window.addEventListener("beforeunload", () => {
+        if (cachedInMemoryPayload) {
+          try {
+            localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(cachedInMemoryPayload));
+          } catch (_) {}
+        }
+      });
     }
-
-    // Persist to IndexedDB asynchronously (guaranteed durability without quota limitations)
-    idbStorage.set("snapshots", "latest", payload).catch(() => {});
 
     if (saveTimeout) {
       clearTimeout(saveTimeout);
     }
 
-    // 2. Debounced background updates for Rolling History and Cloud Master Snapshot
+    // 2. Debounced background updates for LocalStorage, IndexedDB, Rolling History and Cloud Master Snapshot
+    // Batching rapid state updates so the main thread never freezes
     saveTimeout = setTimeout(async () => {
       try {
+        try {
+          safeSetLocalStorage(PERSISTENT_CACHE_KEY, JSON.stringify(payload));
+          if (finalProjects.length > 0) safeSetLocalStorage(PROJECTS_CACHE_KEY, JSON.stringify(finalProjects));
+          if (finalDebts.length > 0) safeSetLocalStorage(DEBTS_CACHE_KEY, JSON.stringify(finalDebts));
+          if (finalFin.length > 0) safeSetLocalStorage(FINANCE_CACHE_KEY, JSON.stringify(finalFin));
+        } catch (lsErr) {
+          console.warn("[AutoBackup] LocalStorage save warning:", lsErr);
+        }
+
+        // Persist to IndexedDB asynchronously (guaranteed durability without quota limitations)
+        idbStorage.set("snapshots", "latest", payload).catch(() => {});
+
         // Rolling History of Snapshots in LocalStorage and IndexedDB
         try {
           const rawHistory = localStorage.getItem(BACKUP_HISTORY_KEY);

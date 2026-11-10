@@ -5,6 +5,7 @@ import React, {
   useMemo,
   useRef,
   useCallback,
+  useDeferredValue,
 } from "react";
 import Webcam from "react-webcam";
 import { compressImage, extractCleanAddress } from "./lib/utils";
@@ -8645,6 +8646,7 @@ const AdminDebtScreen = ({
   const [activeTab, setActiveTab] = useState<"HUTANG" | "PIUTANG">("HUTANG");
   const [debtViewMode, setDebtViewMode] = useState<"LEDGER" | "ALL_RECORDS">("LEDGER");
   const [searchQuery, setSearchQuery] = useState("");
+  const deferredDebtSearch = useDeferredValue(searchQuery);
   const [filterStatus, setFilterStatus] = useState<"ALL" | "UNPAID" | "PAID">("ALL");
   const [showExportReportModal, setShowExportReportModal] = useState(false);
   const [exportReportConfig, setExportReportConfig] = useState<{
@@ -8841,42 +8843,60 @@ const AdminDebtScreen = ({
     return effectiveDebtRecords.find((d) => d.id === showEditModal.id) || showEditModal;
   }, [showEditModal, effectiveDebtRecords]);
 
+  // Memoized debt schedule map so getScheduleForRecord runs once per record rather than 3x per render
+  const debtSchedulesMap = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof getScheduleForRecord>>();
+    effectiveDebtRecords.forEach((r) => {
+      const key = r.id || r.customId;
+      if (key) {
+        map.set(key, getScheduleForRecord(r, projects, financialRecords));
+      }
+    });
+    return map;
+  }, [effectiveDebtRecords, projects, financialRecords]);
+
   const statusCounts = useMemo(() => {
     const filterByProj = (r: DebtRecord) => filterProject === "ALL" || r.projectId === filterProject;
+    const q = deferredDebtSearch.toLowerCase().trim();
     const records = effectiveDebtRecords.filter(
       (r) =>
         r.type === activeTab &&
         filterByProj(r) &&
-        (r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          r.contactName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (r.customId || "").toLowerCase().includes(searchQuery.toLowerCase()))
+        (!q ||
+          r.title.toLowerCase().includes(q) ||
+          r.contactName.toLowerCase().includes(q) ||
+          (r.customId || "").toLowerCase().includes(q))
     );
 
     let unpaid = 0;
     let paid = 0;
     records.forEach((r) => {
-      const sched = getScheduleForRecord(r, projects, financialRecords);
+      const key = r.id || r.customId;
+      const sched = (key && debtSchedulesMap.get(key)) || getScheduleForRecord(r, projects, financialRecords);
       const rem = Math.max(0, (sched.contractValue || r.amount || 0) - sched.totalPaid);
       if (rem > 0) unpaid++;
       else paid++;
     });
 
     return { all: records.length, unpaid, paid };
-  }, [effectiveDebtRecords, activeTab, filterProject, searchQuery, projects, financialRecords]);
+  }, [effectiveDebtRecords, activeTab, filterProject, deferredDebtSearch, debtSchedulesMap, projects, financialRecords]);
 
   const filteredRecords = useMemo(() => {
+    const q = deferredDebtSearch.toLowerCase().trim();
     const records = effectiveDebtRecords.filter((r) => {
       if (r.type !== activeTab) return false;
       const matchesSearch =
-        r.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        r.contactName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (r.customId || "").toLowerCase().includes(searchQuery.toLowerCase());
+        !q ||
+        r.title.toLowerCase().includes(q) ||
+        r.contactName.toLowerCase().includes(q) ||
+        (r.customId || "").toLowerCase().includes(q);
       if (!matchesSearch) return false;
 
       const matchesProject = filterProject === "ALL" || r.projectId === filterProject;
       if (!matchesProject) return false;
 
-      const sched = getScheduleForRecord(r, projects, financialRecords);
+      const key = r.id || r.customId;
+      const sched = (key && debtSchedulesMap.get(key)) || getScheduleForRecord(r, projects, financialRecords);
       const remaining = Math.max(0, (sched.contractValue || r.amount || 0) - sched.totalPaid);
 
       if (filterStatus === "UNPAID") {
@@ -8893,7 +8913,7 @@ const AdminDebtScreen = ({
       const idB = b.customId || "";
       return idA.localeCompare(idB, undefined, { numeric: true, sensitivity: "base" });
     });
-  }, [effectiveDebtRecords, activeTab, searchQuery, filterProject, filterStatus, projects, financialRecords]);
+  }, [effectiveDebtRecords, activeTab, deferredDebtSearch, filterProject, filterStatus, debtSchedulesMap, projects, financialRecords]);
 
   const handleQuickMarkPaid = (record: DebtRecord) => {
     const sched = getScheduleForRecord(record, projects, financialRecords);
@@ -12916,7 +12936,8 @@ const AdminDebtScreen = ({
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {filteredRecords.map((r, rIdx) => {
-                  const sched = getScheduleForRecord(r, projects, financialRecords);
+                  const key = r.id || r.customId;
+                  const sched = (key && debtSchedulesMap.get(key)) || getScheduleForRecord(r, projects, financialRecords);
                   const totalPaid = sched.totalPaid;
                   const remaining = Math.max(0, sched.contractValue - totalPaid);
 
@@ -17499,6 +17520,9 @@ const AdminFinanceScreen = ({
   }, [showAddModal, showExportModal, editingTransaction, selectedPattyCashDetail]);
 
   const [searchQuery, setSearchQuery] = useState(initialSearchQuery || "");
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const [financePage, setFinancePage] = useState(1);
+  const [financePageSize, setFinancePageSize] = useState<number | "ALL">(50);
 
   useEffect(() => {
     if (initialSearchQuery !== undefined && initialSearchQuery !== "") {
@@ -19158,8 +19182,8 @@ const AdminFinanceScreen = ({
   // Combined Search, Category, Time and Flow Type Filtering
   const filteredRecords = useMemo(() => {
     return financialRecords.filter((r) => {
-      // Search Box
-      const q = searchQuery.toLowerCase().trim();
+      // Search Box (using deferred value for 60fps non-blocking typing)
+      const q = deferredSearchQuery.toLowerCase().trim();
       const cleanQ = q.replace(/^htg-/i, "").replace(/^ptg-/i, "").trim();
       const matchesSearch =
         !q ||
@@ -19236,7 +19260,60 @@ const AdminFinanceScreen = ({
       const timeB = typeof b.timestamp === "number" ? b.timestamp : ((b.timestamp as any)?.seconds ? (b.timestamp as any).seconds * 1000 : 0);
       return timeB - timeA;
     });
-  }, [financialRecords, searchQuery, filterProject, filterCategory, filterFlowType, filterTimeRange, isPattyCashCategory]);
+  }, [financialRecords, deferredSearchQuery, filterProject, filterCategory, filterFlowType, filterTimeRange, isPattyCashCategory]);
+
+  // Reset page when any filter or search changes
+  useEffect(() => {
+    setFinancePage(1);
+  }, [deferredSearchQuery, filterFlowType, filterTimeRange, filterProject, filterCategory]);
+
+  // Pre-computed O(1) Maps to eliminate O(N^2) inner loops during table rendering
+  const detailedTalanganMap = useMemo(() => {
+    const map = new Map<string, typeof detailedTalanganList[0]>();
+    detailedTalanganList.forEach((t) => {
+      if (t.customId) map.set(t.customId.trim().toUpperCase(), t);
+      if (t.id) map.set(t.id.trim().toUpperCase(), t);
+    });
+    return map;
+  }, [detailedTalanganList]);
+
+  const pattyCashSpendsByBankId = useMemo(() => {
+    const map = new Map<string, number>();
+    financialRecords.forEach((r) => {
+      if (r.flowType !== "OUT_PERSONAL_SPEND" || !r.refIdBank) return;
+      const allocs = parseBankAllocations(r.refIdBank, r.amount);
+      allocs.forEach((a) => {
+        if (a.bankId) {
+          const uId = a.bankId.trim().toUpperCase();
+          map.set(uId, (map.get(uId) || 0) + (a.amount || 0));
+        }
+      });
+    });
+    return map;
+  }, [financialRecords]);
+
+  const projectsMap = useMemo(() => {
+    const map = new Map<string, string>();
+    projects.forEach((p) => {
+      if (p.id) map.set(p.id.trim().toUpperCase(), p.name);
+      if ((p as any).customId) map.set(String((p as any).customId).trim().toUpperCase(), p.name);
+      if (p.name) map.set(p.name.trim().toUpperCase(), p.name);
+    });
+    return map;
+  }, [projects]);
+
+  const selectedIdsSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  const totalFinancePages = useMemo(() => {
+    if (financePageSize === "ALL" || financePageSize <= 0) return 1;
+    return Math.max(1, Math.ceil(filteredRecords.length / financePageSize));
+  }, [filteredRecords.length, financePageSize]);
+
+  const paginatedRecords = useMemo(() => {
+    if (financePageSize === "ALL") return filteredRecords;
+    const start = (financePage - 1) * financePageSize;
+    return filteredRecords.slice(start, start + financePageSize);
+  }, [filteredRecords, financePage, financePageSize]);
 
   const financeTrend = useMemo(() => {
     // Current filtering logic based on timeframe, month, and year
@@ -23280,7 +23357,8 @@ const AdminFinanceScreen = ({
               )}
 
               {filterFlowType !== "TALANGAN" ? (
-                <div className="overflow-x-auto border border-slate-100 rounded-3xl">
+                <div>
+                  <div className="overflow-x-auto border border-slate-100 rounded-3xl">
                   <table className="w-full text-left border-collapse min-w-[900px] text-[13px]">
                     <thead>
                       <tr className="bg-[#1e293b] text-white border-b border-slate-200">
@@ -23359,31 +23437,23 @@ const AdminFinanceScreen = ({
                     </thead>
                     <tbody className="divide-y divide-slate-200">
                       {filteredRecords.length > 0 ? (
-                        filteredRecords.map((record, iIdx) => {
-                          // Calculations for Bank Records
-                          const catUpper = (record.category || "").toUpperCase();
-                          const recPenerima = (record.rekPenerima || record.personalHolder || "").toLowerCase();
-                          const isFaisalOrJidan = recPenerima.includes("faisal") || recPenerima.includes("jidan") || recPenerima.includes("yasin");
+                        paginatedRecords.map((record, iIdx) => {
+                          const rowNum = (financePageSize === "ALL" ? iIdx : (financePage - 1) * financePageSize + iIdx) + 1;
+                          const rCustom = (record.customId || "").trim().toUpperCase();
+                          const rId = (record.id || "").trim().toUpperCase();
 
-                          const isTalanganType =
-                            isPattyCashCategory(record.category);
-
-                          const talanganItem = detailedTalanganList.find((t) => t.customId === record.customId || t.id === record.id);
+                          // Fast O(1) lookups instead of O(N^2) scans
+                          const talanganItem = (rCustom && detailedTalanganMap.get(rCustom)) || (rId && detailedTalanganMap.get(rId));
                           const linkedSpent = talanganItem
                             ? talanganItem.spentAmount
-                            : financialRecords
-                                .filter((r) => r.flowType === "OUT_PERSONAL_SPEND")
-                                .reduce((sum, r) => {
-                                  const allocs = parseBankAllocations(r.refIdBank || "", r.amount);
-                                  const match = allocs.find((a) => a.bankId === record.customId);
-                                  return sum + (match ? match.amount : 0);
-                                }, 0);
+                            : (rCustom ? (pattyCashSpendsByBankId.get(rCustom) || 0) : 0);
 
+                          const isTalanganType = isPattyCashCategory(record.category);
                           const sisaTalangan = Math.max(0, talanganItem ? talanganItem.balance : (record.amount - linkedSpent));
                           const shouldShowTalangan = isTalanganType || linkedSpent > 0;
 
-                          // Check selection status
-                          const isChosen = selectedIds.includes(record.id);
+                          // Check selection status via O(1) Set lookup
+                          const isChosen = selectedIdsSet.has(record.id);
 
                           const groupKey = record.refIdBank || (record.customId && record.customId.startsWith("BNK-") && activeBankIds.has(record.customId) ? record.customId : "");
                           const groupBgClass = groupKey && uiBankColorMap[groupKey] ? uiBankColorMap[groupKey] : "";
@@ -23395,16 +23465,19 @@ const AdminFinanceScreen = ({
                             (record.customId.toLowerCase() === searchQuery.toLowerCase().trim() ||
                               (cleanSearch !== "" && record.customId.toLowerCase() === cleanSearch));
 
+                          const pKey = (record.projectId || record.referenceId || "").trim().toUpperCase();
+                          const rowProjName = (pKey && projectsMap.get(pKey)) || record.projectId || record.referenceId || "-";
+
                           return (
                             <tr
-                              key={`${record.id || record.customId || 'row'}-${iIdx}`}
-                              id={`row-${record.id || record.customId || iIdx}`}
+                              key={`${record.id || record.customId || 'row'}-${rowNum}`}
+                              id={`row-${record.id || record.customId || rowNum}`}
                               className={`hover:bg-slate-100/50 transition-all font-medium ${
                                 isDirectTarget
                                   ? "bg-indigo-50/90 ring-2 ring-indigo-400 ring-inset shadow-xs"
                                   : groupBgClass
                                   ? groupBgClass
-                                  : (iIdx % 2 === 0 ? "bg-white" : "bg-slate-50/40")
+                                  : (rowNum % 2 === 1 ? "bg-white" : "bg-slate-50/40")
                               } ${isChosen ? "bg-slate-100/60" : ""}`}
                             >
                               {user?.role !== "owner" && user?.role !== "direktur" && (
@@ -23421,7 +23494,7 @@ const AdminFinanceScreen = ({
                               {/* LEDGER 1: GLOBAL ARUS KAS */}
                               {filterFlowType === "ALL" && (
                                 <>
-                                  <td className="py-3 px-3 text-center text-slate-400 font-mono border-r border-slate-100">{iIdx + 1}</td>
+                                  <td className="py-3 px-3 text-center text-slate-400 font-mono border-r border-slate-100">{rowNum}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">{record.date}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-mono font-bold text-slate-700">
                                     {isPattyCashCategory(record.category) || (record.customId && record.customId.startsWith("BNK-") && isTalanganType) ? (
@@ -23709,6 +23782,71 @@ const AdminFinanceScreen = ({
                       )}
                     </tbody>
                   </table>
+                </div>
+
+                {/* Pagination Controls */}
+                {filteredRecords.length > 0 && (
+                  <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-6 py-3.5 bg-slate-50/70 border-t border-slate-100 text-xs text-slate-600 rounded-b-[32px]">
+                    <div className="font-medium text-slate-500">
+                      Menampilkan{" "}
+                      <span className="font-bold text-slate-800">
+                        {financePageSize === "ALL" ? 1 : Math.min(filteredRecords.length, (financePage - 1) * (typeof financePageSize === 'number' ? financePageSize : 0) + 1)}
+                      </span>{" "}
+                      sampai{" "}
+                      <span className="font-bold text-slate-800">
+                        {financePageSize === "ALL" ? filteredRecords.length : Math.min(filteredRecords.length, financePage * (typeof financePageSize === 'number' ? financePageSize : filteredRecords.length))}
+                      </span>{" "}
+                      dari <span className="font-bold text-slate-900">{filteredRecords.length}</span> transaksi
+                    </div>
+
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-slate-400 font-bold text-[11px]">Baris:</span>
+                        <select
+                          value={String(financePageSize)}
+                          onChange={(e) => {
+                            const val = e.target.value === "ALL" ? "ALL" : Number(e.target.value);
+                            setFinancePageSize(val as any);
+                            setFinancePage(1);
+                          }}
+                          className="px-2.5 py-1 bg-white border border-slate-200 rounded-xl font-bold text-slate-700 text-xs focus:ring-2 focus:ring-primary/20 outline-none cursor-pointer shadow-xs"
+                        >
+                          <option value="25">25</option>
+                          <option value="50">50</option>
+                          <option value="100">100</option>
+                          <option value="250">250</option>
+                          <option value="ALL">Semua ({filteredRecords.length})</option>
+                        </select>
+                      </div>
+
+                      {financePageSize !== "ALL" && totalFinancePages > 1 && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={financePage <= 1}
+                            onClick={() => setFinancePage((p) => Math.max(1, p - 1))}
+                            className="px-3 py-1 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-200 rounded-xl font-bold text-slate-700 transition-all cursor-pointer shadow-xs"
+                            title="Halaman Sebelumnya"
+                          >
+                            ← Prev
+                          </button>
+                          <span className="px-2.5 font-bold text-slate-700 text-xs">
+                            {financePage} / {totalFinancePages}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={financePage >= totalFinancePages}
+                            onClick={() => setFinancePage((p) => Math.min(totalFinancePages, p + 1))}
+                            className="px-3 py-1 bg-white hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-200 rounded-xl font-bold text-slate-700 transition-all cursor-pointer shadow-xs"
+                            title="Halaman Berikutnya"
+                          >
+                            Next →
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
                 </div>
               ) : (
                 <div className="space-y-8">
