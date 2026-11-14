@@ -185,7 +185,82 @@ export function sanitizeFirestoreData<T>(data: T): T {
 const LOCAL_COL_PREFIX = "wf_local_col_";
 const DELETED_COL_PREFIX = "wf_deleted_col_";
 
+const inMemoryLocalStores = new Map<string, Map<string, any>>();
+const inMemoryDeletedIds = new Map<string, Set<string>>();
+const pendingStoreSaveTimers = new Map<string, any>();
+const pendingDeletedSaveTimers = new Map<string, any>();
+const dirtyStoreCollections = new Set<string>();
+const dirtyDeletedCollections = new Set<string>();
+
+function flushCollectionStoreToDisk(collectionPath: string): void {
+  try {
+    if (typeof window === "undefined") return;
+    const map = inMemoryLocalStores.get(collectionPath);
+    if (!map) return;
+    const arr = Array.from(map.values());
+    try {
+      localStorage.setItem(LOCAL_COL_PREFIX + collectionPath, JSON.stringify(arr));
+    } catch (err: any) {
+      const isQuota =
+        err?.name === "QuotaExceededError" ||
+        err?.code === 22 ||
+        String(err).includes("quota");
+      if (isQuota) {
+        try {
+          localStorage.removeItem("PT_DATA_BACKUP_HISTORY");
+          localStorage.removeItem("last_sync_error_log");
+          localStorage.removeItem("PT_FINANCE_CACHE");
+          localStorage.removeItem("PT_DEBTS_CACHE");
+          localStorage.removeItem("PT_PROJECTS_CACHE");
+          localStorage.setItem(LOCAL_COL_PREFIX + collectionPath, JSON.stringify(arr));
+        } catch (_) {}
+      }
+    }
+    idbStorage.set("snapshots", LOCAL_COL_PREFIX + collectionPath, arr).catch(() => {});
+  } catch (e) {
+    console.warn(`[LocalStore] Failed to save collection ${collectionPath}:`, e);
+  }
+}
+
+function flushDeletedIdsToDisk(collectionPath: string): void {
+  try {
+    if (typeof window === "undefined") return;
+    const set = inMemoryDeletedIds.get(collectionPath);
+    if (!set) return;
+    localStorage.setItem(DELETED_COL_PREFIX + collectionPath, JSON.stringify(Array.from(set)));
+  } catch (_) {}
+}
+
+if (typeof window !== "undefined" && !(window as any).__hasDbBeforeUnload) {
+  (window as any).__hasDbBeforeUnload = true;
+  window.addEventListener("beforeunload", () => {
+    dirtyStoreCollections.forEach((colPath) => {
+      const t = pendingStoreSaveTimers.get(colPath);
+      if (t) {
+        clearTimeout(t);
+        pendingStoreSaveTimers.delete(colPath);
+      }
+      flushCollectionStoreToDisk(colPath);
+    });
+    dirtyStoreCollections.clear();
+
+    dirtyDeletedCollections.forEach((colPath) => {
+      const t = pendingDeletedSaveTimers.get(colPath);
+      if (t) {
+        clearTimeout(t);
+        pendingDeletedSaveTimers.delete(colPath);
+      }
+      flushDeletedIdsToDisk(colPath);
+    });
+    dirtyDeletedCollections.clear();
+  });
+}
+
 export function getLocalCollectionStore<T>(collectionPath: string): Map<string, T> {
+  const cached = inMemoryLocalStores.get(collectionPath);
+  if (cached) {
+    return cached as Map<string, T>;
+  }
   const map = new Map<string, T>();
   try {
     if (typeof window !== "undefined") {
@@ -201,60 +276,84 @@ export function getLocalCollectionStore<T>(collectionPath: string): Map<string, 
       }
     }
   } catch (_) {}
+  inMemoryLocalStores.set(collectionPath, map);
   return map;
 }
 
 function saveLocalCollectionStore<T>(collectionPath: string, map: Map<string, T>): void {
-  try {
-    if (typeof window !== "undefined") {
-      const arr = Array.from(map.values());
-      try {
-        localStorage.setItem(LOCAL_COL_PREFIX + collectionPath, JSON.stringify(arr));
-      } catch (err: any) {
-        const isQuota =
-          err?.name === "QuotaExceededError" ||
-          err?.code === 22 ||
-          String(err).includes("quota");
-        if (isQuota) {
-          try {
-            localStorage.removeItem("PT_DATA_BACKUP_HISTORY");
-            localStorage.removeItem("last_sync_error_log");
-            localStorage.removeItem("PT_FINANCE_CACHE");
-            localStorage.removeItem("PT_DEBTS_CACHE");
-            localStorage.removeItem("PT_PROJECTS_CACHE");
-            localStorage.setItem(LOCAL_COL_PREFIX + collectionPath, JSON.stringify(arr));
-          } catch (_) {}
-        }
-      }
-      // Unlimited capacity fallback in IndexedDB
-      idbStorage.set("snapshots", LOCAL_COL_PREFIX + collectionPath, arr).catch(() => {});
-    }
-  } catch (e) {
-    console.warn(`[LocalStore] Failed to save collection ${collectionPath}:`, e);
+  inMemoryLocalStores.set(collectionPath, map);
+  if (typeof window === "undefined") return;
+  dirtyStoreCollections.add(collectionPath);
+  const existingTimer = pendingStoreSaveTimers.get(collectionPath);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
   }
+  const timer = setTimeout(() => {
+    pendingStoreSaveTimers.delete(collectionPath);
+    dirtyStoreCollections.delete(collectionPath);
+    flushCollectionStoreToDisk(collectionPath);
+  }, 300);
+  pendingStoreSaveTimers.set(collectionPath, timer);
+}
+
+export function saveLocalCollectionStoreBulk<T>(collectionPath: string, items: T[]): void {
+  const map = getLocalCollectionStore<T>(collectionPath);
+  const nowIso = new Date().toISOString();
+  items.forEach((item: any) => {
+    if (!item) return;
+    const key = String(item.id || item.customId || "").trim();
+    if (!key) return;
+    const existing = (map.get(key) || {}) as any;
+    map.set(key, { ...existing, ...item, id: key, updatedAt: nowIso });
+  });
+  saveLocalCollectionStore(collectionPath, map);
 }
 
 export function getDeletedCollectionIds(collectionPath: string): Set<string> {
+  const cached = inMemoryDeletedIds.get(collectionPath);
+  if (cached) {
+    return cached;
+  }
+  const set = new Set<string>();
   try {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(DELETED_COL_PREFIX + collectionPath);
       if (raw) {
         const arr = JSON.parse(raw);
         if (Array.isArray(arr)) {
-          return new Set(arr.map((x: string) => String(x).trim().toUpperCase()));
+          arr.forEach((x: string) => set.add(String(x).trim().toUpperCase()));
         }
       }
     }
   } catch (_) {}
-  return new Set();
+  inMemoryDeletedIds.set(collectionPath, set);
+  return set;
+}
+
+function scheduleDeletedIdsFlush(collectionPath: string): void {
+  if (typeof window === "undefined") return;
+  dirtyDeletedCollections.add(collectionPath);
+  const existingTimer = pendingDeletedSaveTimers.get(collectionPath);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+  const timer = setTimeout(() => {
+    pendingDeletedSaveTimers.delete(collectionPath);
+    dirtyDeletedCollections.delete(collectionPath);
+    flushDeletedIdsToDisk(collectionPath);
+  }, 250);
+  pendingDeletedSaveTimers.set(collectionPath, timer);
 }
 
 export function addDeletedCollectionId(collectionPath: string, docId: string): void {
   try {
     if (typeof window !== "undefined" && docId) {
       const set = getDeletedCollectionIds(collectionPath);
-      set.add(String(docId).trim().toUpperCase());
-      localStorage.setItem(DELETED_COL_PREFIX + collectionPath, JSON.stringify(Array.from(set)));
+      const upper = String(docId).trim().toUpperCase();
+      if (!set.has(upper)) {
+        set.add(upper);
+        scheduleDeletedIdsFlush(collectionPath);
+      }
     }
   } catch (_) {}
 }
@@ -266,7 +365,7 @@ export function removeDeletedCollectionId(collectionPath: string, docId: string)
       const upper = String(docId).trim().toUpperCase();
       if (set.has(upper)) {
         set.delete(upper);
-        localStorage.setItem(DELETED_COL_PREFIX + collectionPath, JSON.stringify(Array.from(set)));
+        scheduleDeletedIdsFlush(collectionPath);
       }
     }
   } catch (_) {}

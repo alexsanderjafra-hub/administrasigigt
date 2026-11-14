@@ -9,7 +9,46 @@ const DEBT_OVERRIDES_KEY = "workflow_pro_debt_overrides";
 // In-memory cache for instant synchronous retrieval
 let inMemoryOverrides: Record<string, Partial<FinancialRecord>> = {};
 let inMemoryDebtOverrides: Record<string, Partial<DebtRecord>> = {};
+let inMemoryDeletedFinancialIds: Set<string> | null = null;
+let inMemoryActiveUserRecords: FinancialRecord[] | null = null;
+let hasLoadedOverridesFromLS = false;
+let hasLoadedDebtOverridesFromLS = false;
 let isInitializedFromDisk = false;
+
+const pendingPersistTimers = new Map<string, any>();
+const pendingPersistPayloads = new Map<string, () => string>();
+
+function scheduleLocalStoragePersist(key: string, serializeFn: () => string, delayMs = 280): void {
+  if (typeof window === "undefined") return;
+  pendingPersistPayloads.set(key, serializeFn);
+  const existing = pendingPersistTimers.get(key);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    pendingPersistTimers.delete(key);
+    const fn = pendingPersistPayloads.get(key);
+    pendingPersistPayloads.delete(key);
+    if (fn) {
+      try {
+        safeSetLocalStorage(key, fn());
+      } catch (_) {}
+    }
+  }, delayMs);
+  pendingPersistTimers.set(key, timer);
+}
+
+if (typeof window !== "undefined" && !(window as any).__hasFinStorageBeforeUnload) {
+  (window as any).__hasFinStorageBeforeUnload = true;
+  window.addEventListener("beforeunload", () => {
+    pendingPersistTimers.forEach((t) => clearTimeout(t));
+    pendingPersistTimers.clear();
+    pendingPersistPayloads.forEach((fn, key) => {
+      try {
+        safeSetLocalStorage(key, fn());
+      } catch (_) {}
+    });
+    pendingPersistPayloads.clear();
+  });
+}
 
 /**
  * Clean legacy dirty keys from previous sessions to prevent balance distortion
@@ -110,6 +149,7 @@ export const initFinancialStorage = async (): Promise<Record<string, Partial<Fin
           });
         }
       }
+      hasLoadedOverridesFromLS = true;
 
       const rawDebts = localStorage.getItem(DEBT_OVERRIDES_KEY);
       if (rawDebts) {
@@ -124,6 +164,7 @@ export const initFinancialStorage = async (): Promise<Record<string, Partial<Fin
           });
         }
       }
+      hasLoadedDebtOverridesFromLS = true;
     }
   } catch (_) {}
 
@@ -151,8 +192,8 @@ export const initFinancialStorage = async (): Promise<Record<string, Partial<Fin
         }
       });
       // Sync back to localStorage if space allows
-      safeSetLocalStorage(FINANCIAL_OVERRIDES_KEY, JSON.stringify(inMemoryOverrides));
-      safeSetLocalStorage(DEBT_OVERRIDES_KEY, JSON.stringify(inMemoryDebtOverrides));
+      scheduleLocalStoragePersist(FINANCIAL_OVERRIDES_KEY, () => JSON.stringify(inMemoryOverrides), 200);
+      scheduleLocalStoragePersist(DEBT_OVERRIDES_KEY, () => JSON.stringify(inMemoryDebtOverrides), 200);
     }
 
     try {
@@ -160,7 +201,7 @@ export const initFinancialStorage = async (): Promise<Record<string, Partial<Fin
       if (Array.isArray(idbBaseline) && idbBaseline.length > 0) {
         const set = getLivePostBaselineIds();
         idbBaseline.forEach((id) => set.add(String(id).trim().toUpperCase()));
-        safeSetLocalStorage(LIVE_POST_BASELINE_IDS_KEY, JSON.stringify(Array.from(set)));
+        scheduleLocalStoragePersist(LIVE_POST_BASELINE_IDS_KEY, () => JSON.stringify(Array.from(set)), 200);
       }
     } catch (_) {}
   } catch (e) {
@@ -173,9 +214,12 @@ export const initFinancialStorage = async (): Promise<Record<string, Partial<Fin
 
 /**
  * Retrieve user-edited modifications for financial records.
- * Stored persistently in localStorage & IndexedDB so refresh never overwrites user edits.
+ * Cached in memory after initial read so callers never re-parse localStorage repeatedly.
  */
 export const getFinancialOverrides = (): Record<string, Partial<FinancialRecord>> => {
+  if (hasLoadedOverridesFromLS) {
+    return inMemoryOverrides;
+  }
   try {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(FINANCIAL_OVERRIDES_KEY);
@@ -191,6 +235,7 @@ export const getFinancialOverrides = (): Record<string, Partial<FinancialRecord>
           });
         }
       }
+      hasLoadedOverridesFromLS = true;
     }
   } catch (err) {
     console.warn("[FinancialStorage] Failed to read overrides from localStorage:", err);
@@ -200,11 +245,13 @@ export const getFinancialOverrides = (): Record<string, Partial<FinancialRecord>
 
 /**
  * Persistently save a user's edit or modification to a financial record.
- * Keyed by uppercase ID and customId to ensure rapid and unambiguous retrieval.
- * Synchronously writes to in-memory & localStorage, asynchronously writes to IndexedDB.
+ * Updates in-memory cache immediately and debounces disk serialization off the UI frame.
  */
 export const saveFinancialOverride = (record: Partial<FinancialRecord>, aliasKey?: string): void => {
   try {
+    // Ensure initial overrides are loaded before mutating
+    if (!hasLoadedOverridesFromLS) getFinancialOverrides();
+
     const idKey = (record.id || "").trim().toUpperCase();
     const customIdKey = (record.customId || "").trim().toUpperCase();
     if (!idKey && !customIdKey && !aliasKey) return;
@@ -233,8 +280,8 @@ export const saveFinancialOverride = (record: Partial<FinancialRecord>, aliasKey
       idbStorage.set("overrides", aKey, payload).catch(() => {});
     }
 
-    // 2. Persist to localStorage with quota protection
-    safeSetLocalStorage(FINANCIAL_OVERRIDES_KEY, JSON.stringify(inMemoryOverrides));
+    // 2. Debounced persist to localStorage (flushed synchronously on beforeunload)
+    scheduleLocalStoragePersist(FINANCIAL_OVERRIDES_KEY, () => JSON.stringify(inMemoryOverrides));
 
     // 3. Persist to IndexedDB asynchronously (guaranteed durability)
     if (idKey) {
@@ -253,13 +300,14 @@ export const saveFinancialOverride = (record: Partial<FinancialRecord>, aliasKey
  */
 export const removeFinancialOverride = (idOrCustomId: string): void => {
   try {
+    if (!hasLoadedOverridesFromLS) getFinancialOverrides();
     const key = (idOrCustomId || "").trim().toUpperCase();
     if (!key) return;
 
     delete inMemoryOverrides[key];
     delete inMemoryOverrides[idOrCustomId];
 
-    safeSetLocalStorage(FINANCIAL_OVERRIDES_KEY, JSON.stringify(inMemoryOverrides));
+    scheduleLocalStoragePersist(FINANCIAL_OVERRIDES_KEY, () => JSON.stringify(inMemoryOverrides));
     idbStorage.delete("overrides", key).catch(() => {});
   } catch (err) {
     console.warn("[FinancialStorage] Failed to remove override:", err);
@@ -270,15 +318,19 @@ export const removeFinancialOverride = (idOrCustomId: string): void => {
  * Set of IDs deleted by the user to avoid resurrecting deleted seed items on refresh.
  */
 export const getDeletedFinancialIds = (): Set<string> => {
+  if (inMemoryDeletedFinancialIds) return inMemoryDeletedFinancialIds;
   try {
-    if (typeof window === "undefined") return new Set();
-    const raw = localStorage.getItem(DELETED_FINANCIAL_IDS_KEY);
-    if (!raw) return new Set();
-    const arr: string[] = JSON.parse(raw);
-    return new Set(arr.map((k) => k.trim().toUpperCase()));
-  } catch {
-    return new Set();
-  }
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(DELETED_FINANCIAL_IDS_KEY);
+      if (raw) {
+        const arr: string[] = JSON.parse(raw);
+        inMemoryDeletedFinancialIds = new Set(arr.map((k) => k.trim().toUpperCase()));
+        return inMemoryDeletedFinancialIds;
+      }
+    }
+  } catch {}
+  inMemoryDeletedFinancialIds = new Set();
+  return inMemoryDeletedFinancialIds;
 };
 
 /**
@@ -290,7 +342,7 @@ export const markFinancialRecordDeleted = (idOrCustomId: string): void => {
     if (!key) return;
     const set = getDeletedFinancialIds();
     set.add(key);
-    safeSetLocalStorage(DELETED_FINANCIAL_IDS_KEY, JSON.stringify(Array.from(set)));
+    scheduleLocalStoragePersist(DELETED_FINANCIAL_IDS_KEY, () => JSON.stringify(Array.from(set)));
     removeFinancialOverride(key);
     idbStorage.set("overrides", `DELETED_${key}`, { isDeleted: true }).catch(() => {});
   } catch (err) {
@@ -300,10 +352,11 @@ export const markFinancialRecordDeleted = (idOrCustomId: string): void => {
 
 /**
  * Retrieve user-edited modifications for debt records (Hutang / Piutang).
- * Stored persistently in localStorage & IndexedDB so changing due date or details
- * NEVER loses data upon browser refresh.
  */
 export const getDebtOverrides = (): Record<string, Partial<DebtRecord>> => {
+  if (hasLoadedDebtOverridesFromLS) {
+    return inMemoryDebtOverrides;
+  }
   try {
     if (typeof window !== "undefined") {
       const raw = localStorage.getItem(DEBT_OVERRIDES_KEY);
@@ -319,6 +372,7 @@ export const getDebtOverrides = (): Record<string, Partial<DebtRecord>> => {
           });
         }
       }
+      hasLoadedDebtOverridesFromLS = true;
     }
   } catch (err) {
     console.warn("[FinancialStorage] Failed to read debt overrides from localStorage:", err);
@@ -331,6 +385,7 @@ export const getDebtOverrides = (): Record<string, Partial<DebtRecord>> => {
  */
 export const saveDebtOverride = (record: Partial<DebtRecord>, aliasKey?: string): void => {
   try {
+    if (!hasLoadedDebtOverridesFromLS) getDebtOverrides();
     const idKey = (record.id || "").trim().toUpperCase();
     const customIdKey = (record.customId || "").trim().toUpperCase();
     if (!idKey && !customIdKey && !aliasKey) return;
@@ -358,7 +413,7 @@ export const saveDebtOverride = (record: Partial<DebtRecord>, aliasKey?: string)
       idbStorage.set("overrides", `DEBT_${aKey}`, payload).catch(() => {});
     }
 
-    safeSetLocalStorage(DEBT_OVERRIDES_KEY, JSON.stringify(inMemoryDebtOverrides));
+    scheduleLocalStoragePersist(DEBT_OVERRIDES_KEY, () => JSON.stringify(inMemoryDebtOverrides));
     if (idKey) {
       idbStorage.set("overrides", `DEBT_${idKey}`, payload).catch(() => {});
     }
@@ -375,13 +430,14 @@ export const saveDebtOverride = (record: Partial<DebtRecord>, aliasKey?: string)
  */
 export const removeDebtOverride = (idOrCustomId: string): void => {
   try {
+    if (!hasLoadedDebtOverridesFromLS) getDebtOverrides();
     const key = (idOrCustomId || "").trim().toUpperCase();
     if (!key) return;
 
     delete inMemoryDebtOverrides[key];
     delete inMemoryDebtOverrides[idOrCustomId];
 
-    safeSetLocalStorage(DEBT_OVERRIDES_KEY, JSON.stringify(inMemoryDebtOverrides));
+    scheduleLocalStoragePersist(DEBT_OVERRIDES_KEY, () => JSON.stringify(inMemoryDebtOverrides));
     idbStorage.delete("overrides", `DEBT_${key}`).catch(() => {});
   } catch (err) {
     console.warn("[FinancialStorage] Failed to remove debt override:", err);
@@ -415,8 +471,10 @@ export const recordPostLockTransactionId = (idOrCustomId: string): void => {
   if (!key) return;
   try {
     const set = getPostLockTransactionIds();
-    set.add(key);
-    safeSetLocalStorage(POST_LOCK_TRANSACTIONS_KEY, JSON.stringify(Array.from(set)));
+    if (!set.has(key)) {
+      set.add(key);
+      scheduleLocalStoragePersist(POST_LOCK_TRANSACTIONS_KEY, () => JSON.stringify(Array.from(set)));
+    }
   } catch (err) {
     console.warn("[FinancialStorage] Failed to record post-lock transaction ID:", err);
   }
@@ -445,6 +503,30 @@ export const getActiveUserTransactionIds = (): Set<string> => {
   return inMemoryActiveUserTrxIds;
 };
 
+export const getActiveUserRecords = (): FinancialRecord[] => {
+  if (inMemoryActiveUserRecords) return inMemoryActiveUserRecords;
+  try {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(ACTIVE_USER_RECORDS_KEY);
+      if (raw) {
+        const list = JSON.parse(raw);
+        if (Array.isArray(list)) {
+          inMemoryActiveUserRecords = list.filter((r: any) => {
+            if (!r) return false;
+            if (isSeedFinancialRecord(r)) return false;
+            const rDate = String(r.date || "").trim();
+            if (rDate && rDate <= BASELINE_LOCK_DATE) return false;
+            return true;
+          });
+          return inMemoryActiveUserRecords;
+        }
+      }
+    }
+  } catch (_) {}
+  inMemoryActiveUserRecords = [];
+  return inMemoryActiveUserRecords;
+};
+
 export const recordActiveUserTransaction = (record: any): void => {
   if (!record) return;
   // Never record historical seed records or pre-baseline records as new active transactions
@@ -460,14 +542,12 @@ export const recordActiveUserTransaction = (record: any): void => {
     const set = getActiveUserTransactionIds();
     if (k1) set.add(k1);
     if (k2) set.add(k2);
-    safeSetLocalStorage(ACTIVE_USER_TRANSACTIONS_KEY, JSON.stringify(Array.from(set)));
+    scheduleLocalStoragePersist(ACTIVE_USER_TRANSACTIONS_KEY, () => JSON.stringify(Array.from(set)));
 
-    // Store record in persistent list
-    const rawList = localStorage.getItem(ACTIVE_USER_RECORDS_KEY);
-    let list: any[] = rawList ? JSON.parse(rawList) : [];
-    if (!Array.isArray(list)) list = [];
-    const exIdx = list.findIndex((r: any) => 
-      (k2 && r.id === k2) || (k1 && r.customId === k1)
+    const list = [...getActiveUserRecords()];
+    const exIdx = list.findIndex((r: any) =>
+      (k2 && (r.id || "").trim().toUpperCase() === k2) ||
+      (k1 && (r.customId || "").trim().toUpperCase() === k1)
     );
     const markedRecord = { ...record, isManualUserCreated: true, isLiveNewTransaction: true };
     if (exIdx >= 0) {
@@ -475,32 +555,12 @@ export const recordActiveUserTransaction = (record: any): void => {
     } else {
       list.push(markedRecord);
     }
-    safeSetLocalStorage(ACTIVE_USER_RECORDS_KEY, JSON.stringify(list));
+    inMemoryActiveUserRecords = list;
+    scheduleLocalStoragePersist(ACTIVE_USER_RECORDS_KEY, () => JSON.stringify(inMemoryActiveUserRecords || []));
     idbStorage.set("snapshots", ACTIVE_USER_RECORDS_KEY, list).catch(() => {});
   } catch (err) {
     console.warn("[FinancialStorage] Failed to record active user transaction:", err);
   }
-};
-
-export const getActiveUserRecords = (): FinancialRecord[] => {
-  try {
-    if (typeof window !== "undefined") {
-      const raw = localStorage.getItem(ACTIVE_USER_RECORDS_KEY);
-      if (raw) {
-        const list = JSON.parse(raw);
-        if (Array.isArray(list)) {
-          return list.filter((r: any) => {
-            if (!r) return false;
-            if (isSeedFinancialRecord(r)) return false;
-            const rDate = String(r.date || "").trim();
-            if (rDate && rDate <= BASELINE_LOCK_DATE) return false;
-            return true;
-          });
-        }
-      }
-    }
-  } catch (_) {}
-  return [];
 };
 
 export const removeActiveUserTransaction = (idOrCustomId: string): void => {
@@ -509,19 +569,14 @@ export const removeActiveUserTransaction = (idOrCustomId: string): void => {
   try {
     const set = getActiveUserTransactionIds();
     set.delete(key);
-    safeSetLocalStorage(ACTIVE_USER_TRANSACTIONS_KEY, JSON.stringify(Array.from(set)));
+    scheduleLocalStoragePersist(ACTIVE_USER_TRANSACTIONS_KEY, () => JSON.stringify(Array.from(set)));
 
-    const rawList = localStorage.getItem(ACTIVE_USER_RECORDS_KEY);
-    if (rawList) {
-      let list = JSON.parse(rawList);
-      if (Array.isArray(list)) {
-        list = list.filter((r: any) => 
-          (r.id || "").trim().toUpperCase() !== key && 
-          (r.customId || "").trim().toUpperCase() !== key
-        );
-        safeSetLocalStorage(ACTIVE_USER_RECORDS_KEY, JSON.stringify(list));
-      }
-    }
+    const list = getActiveUserRecords().filter((r: any) =>
+      (r.id || "").trim().toUpperCase() !== key &&
+      (r.customId || "").trim().toUpperCase() !== key
+    );
+    inMemoryActiveUserRecords = list;
+    scheduleLocalStoragePersist(ACTIVE_USER_RECORDS_KEY, () => JSON.stringify(list));
   } catch (_) {}
 };
 
@@ -556,9 +611,11 @@ export const recordLivePostBaselineId = (idOrCustomId: string, recordDate?: stri
 
   try {
     const set = getLivePostBaselineIds();
-    set.add(key);
-    safeSetLocalStorage(LIVE_POST_BASELINE_IDS_KEY, JSON.stringify(Array.from(set)));
-    idbStorage.set("snapshots", LIVE_POST_BASELINE_IDS_KEY, Array.from(set)).catch(() => {});
+    if (!set.has(key)) {
+      set.add(key);
+      scheduleLocalStoragePersist(LIVE_POST_BASELINE_IDS_KEY, () => JSON.stringify(Array.from(set)));
+      idbStorage.set("snapshots", LIVE_POST_BASELINE_IDS_KEY, Array.from(set)).catch(() => {});
+    }
   } catch (err) {
     console.warn("[FinancialStorage] Failed to record live post-baseline ID:", err);
   }
@@ -569,9 +626,11 @@ export const removeLivePostBaselineId = (idOrCustomId: string): void => {
   const key = String(idOrCustomId).trim().toUpperCase();
   try {
     const set = getLivePostBaselineIds();
-    set.delete(key);
-    safeSetLocalStorage(LIVE_POST_BASELINE_IDS_KEY, JSON.stringify(Array.from(set)));
-    idbStorage.set("snapshots", LIVE_POST_BASELINE_IDS_KEY, Array.from(set)).catch(() => {});
+    if (set.has(key)) {
+      set.delete(key);
+      scheduleLocalStoragePersist(LIVE_POST_BASELINE_IDS_KEY, () => JSON.stringify(Array.from(set)));
+      idbStorage.set("snapshots", LIVE_POST_BASELINE_IDS_KEY, Array.from(set)).catch(() => {});
+    }
   } catch (_) {}
 };
 

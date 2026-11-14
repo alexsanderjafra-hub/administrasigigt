@@ -6,7 +6,7 @@
  * and application feature updates.
  */
 
-import { dbService, isQuotaExhausted } from "./db";
+import { dbService, isQuotaExhausted, saveLocalCollectionStoreBulk } from "./db";
 import { idbStorage } from "./indexedDbStorage";
 import { getFinancialOverrides } from "./financialStorage";
 
@@ -43,10 +43,19 @@ const LAST_DAILY_KEY = "last_auto_daily_backup_date";
 const MAX_HISTORY_ITEMS = 2; // Keep at most 2 in localStorage to prevent 5MB quota overflow; full history is kept in IndexedDB
 
 let saveTimeout: any = null;
+let masterSyncTimeout: any = null;
 let lastCloudSyncTimestamp = 0;
-const CLOUD_SYNC_THROTTLE_MS = 5 * 60 * 1000; // at most once every 5 minutes for master cloud snapshot
+const CLOUD_SYNC_THROTTLE_MS = 5 * 60 * 1000; // at most once every 5 minutes for background auto-sync
 
 let cachedInMemoryPayload: PersistentDataPayload | null = null;
+let cachedInMemoryHistory: SystemBackup[] | null = null;
+let pendingSnapshotInput: {
+  financialRecords: any[];
+  debtRecords: any[];
+  projects: any[];
+  triggerReason: string;
+  now: number;
+} | null = null;
 
 export function evictHeavyCaches(): void {
   try {
@@ -103,10 +112,57 @@ function deduplicateList<T extends { id?: string; customId?: string }>(list: T[]
   return deduped;
 }
 
+function buildFinalPayload(
+  financialRecords: any[],
+  debtRecords: any[],
+  projects: any[],
+  now: number
+): PersistentDataPayload {
+  const dateStr = new Date(now).toISOString();
+  let finalProjects = Array.isArray(projects) ? projects : [];
+  let finalDebts = deduplicateList(Array.isArray(debtRecords) ? debtRecords : []);
+  let finalFin = deduplicateList(Array.isArray(financialRecords) ? financialRecords : []);
+
+  try {
+    const existing = cachedInMemoryPayload;
+    if (finalProjects.length === 0 && existing && Array.isArray(existing.projects) && existing.projects.length > 0) {
+      finalProjects = existing.projects;
+    }
+    if (finalDebts.length === 0 && existing && Array.isArray(existing.debtRecords) && existing.debtRecords.length > 0) {
+      finalDebts = deduplicateList(existing.debtRecords);
+    }
+    if (finalFin.length === 0 && existing && Array.isArray(existing.financialRecords) && existing.financialRecords.length > 0) {
+      finalFin = deduplicateList(existing.financialRecords);
+    }
+  } catch (_) {}
+
+  try {
+    const userOverrides = getFinancialOverrides();
+    if (finalFin.length > 0 && Object.keys(userOverrides).length > 0) {
+      finalFin = finalFin.map((r: any) => {
+        const k1 = (r.customId || "").trim().toUpperCase();
+        const k2 = (r.id || "").trim().toUpperCase();
+        const ov = userOverrides[k1] || userOverrides[k2];
+        return ov ? { ...r, ...ov, category: ov.category || r.category, isUserEdited: true } : r;
+      });
+    }
+  } catch (_) {}
+
+  return {
+    financialRecords: finalFin,
+    debtRecords: finalDebts,
+    projects: finalProjects,
+    updatedAt: dateStr,
+    timestamp: now,
+    version: 2,
+  };
+}
+
 export const autoBackupService = {
   /**
    * Save an instant snapshot of data whenever any input, edit, or delete happens.
-   * Debounced slightly (400ms) to prevent thrashing during fast typing.
+   * Zero heavy synchronous work on the calling frame — deduplication, serialization,
+   * and disk/IndexedDB persistence are batched inside an 800ms debounce + beforeunload flush.
    */
   saveInstantDataSnapshot: (
     financialRecords: any[],
@@ -123,56 +179,47 @@ export const autoBackupService = {
     }
 
     const now = Date.now();
-    const dateStr = new Date().toISOString();
-    const todayStr = dateStr.split("T")[0];
+    pendingSnapshotInput = {
+      financialRecords,
+      debtRecords,
+      projects,
+      triggerReason,
+      now,
+    };
 
-    // Guard: Don't let an empty array overwrite existing populated cache
-    let finalProjects = Array.isArray(projects) ? projects : [];
-    let finalDebts = deduplicateList(Array.isArray(debtRecords) ? debtRecords : []);
-    let finalFin = deduplicateList(Array.isArray(financialRecords) ? financialRecords : []);
-
-    try {
-      const existing = autoBackupService.getPersistentData();
-      if (finalProjects.length === 0 && existing && Array.isArray(existing.projects) && existing.projects.length > 0) {
-        finalProjects = existing.projects;
-      }
-      if (finalDebts.length === 0 && existing && Array.isArray(existing.debtRecords) && existing.debtRecords.length > 0) {
-        finalDebts = deduplicateList(existing.debtRecords);
-      }
-      if (finalFin.length === 0 && existing && Array.isArray(existing.financialRecords) && existing.financialRecords.length > 0) {
-        finalFin = deduplicateList(existing.financialRecords);
-      }
-    } catch (_) {}
-
-    // Guarantee that any active user overrides (e.g. edited category) are applied before saving snapshots
-    try {
-      const userOverrides = getFinancialOverrides();
-      if (finalFin.length > 0 && Object.keys(userOverrides).length > 0) {
-        finalFin = finalFin.map((r: any) => {
-          const k1 = (r.customId || "").trim().toUpperCase();
-          const k2 = (r.id || "").trim().toUpperCase();
-          const ov = userOverrides[k1] || userOverrides[k2];
-          return ov ? { ...r, ...ov, category: ov.category || r.category, isUserEdited: true } : r;
-        });
-      }
-    } catch (_) {}
-
-    // 1. In-Memory Primary Cache - UPDATE SYNCHRONOUSLY & INSTANTLY (0ms, zero lag!)
-    const payload: PersistentDataPayload = {
-      financialRecords: finalFin,
-      debtRecords: finalDebts,
-      projects: finalProjects,
-      updatedAt: dateStr,
+    // Update lightweight RAM references immediately so getPersistentData() always has fresh data
+    cachedInMemoryPayload = {
+      financialRecords: Array.isArray(financialRecords) && financialRecords.length > 0
+        ? financialRecords
+        : (cachedInMemoryPayload?.financialRecords || []),
+      debtRecords: Array.isArray(debtRecords) && debtRecords.length > 0
+        ? debtRecords
+        : (cachedInMemoryPayload?.debtRecords || []),
+      projects: Array.isArray(projects) && projects.length > 0
+        ? projects
+        : (cachedInMemoryPayload?.projects || []),
+      updatedAt: new Date(now).toISOString(),
       timestamp: now,
       version: 2,
     };
-    cachedInMemoryPayload = payload;
 
     // Safety fallback: ensure beforeunload flushes current in-memory cache to disk
     if (typeof window !== "undefined" && !(window as any).__hasBackupBeforeUnload) {
       (window as any).__hasBackupBeforeUnload = true;
       window.addEventListener("beforeunload", () => {
-        if (cachedInMemoryPayload) {
+        if (pendingSnapshotInput) {
+          try {
+            const p = buildFinalPayload(
+              pendingSnapshotInput.financialRecords,
+              pendingSnapshotInput.debtRecords,
+              pendingSnapshotInput.projects,
+              pendingSnapshotInput.now
+            );
+            cachedInMemoryPayload = p;
+            localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(p));
+          } catch (_) {}
+          pendingSnapshotInput = null;
+        } else if (cachedInMemoryPayload) {
           try {
             localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(cachedInMemoryPayload));
           } catch (_) {}
@@ -185,9 +232,22 @@ export const autoBackupService = {
     }
 
     // 2. Debounced background updates for LocalStorage, IndexedDB, Rolling History and Cloud Master Snapshot
-    // Batching rapid state updates so the main thread never freezes
     saveTimeout = setTimeout(async () => {
+      const snapInput = pendingSnapshotInput;
+      pendingSnapshotInput = null;
+      if (!snapInput) return;
+
       try {
+        const payload = buildFinalPayload(
+          snapInput.financialRecords,
+          snapInput.debtRecords,
+          snapInput.projects,
+          snapInput.now
+        );
+        cachedInMemoryPayload = payload;
+        const { financialRecords: finalFin, debtRecords: finalDebts, projects: finalProjects, updatedAt: dateStr, timestamp } = payload;
+        const todayStr = dateStr.split("T")[0];
+
         try {
           safeSetLocalStorage(PERSISTENT_CACHE_KEY, JSON.stringify(payload));
           if (finalProjects.length > 0) safeSetLocalStorage(PROJECTS_CACHE_KEY, JSON.stringify(finalProjects));
@@ -202,17 +262,16 @@ export const autoBackupService = {
 
         // Rolling History of Snapshots in LocalStorage and IndexedDB
         try {
-          const rawHistory = localStorage.getItem(BACKUP_HISTORY_KEY);
-          let history: SystemBackup[] = rawHistory ? JSON.parse(rawHistory) : [];
+          let history = [...autoBackupService.getAvailableBackups()];
 
-          // Only add a new history item if at least 10 seconds have passed since the previous snapshot
+          // Only add a new history item if at least 15 seconds have passed since the previous snapshot
           const lastSnap = history[0];
-          if (!lastSnap || now - lastSnap.timestamp > 10000) {
+          if (!lastSnap || timestamp - lastSnap.timestamp > 15000) {
             const newSnap: SystemBackup = {
-              id: `snap_${now}`,
+              id: `snap_${timestamp}`,
               date: todayStr,
-              timestamp: now,
-              trigger: triggerReason,
+              timestamp,
+              trigger: snapInput.triggerReason,
               financialRecordsCount: finalFin.length,
               debtRecordsCount: finalDebts.length,
               projectsCount: finalProjects.length,
@@ -223,28 +282,27 @@ export const autoBackupService = {
               },
             };
 
-            // Full snapshot saved to IndexedDB
-            idbStorage.set("backups", newSnap.id || `snap_${now}`, newSnap).catch(() => {});
+            idbStorage.set("backups", newSnap.id || `snap_${timestamp}`, newSnap).catch(() => {});
 
             history.unshift(newSnap);
             if (history.length > MAX_HISTORY_ITEMS) {
               history = history.slice(0, MAX_HISTORY_ITEMS);
             }
+            cachedInMemoryHistory = history;
             safeSetLocalStorage(BACKUP_HISTORY_KEY, JSON.stringify(history));
           }
         } catch (histErr) {
           console.warn("[AutoBackup] Gagal memperbarui riwayat backup:", histErr);
         }
 
-        // Cloud Master Snapshot in Firestore (syncs data across AI Studio & Vercel, throttled to prevent quota exhaustion)
-        // Guard: only push cloud snapshot if full dataset is loaded (>= 500 records) to prevent uninitialized client overwrites
-        if (!isQuotaExhausted() && (now - lastCloudSyncTimestamp > CLOUD_SYNC_THROTTLE_MS) && finalFin.length >= 500) {
+        // Cloud Master Snapshot in Firestore (throttled for background auto-saves)
+        if (!isQuotaExhausted() && (timestamp - lastCloudSyncTimestamp > CLOUD_SYNC_THROTTLE_MS) && finalFin.length >= 500) {
           try {
-            lastCloudSyncTimestamp = now;
+            lastCloudSyncTimestamp = timestamp;
             await dbService.setDocument("systemBackups", "latest_synced_data", {
               updatedAt: dateStr,
-              timestamp: now,
-              trigger: triggerReason,
+              timestamp,
+              trigger: snapInput.triggerReason,
               financialRecordsCount: finalFin.length,
               debtRecordsCount: finalDebts.length,
               projectsCount: finalProjects.length,
@@ -259,7 +317,42 @@ export const autoBackupService = {
       } catch (err) {
         console.error("[AutoBackup] Error saving instant snapshot background tasks:", err);
       }
-    }, 400);
+    }, 800);
+  },
+
+  /**
+   * Sync ONLY the single systemBackups/latest_synced_data cloud master doc after a brief idle delay,
+   * instead of re-writing 700+ individual documents (which causes snapshot storms & UI freezes).
+   */
+  syncMasterSnapshotOnly: (
+    financialRecords: any[],
+    debtRecords: any[],
+    projects: any[],
+    triggerReason = "Sinkronisasi transaksi baru"
+  ) => {
+    if (masterSyncTimeout) {
+      clearTimeout(masterSyncTimeout);
+    }
+    masterSyncTimeout = setTimeout(async () => {
+      if (isQuotaExhausted()) return;
+      if (!Array.isArray(financialRecords) || financialRecords.length < 100) return;
+      try {
+        const now = Date.now();
+        const dateStr = new Date(now).toISOString();
+        lastCloudSyncTimestamp = now;
+        await dbService.setDocument("systemBackups", "latest_synced_data", {
+          updatedAt: dateStr,
+          timestamp: now,
+          trigger: triggerReason,
+          financialRecordsCount: financialRecords.length,
+          debtRecordsCount: debtRecords.length,
+          projectsCount: (projects || []).length,
+          financialRecords,
+          debtRecords,
+          projects: projects || [],
+        });
+      } catch (_) {}
+    }, 1500);
   },
 
   /**
@@ -301,7 +394,7 @@ export const autoBackupService = {
   },
 
   /**
-   * Get persistent data from local storage with automatic fallback to dedicated cache keys or history
+   * Get persistent data from RAM cache or local storage with fallback to dedicated cache keys or history
    */
   getPersistentData: (): PersistentDataPayload | null => {
     try {
@@ -311,23 +404,25 @@ export const autoBackupService = {
       const raw = localStorage.getItem(PERSISTENT_CACHE_KEY);
       let parsed = raw ? JSON.parse(raw) : null;
 
-      // Fallback check to individual dedicated caches
+      // Fallback check to individual dedicated caches only when primary cache is empty/incomplete
       let projFallback: any[] = [];
       let debtFallback: any[] = [];
       let finFallback: any[] = [];
 
-      try {
-        const rawProj = localStorage.getItem(PROJECTS_CACHE_KEY);
-        if (rawProj) projFallback = JSON.parse(rawProj) || [];
-      } catch (_) {}
-      try {
-        const rawDebt = localStorage.getItem(DEBTS_CACHE_KEY);
-        if (rawDebt) debtFallback = JSON.parse(rawDebt) || [];
-      } catch (_) {}
-      try {
-        const rawFin = localStorage.getItem(FINANCE_CACHE_KEY);
-        if (rawFin) finFallback = JSON.parse(rawFin) || [];
-      } catch (_) {}
+      if (!parsed || !parsed.projects?.length || !parsed.debtRecords?.length || !parsed.financialRecords?.length) {
+        try {
+          const rawProj = localStorage.getItem(PROJECTS_CACHE_KEY);
+          if (rawProj) projFallback = JSON.parse(rawProj) || [];
+        } catch (_) {}
+        try {
+          const rawDebt = localStorage.getItem(DEBTS_CACHE_KEY);
+          if (rawDebt) debtFallback = JSON.parse(rawDebt) || [];
+        } catch (_) {}
+        try {
+          const rawFin = localStorage.getItem(FINANCE_CACHE_KEY);
+          if (rawFin) finFallback = JSON.parse(rawFin) || [];
+        } catch (_) {}
+      }
 
       // If persistent cache is empty or incomplete, try to merge from history
       if (!parsed || (!parsed.projects?.length && !parsed.debtRecords?.length && !parsed.financialRecords?.length)) {
@@ -379,7 +474,8 @@ export const autoBackupService = {
           if (Array.isArray(parsed.debtRecords)) {
             parsed.debtRecords = deduplicateList(parsed.debtRecords);
           }
-          return parsed as PersistentDataPayload;
+          cachedInMemoryPayload = parsed as PersistentDataPayload;
+          return cachedInMemoryPayload;
         }
       }
 
@@ -395,7 +491,7 @@ export const autoBackupService = {
             return ov ? { ...r, ...ov, category: ov.category || r.category, isUserEdited: true } : r;
           });
         }
-        return {
+        cachedInMemoryPayload = {
           financialRecords: finalFallbackFin,
           debtRecords: deduplicateList(debtFallback),
           projects: projFallback,
@@ -403,6 +499,7 @@ export const autoBackupService = {
           timestamp: Date.now(),
           version: 2,
         };
+        return cachedInMemoryPayload;
       }
 
       return null;
@@ -422,7 +519,6 @@ export const autoBackupService = {
         return autoBackupService.getPersistentData();
       }
 
-      // Find the backup with the maximum total data count or latest rich data
       let best = history[0];
       let maxScore = (best.financialRecordsCount || 0) + (best.debtRecordsCount || 0) + (best.projectsCount || 0);
 
@@ -468,18 +564,23 @@ export const autoBackupService = {
   },
 
   /**
-   * Get backup history list
+   * Get backup history list (cached in RAM to prevent repeated synchronous JSON.parse on render)
    */
   getAvailableBackups: (): SystemBackup[] => {
+    if (cachedInMemoryHistory !== null) {
+      return cachedInMemoryHistory;
+    }
     try {
       const raw = localStorage.getItem(BACKUP_HISTORY_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          return parsed;
+          cachedInMemoryHistory = parsed;
+          return cachedInMemoryHistory;
         }
       }
-      return [];
+      cachedInMemoryHistory = [];
+      return cachedInMemoryHistory;
     } catch (err) {
       console.error("[AutoBackup] Error getting backup history:", err);
       return [];
@@ -487,7 +588,8 @@ export const autoBackupService = {
   },
 
   /**
-   * Force sync to Firestore systemBackups collection
+   * Force sync to Firestore systemBackups collection (for manual explicit Sync/Restore actions only).
+   * Writes local stores in bulk ONCE and chunks Firestore writes in small batches so UI remains responsive.
    */
   forceSyncToCloud: async (
     financialRecords: any[],
@@ -498,7 +600,6 @@ export const autoBackupService = {
       const now = Date.now();
       const dateStr = new Date().toISOString();
 
-      // Ensure local cache is updated immediately
       const payload: PersistentDataPayload = {
         financialRecords,
         debtRecords,
@@ -507,8 +608,15 @@ export const autoBackupService = {
         timestamp: now,
         version: 2,
       };
-      localStorage.setItem(PERSISTENT_CACHE_KEY, JSON.stringify(payload));
+      cachedInMemoryPayload = payload;
+      safeSetLocalStorage(PERSISTENT_CACHE_KEY, JSON.stringify(payload));
 
+      // Bulk-update local collection stores in 1 pass instead of 700 individual serializations
+      if (Array.isArray(projects) && projects.length > 0) saveLocalCollectionStoreBulk("projects", projects);
+      if (Array.isArray(debtRecords) && debtRecords.length > 0) saveLocalCollectionStoreBulk("debtRecords", debtRecords);
+      if (Array.isArray(financialRecords) && financialRecords.length > 0) saveLocalCollectionStoreBulk("financialRecords", financialRecords);
+
+      lastCloudSyncTimestamp = now;
       await dbService.setDocument("systemBackups", "latest_synced_data", {
         updatedAt: dateStr,
         timestamp: now,
@@ -521,38 +629,35 @@ export const autoBackupService = {
         projects: projects || [],
       });
 
-      // Broadcast individual items directly to their respective Firestore collections
-      // so real-time onCollectionSnapshot listeners trigger across all instances immediately
-      const writeTasks: Promise<any>[] = [];
-
+      // Chunk individual Firestore writes in batches of 25 with UI yield so manual sync never locks main thread
+      const itemsToWrite: Array<{ col: string; docId: string; item: any }> = [];
       if (Array.isArray(projects)) {
         for (const p of projects) {
-          if (p && p.id) {
-            writeTasks.push(dbService.setDocument("projects", p.id, p));
-          }
+          if (p && p.id) itemsToWrite.push({ col: "projects", docId: p.id, item: p });
         }
       }
-
       if (Array.isArray(debtRecords)) {
         for (const d of debtRecords) {
           const docId = d.id || d.customId;
-          if (docId) {
-            writeTasks.push(dbService.setDocument("debtRecords", docId, d));
-          }
+          if (docId) itemsToWrite.push({ col: "debtRecords", docId, item: d });
         }
       }
-
       if (Array.isArray(financialRecords)) {
-        // Broadcast financial records
         for (const f of financialRecords) {
           const docId = f.id || f.customId;
-          if (docId) {
-            writeTasks.push(dbService.setDocument("financialRecords", docId, f));
-          }
+          if (docId) itemsToWrite.push({ col: "financialRecords", docId, item: f });
         }
       }
 
-      await Promise.allSettled(writeTasks);
+      const CHUNK_SIZE = 25;
+      for (let i = 0; i < itemsToWrite.length; i += CHUNK_SIZE) {
+        if (isQuotaExhausted()) break;
+        const batch = itemsToWrite.slice(i, i + CHUNK_SIZE);
+        await Promise.allSettled(
+          batch.map((w) => dbService.setDocument(w.col, w.docId, w.item))
+        );
+        await new Promise((r) => setTimeout(r, 20));
+      }
 
       return {
         success: true,

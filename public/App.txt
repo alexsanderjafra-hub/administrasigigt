@@ -18282,6 +18282,78 @@ const AdminFinanceScreen = ({
       if (item.customId) seenTalanganKeys.add(item.customId.toUpperCase());
     });
 
+    // Pre-parse bank allocations ONCE in O(N) instead of O(N^2) inside each custody transfer
+    const parsedSpendRecords: Array<{
+      id: string;
+      customId: string;
+      isJune: boolean;
+      allocations: Array<{ bankIdUpper: string; amount: number }>;
+    }> = [];
+    const spendByExactBankId = new Map<string, Array<{ id: string; customId: string; isJune: boolean; amount: number }>>();
+
+    financialRecords.forEach((sp) => {
+      if (sp.type !== "OUT") return;
+      if (!sp.refIdBank || sp.refIdBank.trim() === "" || sp.refIdBank === "-") return;
+      const spId = sp.id || "";
+      const spCustomId = sp.customId || "";
+      const isJune = Boolean(sp.date && sp.date.startsWith("2026-06"));
+      const allocs = parseBankAllocations(sp.refIdBank, sp.amount).map((a) => ({
+        bankIdUpper: (a.bankId || "").trim().toUpperCase(),
+        amount: a.amount,
+      }));
+      if (allocs.length === 0) return;
+      parsedSpendRecords.push({ id: spId, customId: spCustomId, isJune, allocations: allocs });
+      allocs.forEach((a) => {
+        if (!a.bankIdUpper) return;
+        const arr = spendByExactBankId.get(a.bankIdUpper);
+        const entry = { id: spId, customId: spCustomId, isJune, amount: a.amount };
+        if (arr) arr.push(entry);
+        else spendByExactBankId.set(a.bankIdUpper, [entry]);
+      });
+    });
+
+    const computeLinkedSpent = (recId: string, recCustomId: string, filterOutJune: boolean): number => {
+      const rCustom = (recCustomId || recId || "").trim().toUpperCase();
+      const rId = (recId || "").trim().toUpperCase();
+      let total = 0;
+
+      // Fast path for exact matches (covers ~99% of allocations in O(1))
+      const checkedSpendIds = new Set<string>();
+      const accumulateEntries = (entries?: Array<{ id: string; customId: string; isJune: boolean; amount: number }>) => {
+        if (!entries) return;
+        for (const e of entries) {
+          if (filterOutJune && e.isJune) continue;
+          if (e.id === recId || (recCustomId && e.customId === recCustomId)) continue;
+          const uid = `${e.id}|${e.customId}`;
+          if (checkedSpendIds.has(uid)) continue;
+          checkedSpendIds.add(uid);
+          total += e.amount;
+        }
+      };
+
+      if (rCustom) accumulateEntries(spendByExactBankId.get(rCustom));
+      if (rId && rId !== rCustom) accumulateEntries(spendByExactBankId.get(rId));
+
+      // Substring match fallback (only for bankId >= 6 chars that wasn't already exact-matched)
+      if (rCustom.length >= 6) {
+        for (const sp of parsedSpendRecords) {
+          if (filterOutJune && sp.isJune) continue;
+          if (sp.id === recId || (recCustomId && sp.customId === recCustomId)) continue;
+          const uid = `${sp.id}|${sp.customId}`;
+          if (checkedSpendIds.has(uid)) continue;
+          const matching = sp.allocations.find(
+            (a) => a.bankIdUpper !== rCustom && a.bankIdUpper !== rId && a.bankIdUpper.length >= 6 && rCustom.includes(a.bankIdUpper)
+          );
+          if (matching) {
+            checkedSpendIds.add(uid);
+            total += matching.amount;
+          }
+        }
+      }
+
+      return total;
+    };
+
     // 2. Scan through all OUT records from Bank PT that are custody transfers (Patty Cash / Kasbon topups)
     financialRecords.forEach((record) => {
       if (isUsingJuneBaseline && record.date.startsWith("2026-06")) return;
@@ -18323,19 +18395,7 @@ const AdminFinanceScreen = ({
           holder = "Faisal Mustopa (Admin)";
         }
 
-        // Total spending from this specific bank topup
-        const rCustom = (record.customId || record.id || "").trim().toUpperCase();
-        const rId = (record.id || "").trim().toUpperCase();
-        const linkedSpent = financialRecords
-          .filter((sp) => (isUsingJuneBaseline ? !sp.date.startsWith("2026-06") : true) && sp.type === "OUT" && sp.id !== record.id && sp.customId !== record.customId && Boolean(sp.refIdBank && sp.refIdBank.trim() !== "" && sp.refIdBank !== "-"))
-          .reduce((sum, sp) => {
-            const allocations = parseBankAllocations(sp.refIdBank || "", sp.amount);
-            const matching = allocations.find((alloc) => {
-              const aId = (alloc.bankId || "").trim().toUpperCase();
-              return aId === rCustom || aId === rId || (aId.length >= 6 && rCustom.includes(aId));
-            });
-            return sum + (matching ? matching.amount : 0);
-          }, 0);
+        const linkedSpent = computeLinkedSpent(record.id, record.customId || record.id, isUsingJuneBaseline);
 
         if (rId) seenTalanganKeys.add(rId);
         if (rCustom) seenTalanganKeys.add(rCustom);
@@ -18397,25 +18457,32 @@ const AdminFinanceScreen = ({
     }));
 
     const seen = new Set(items.map((i) => (i.customId || i.id).toUpperCase()));
+    const extraTopups: FinancialRecord[] = [];
     financialRecords.forEach((r) => {
       if (r.type !== "OUT") return;
       if (!isCustodyTransfer(r)) return;
       const cid = (r.customId || r.id || "").toUpperCase();
       if (cid && !seen.has(cid)) {
         seen.add(cid);
+        extraTopups.push(r);
+      }
+    });
+
+    if (extraTopups.length > 0) {
+      const spendByBankId = new Map<string, number>();
+      financialRecords.forEach((sp) => {
+        if (sp.type !== "OUT" || !sp.refIdBank || sp.refIdBank.trim() === "" || sp.refIdBank === "-") return;
+        const allocs = parseBankAllocations(sp.refIdBank, sp.amount);
+        allocs.forEach((a) => {
+          const aId = (a.bankId || "").trim().toUpperCase();
+          if (aId) spendByBankId.set(aId, (spendByBankId.get(aId) || 0) + a.amount);
+        });
+      });
+
+      extraTopups.forEach((r) => {
         const rCustom = (r.customId || r.id || "").trim().toUpperCase();
         const rId = (r.id || "").trim().toUpperCase();
-        const linkedSpent = financialRecords
-          .filter((sp) => sp.type === "OUT" && sp.id !== r.id && sp.customId !== r.customId && Boolean(sp.refIdBank && sp.refIdBank.trim() !== "" && sp.refIdBank !== "-"))
-          .reduce((sum, sp) => {
-            const allocations = parseBankAllocations(sp.refIdBank || "", sp.amount);
-            const matching = allocations.find((alloc) => {
-              const aId = (alloc.bankId || "").trim().toUpperCase();
-              return aId === rCustom || aId === rId || (aId.length >= 6 && rCustom.includes(aId));
-            });
-            return sum + (matching ? matching.amount : 0);
-          }, 0);
-
+        const linkedSpent = (spendByBankId.get(rCustom) || 0) + (rId && rId !== rCustom ? (spendByBankId.get(rId) || 0) : 0);
         items.push({
           id: r.id,
           customId: r.customId || r.id,
@@ -18425,8 +18492,8 @@ const AdminFinanceScreen = ({
           spentAmount: linkedSpent,
           balance: Math.max(0, r.amount - linkedSpent),
         });
-      }
-    });
+      });
+    }
 
     return items;
   }, [detailedTalanganList, financialRecords, isCustodyTransfer]);
@@ -19570,11 +19637,11 @@ const AdminFinanceScreen = ({
         recordLivePostBaselineId(eachCustomId, eachRecord.date);
         if (finId) recordLivePostBaselineId(finId, eachRecord.date);
 
-        await logActivity(
+        logActivity(
           "FINANCE",
           "CREATE",
           `Mencatat ${eachRecord.type === "IN" ? "Pemasukan" : "Pengeluaran"} (${eachRecord.flowType}) ID [${eachCustomId}]: ${eachRecord.description} senilai Rp ${eachRecord.amount.toLocaleString("id-ID")}`,
-        );
+        ).catch(() => {});
 
         // Auto-create/sync Debt (Hutang PT) for personal funds (Dana Pribadi otomatis menjadi Hutang Perusahaan)
         const sRawForm = (formData.sumberDana || "").trim().toUpperCase();
@@ -20086,11 +20153,12 @@ const AdminFinanceScreen = ({
         projects,
         `Catat Transaksi Baru ${formData.type}`
       );
-      autoBackupService.forceSyncToCloud(
+      autoBackupService.syncMasterSnapshotOnly(
         currentRecordsList,
         debtRecords,
-        projects
-      ).catch(() => {});
+        projects,
+        `Catat Transaksi Baru ${formData.type}`
+      );
     } catch (err) {
       console.error(err);
       if (currentRecordsList && currentRecordsList.length > 0) {
@@ -20101,11 +20169,12 @@ const AdminFinanceScreen = ({
           projects,
           `Catat Transaksi Baru ${formData.type} (Fallback)`
         );
-        autoBackupService.forceSyncToCloud(
+        autoBackupService.syncMasterSnapshotOnly(
           currentRecordsList,
           debtRecords,
-          projects
-        ).catch(() => {});
+          projects,
+          `Catat Transaksi Baru ${formData.type} (Fallback)`
+        );
       }
     } finally {
       setIsSubmittingTransaction(false);
@@ -24984,28 +25053,15 @@ const AdminFinanceScreen = ({
       {/* Add Transaction Modal */}
       <AnimatePresence>
         {showAddModal && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setShowAddModal(false)}
-              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[200]"
+          <div className="fixed inset-0 z-[210] flex items-center justify-center p-2 md:p-4">
+            <div
+              onClick={() => !isSubmittingTransaction && setShowAddModal(false)}
+              className="fixed inset-0 bg-slate-900/60"
             />
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="fixed inset-0 z-[210] flex items-center justify-center p-2 md:p-4"
+            <div
+              className="relative z-10 w-full max-w-full lg:max-w-[96vw] xl:max-w-[98vw] h-full md:h-[96vh] bg-white rounded-3xl md:rounded-[40px] shadow-2xl overflow-hidden flex flex-col"
+              onClick={(e) => e.stopPropagation()}
             >
-              <div
-                onClick={() => !isSubmittingTransaction && setShowAddModal(false)}
-                className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm"
-              />
-              <motion.div
-                className="relative z-10 w-full max-w-full lg:max-w-[96vw] xl:max-w-[98vw] h-full md:h-[96vh] bg-white rounded-3xl md:rounded-[40px] shadow-2xl overflow-hidden flex flex-col"
-                onClick={(e) => e.stopPropagation()}
-              >
                 <form
                   onSubmit={handleAddTransaction}
                   className="flex-1 flex flex-col min-h-0"
@@ -26552,9 +26608,8 @@ const AdminFinanceScreen = ({
                     </button>
                   </div>
                 </form>
-              </motion.div>
-            </motion.div>
-          </>
+            </div>
+          </div>
         )}
 
         {editingTransaction && (
@@ -32559,6 +32614,15 @@ export default function App() {
   const unreadNotificationsCount = (notifications || []).filter(
     (n) => !n.read && !n.isRead,
   ).length;
+
+  const latestRicherBackup = useMemo(() => {
+    const backups = autoBackupService.getAvailableBackups();
+    return backups.find(
+      (b) =>
+        b.projectsCount > (projects?.length || 0) ||
+        b.debtRecordsCount > (debtRecords?.length || 0)
+    ) || null;
+  }, [projects?.length, debtRecords?.length, financialRecords?.length]);
 
   // Google Sheets Auto Real-time Sync hook
   const [googleSheetsConfig, setGoogleSheetsConfig] = useState<any>(null);
@@ -38676,11 +38740,19 @@ export default function App() {
     if (!currentUser || !auth.currentUser) return;
 
     // Real-time synchronization across devices (AI Studio & Vercel deployment)
+    let lastProcessedCloudTs = 0;
     const unsubscribeCloudMaster = dbService.onDocumentSnapshot<any>(
       "systemBackups",
       "latest_synced_data",
       (cloudData) => {
         if (!cloudData) return;
+        const incomingTs = Number(cloudData.timestamp || 0);
+        if (incomingTs > 0 && incomingTs === lastProcessedCloudTs) {
+          return;
+        }
+        if (incomingTs > 0) {
+          lastProcessedCloudTs = incomingTs;
+        }
         if (Array.isArray(cloudData.projects) && cloudData.projects.length > 0) {
           const deletedProjIds = getDeletedCollectionIds("projects");
           setProjects((prev) => {
@@ -38728,6 +38800,8 @@ export default function App() {
           setFinancialRecords((prev) => {
             const seenIds = new Set<string>();
             const seenCustomIds = new Set<string>();
+            const dedupedIdxById = new Map<string, number>();
+            const dedupedIdxByCustomId = new Map<string, number>();
             const deduped: FinancialRecord[] = [];
 
             prev.forEach((f) => {
@@ -38735,8 +38809,15 @@ export default function App() {
               const fCust = (f.customId || "").trim().toUpperCase();
               if ((fId && deletedIds.has(fId)) || (fCust && deletedIds.has(fCust))) return;
               if ((fId && seenIds.has(fId)) || (fCust && seenCustomIds.has(fCust))) return;
-              if (fId) seenIds.add(fId);
-              if (fCust) seenCustomIds.add(fCust);
+              const idx = deduped.length;
+              if (fId) {
+                seenIds.add(fId);
+                dedupedIdxById.set(fId, idx);
+              }
+              if (fCust) {
+                seenCustomIds.add(fCust);
+                dedupedIdxByCustomId.set(fCust, idx);
+              }
               deduped.push(f);
             });
 
@@ -38746,18 +38827,18 @@ export default function App() {
               const cfCust = (cf.customId || "").trim().toUpperCase();
               if ((cfId && deletedIds.has(cfId)) || (cfCust && deletedIds.has(cfCust))) return;
 
-              const exIdx = deduped.findIndex((ex) => {
-                const exId = (ex.id || "").trim().toUpperCase();
-                const exCust = (ex.customId || "").trim().toUpperCase();
-                return (cfId && exId && cfId === exId) || (cfCust && exCust && cfCust === exCust);
-              });
+              let exIdx = -1;
+              if (cfId && dedupedIdxById.has(cfId)) {
+                exIdx = dedupedIdxById.get(cfId)!;
+              } else if (cfCust && dedupedIdxByCustomId.has(cfCust)) {
+                exIdx = dedupedIdxByCustomId.get(cfCust)!;
+              }
               const userEdit = userOverrides[cfId] || userOverrides[cfCust];
               if (exIdx >= 0) {
                 const ex = deduped[exIdx];
                 const resDate = userEdit?.date || cf.date || ex.date;
                 const isLocked = isSeedFinancialRecord(ex) || isSeedFinancialRecord(cf) || (resDate && resDate <= BASELINE_LOCK_DATE);
                 const isLive = isLocked ? false : Boolean(isLivePostBaselineTransaction(ex) || isLivePostBaselineTransaction(cf));
-                // Server cloud data updates local memory state!
                 deduped[exIdx] = {
                   ...ex,
                   ...cf,
@@ -38776,8 +38857,15 @@ export default function App() {
                   flowType: userEdit?.flowType || cf.flowType || ex.flowType,
                 };
               } else if (!((cfId && seenIds.has(cfId)) || (cfCust && seenCustomIds.has(cfCust)))) {
-                if (cfId) seenIds.add(cfId);
-                if (cfCust) seenCustomIds.add(cfCust);
+                const newIdx = deduped.length;
+                if (cfId) {
+                  seenIds.add(cfId);
+                  dedupedIdxById.set(cfId, newIdx);
+                }
+                if (cfCust) {
+                  seenCustomIds.add(cfCust);
+                  dedupedIdxByCustomId.set(cfCust, newIdx);
+                }
                 const resDate = userEdit?.date || cf.date;
                 const isLocked = isSeedFinancialRecord(cf) || (resDate && resDate <= BASELINE_LOCK_DATE);
                 const isLive = isLocked ? false : Boolean(isLivePostBaselineTransaction(cf));
@@ -38963,6 +39051,16 @@ export default function App() {
           });
         }
 
+        // Index Firestore data in O(N) Map so matching seed records runs in O(1) instead of O(N^2)
+        const dbByKeyMap = new Map<string, FinancialRecord>();
+        (data || []).forEach((item) => {
+          if (!item) return;
+          const iId = (item.id || "").trim().toUpperCase();
+          const iCust = (item.customId || "").trim().toUpperCase();
+          if (iId && !dbByKeyMap.has(iId)) dbByKeyMap.set(iId, item);
+          if (iCust && !dbByKeyMap.has(iCust)) dbByKeyMap.set(iCust, item);
+        });
+
         // 1. Data keuangan resmi sampai akhir September 2026 (580 transaksi orisinal)
         (seedFinancialRecords || []).forEach((seed) => {
           const rawId = (seed.id || "").trim().toUpperCase();
@@ -38979,11 +39077,7 @@ export default function App() {
             return;
           }
 
-          const fromDb = (data || []).find((item) => {
-            const iId = (item.id || "").trim().toUpperCase();
-            const iCustom = (item.customId || "").trim().toUpperCase();
-            return (rawId && iId === rawId) || (rawCustomId && iCustom === rawCustomId) || (fallbackKey && (iId === fallbackKey || iCustom === fallbackKey));
-          });
+          const fromDb = dbByKeyMap.get(rawCustomId) || dbByKeyMap.get(rawId) || dbByKeyMap.get(fallbackKey);
           const fromLocal = localFinMap.get(rawCustomId) || localFinMap.get(rawId) || localFinMap.get(fallbackKey);
           const userEdit = userOverrides[rawCustomId] || userOverrides[rawId] || userOverrides[fallbackKey];
 
@@ -39184,14 +39278,6 @@ export default function App() {
             }
             return r;
           });
-          try {
-            autoBackupService.saveInstantDataSnapshot(
-              finalRecordsSnapshot,
-              debtRecords,
-              projects,
-              "Sync live snapshot"
-            );
-          } catch (_) {}
 
           return finalRecordsSnapshot;
         });
@@ -52095,15 +52181,7 @@ export default function App() {
 
             <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 space-y-6 sm:space-y-8">
               {/* Smart Backup Alert Banner if richer historical snapshot is detected */}
-              {(() => {
-                const backups = autoBackupService.getAvailableBackups();
-                const latestRicher = backups.find(
-                  (b) =>
-                    (b.projectsCount > (projects?.length || 0)) ||
-                    (b.debtRecordsCount > (debtRecords?.length || 0))
-                );
-                if (!latestRicher) return null;
-                return (
+              {latestRicherBackup && (
                   <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs animate-in fade-in">
                     <div className="flex items-center gap-3">
                       <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center shrink-0">
@@ -52111,30 +52189,30 @@ export default function App() {
                       </div>
                       <div>
                         <div className="font-bold text-slate-800 text-sm">
-                          Riwayat Cadangan Sesi Sebelumnya Ditemukan ({latestRicher.projectsCount} Proyek, {latestRicher.debtRecordsCount} Hutang Piutang)
+                          Riwayat Cadangan Sesi Sebelumnya Ditemukan ({latestRicherBackup.projectsCount} Proyek, {latestRicherBackup.debtRecordsCount} Hutang Piutang)
                         </div>
                         <div className="text-xs text-slate-600">
-                          Tersimpan otomatis pada {new Date(latestRicher.timestamp).toLocaleDateString("id-ID")} {new Date(latestRicher.timestamp).toLocaleTimeString("id-ID")} • {latestRicher.trigger || "Aktivitas Input"}
+                          Tersimpan otomatis pada {new Date(latestRicherBackup.timestamp).toLocaleDateString("id-ID")} {new Date(latestRicherBackup.timestamp).toLocaleTimeString("id-ID")} • {latestRicherBackup.trigger || "Aktivitas Input"}
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={() => {
-                          if (latestRicher.data) {
-                            if (latestRicher.data.projects?.length) setProjects(latestRicher.data.projects);
-                            if (latestRicher.data.debtRecords?.length) setDebtRecords(latestRicher.data.debtRecords);
-                            if (latestRicher.data.financialRecords?.length) setFinancialRecords(latestRicher.data.financialRecords);
+                          if (latestRicherBackup.data) {
+                            if (latestRicherBackup.data.projects?.length) setProjects(latestRicherBackup.data.projects);
+                            if (latestRicherBackup.data.debtRecords?.length) setDebtRecords(latestRicherBackup.data.debtRecords);
+                            if (latestRicherBackup.data.financialRecords?.length) setFinancialRecords(latestRicherBackup.data.financialRecords);
                             autoBackupService.saveInstantDataSnapshot(
-                              latestRicher.data.financialRecords || financialRecords,
-                              latestRicher.data.debtRecords || debtRecords,
-                              latestRicher.data.projects || projects,
+                              latestRicherBackup.data.financialRecords || financialRecords,
+                              latestRicherBackup.data.debtRecords || debtRecords,
+                              latestRicherBackup.data.projects || projects,
                               "Pemulihan dari riwayat otomatis"
                             );
                             autoBackupService.forceSyncToCloud(
-                              latestRicher.data.financialRecords || financialRecords,
-                              latestRicher.data.debtRecords || debtRecords,
-                              latestRicher.data.projects || projects
+                              latestRicherBackup.data.financialRecords || financialRecords,
+                              latestRicherBackup.data.debtRecords || debtRecords,
+                              latestRicherBackup.data.projects || projects
                             ).catch(() => {});
                             setToastMessage("Data proyek, hutang piutang, dan keuangan berhasil dipulihkan & disinkronkan ke cloud!");
                             setShowToast(true);
@@ -52153,8 +52231,7 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                );
-              })()}
+              )}
 
               {/* Admin Quick Metrics - Only for Admin/Owner/Direktur */}
               {(currentUser?.role === "admin" ||
