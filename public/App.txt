@@ -1232,6 +1232,7 @@ const AdminInvoicesScreen = ({
   const [clientId, setClientId] = useState("");
   const [recipientName, setRecipientName] = useState("");
   const [recipientUp, setRecipientUp] = useState("");
+  const [invProjectName, setInvProjectName] = useState("");
   const [invoiceDate, setInvoiceDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [jobName, setJobName] = useState("");
@@ -1243,7 +1244,7 @@ const AdminInvoicesScreen = ({
     "Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09\nDs. Pisangan Jaya, Kec. Sepatan, Kab Tangerang\nBanten, 15525"
   );
   const [companyPhone, setCompanyPhone] = useState("0888-1687-794");
-  const [companyEmail, setCompanyEmail] = useState("info@gardainovasiglobaltech.id");
+  const [companyEmail, setCompanyEmail] = useState("pt.gardainovasiglobaltech@gmail.com");
   const [logoImage, setLogoImage] = useState<string | null>(null);
 
   // Table items state
@@ -1278,8 +1279,8 @@ const AdminInvoicesScreen = ({
   const [bankName, setBankName] = useState("Mandiri");
   const [bankAccountName, setBankAccountName] = useState("Garda Inovasi Globaltech");
   const [bankAccountNumber, setBankAccountNumber] = useState("1550014117173");
-  const [signatoryName, setSignatoryName] = useState("JIDAN RAMADHAN");
-  const [signatoryRole, setSignatoryRole] = useState("Direktur");
+  const [signatoryName, setSignatoryName] = useState("JIDAN RAMADHA");
+  const [signatoryRole, setSignatoryRole] = useState("");
   const [invoiceSignature, setInvoiceSignature] = useState<string>("");
   const [isImageRepoOpen, setIsImageRepoOpen] = useState(false);
   const [imageRepoTargetCategory, setImageRepoTargetCategory] = useState<"logo" | "signature">("signature");
@@ -1287,6 +1288,8 @@ const AdminInvoicesScreen = ({
 
   // Preview & Flexible Ongkir / Diskon (Request 1, 2, 3)
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewDocMode, setPreviewDocMode] = useState<"invoice" | "delivery_order">("invoice");
+  const [directPreviewInvoice, setDirectPreviewInvoice] = useState<any | null>(null);
   const [includeShipping, setIncludeShipping] = useState(false);
   const [shippingLabel, setShippingLabel] = useState("BIAYA PENGIRIMAN / ONGKIR");
   const [shippingCost, setShippingCost] = useState(0);
@@ -1506,12 +1509,15 @@ const AdminInvoicesScreen = ({
     setDownPaymentLabel("DOWN PAYMENT (DP)");
     setDownPaymentPercent(detectedDp);
 
+    if (q.projectName) setInvProjectName(q.projectName);
     if (q.compName) setCompanyName(q.compName);
     if (q.compAddress) setCompanyAddress(q.compAddress);
+    if (q.compPhone) setCompanyPhone(q.compPhone);
+    if (q.compEmail) setCompanyEmail(q.compEmail);
     if (q.compLogoUrl) setLogoImage(q.compLogoUrl);
     if (q.digitalSignatureUrl) setInvoiceSignature(q.digitalSignatureUrl);
     if (q.preparedBy) setSignatoryName(q.preparedBy);
-    if (q.preparedByTitle) setSignatoryRole(q.preparedByTitle);
+    setSignatoryRole("");
 
     setImportedAlert({
       number: q.number || "SPH",
@@ -1531,6 +1537,7 @@ const AdminInvoicesScreen = ({
     setClientId(inv.clientId || "");
     setRecipientName(inv.clientName || "");
     setRecipientUp(inv.recipientUp || "");
+    setInvProjectName(inv.projectName || "");
     setInvoiceDate(
       inv.invoiceDate ||
         (inv.createdAt ? inv.createdAt.split("T")[0] : new Date().toISOString().split("T")[0])
@@ -1542,16 +1549,14 @@ const AdminInvoicesScreen = ({
     if (inv.companyLogo) setLogoImage(inv.companyLogo);
     if (inv.companyName) setCompanyName(inv.companyName);
     if (inv.companyAddress) setCompanyAddress(inv.companyAddress);
-    if (inv.companyPhone) setCompanyPhone(inv.companyPhone);
-    if (inv.companyEmail) setCompanyEmail(inv.companyEmail);
+    setCompanyPhone(inv.companyPhone || "0888-1687-794");
+    setCompanyEmail(inv.companyEmail || "pt.gardainovasiglobaltech@gmail.com");
     if (inv.signatureImage || inv.digitalSignatureUrl) {
       setInvoiceSignature(inv.signatureImage || inv.digitalSignatureUrl);
     } else {
       setInvoiceSignature("");
     }
-    if (inv.signatoryRole || inv.signatoryTitle) {
-      setSignatoryRole(inv.signatoryRole || inv.signatoryTitle);
-    }
+    setSignatoryRole("");
 
     if (inv.itemsJson) {
       try {
@@ -1570,7 +1575,7 @@ const AdminInvoicesScreen = ({
     setBankName(inv.bankName || "Mandiri");
     setBankAccountName(inv.bankAccountName || "Garda Inovasi Globaltech");
     setBankAccountNumber(inv.bankAccountNumber || "1550014117173");
-    setSignatoryName(inv.signatoryName || "JIDAN RAMADHAN");
+    setSignatoryName(inv.signatoryName || "JIDAN RAMADHA");
     setOverrideTerbilang(inv.overrideTerbilang || "");
     setIncludeShipping(inv.includeShipping || false);
     setShippingLabel(inv.shippingLabel || "BIAYA PENGIRIMAN / ONGKIR");
@@ -1612,6 +1617,7 @@ const AdminInvoicesScreen = ({
     setClientId("");
     setRecipientName("");
     setRecipientUp("");
+    setInvProjectName("");
     setInvoiceDate(new Date().toISOString().split("T")[0]);
     setDueDate("");
     setJobName("Pemeliharaan IPAL");
@@ -1625,8 +1631,10 @@ const AdminInvoicesScreen = ({
     setBankName("Mandiri");
     setBankAccountName("Garda Inovasi Globaltech");
     setBankAccountNumber("1550014117173");
-    setSignatoryName("JIDAN RAMADHAN");
-    setSignatoryRole("Direktur");
+    setSignatoryName("JIDAN RAMADHA");
+    setSignatoryRole("");
+    setCompanyPhone("0888-1687-794");
+    setCompanyEmail("pt.gardainovasiglobaltech@gmail.com");
     setInvoiceSignature("");
     setOverrideTerbilang("");
     setIncludeShipping(false);
@@ -1644,7 +1652,63 @@ const AdminInvoicesScreen = ({
     setView("build");
   };
 
-  const handleSaveInvoice = async (openPreview: boolean = false) => {
+  const resolveMatchedClientAddress = (cId?: string, cName?: string, fallbackAddr?: string): string => {
+    if (fallbackAddr && String(fallbackAddr).trim()) return String(fallbackAddr).trim();
+    const matched = clients.find(
+      (c) =>
+        (cId && c.id === cId) ||
+        (cName && c.name?.toLowerCase().trim() === cName.toLowerCase().trim())
+    );
+    return matched?.address || "";
+  };
+
+  const handleOpenListDocPreview = (inv: any, mode: "invoice" | "delivery_order") => {
+    let parsedItems: any[] = [];
+    if (inv.itemsJson) {
+      try {
+        parsedItems = JSON.parse(inv.itemsJson);
+      } catch {
+        parsedItems = Array.isArray(inv.items) ? inv.items : [];
+      }
+    } else if (Array.isArray(inv.items)) {
+      parsedItems = inv.items;
+    }
+
+    const resolvedAddr = resolveMatchedClientAddress(
+      inv.clientId,
+      inv.clientName,
+      inv.deliveryAddress || inv.clientAddress || inv.recipientAddress
+    );
+
+    setDirectPreviewInvoice({
+      ...inv,
+      items: parsedItems,
+      recipientName: inv.clientName || inv.recipientName || "",
+      clientName: inv.clientName || inv.recipientName || "",
+      recipientUp: inv.recipientUp || "",
+      projectName: inv.projectName || "",
+      clientAddress: resolvedAddr,
+      deliveryAddress: resolvedAddr,
+      invoiceDate:
+        inv.invoiceDate ||
+        (inv.createdAt ? inv.createdAt.split("T")[0] : new Date().toISOString().split("T")[0]),
+      logoImage: inv.logoImage || inv.companyLogo || logoImage || "",
+      digitalSignatureUrl: inv.digitalSignatureUrl || inv.signatureImage || "",
+      signatureImage: inv.signatureImage || inv.digitalSignatureUrl || "",
+      signatoryName: inv.signatoryName || "JIDAN RAMADHA",
+      signatoryTitle: "",
+      signatoryRole: "",
+      poRef: inv.sphRefNumber ? `SPH: ${inv.sphRefNumber}` : inv.poRef || undefined,
+      grandTotal: inv.grandTotal !== undefined ? inv.grandTotal : inv.amount,
+    });
+    setPreviewDocMode(mode);
+    setIsPreviewOpen(true);
+  };
+
+  const handleSaveInvoice = async (
+    openPreview: boolean = false,
+    docMode: "invoice" | "delivery_order" = "invoice"
+  ) => {
     if (!recipientName) {
       alert("Masukkan nama penerima / klien.");
       return;
@@ -1654,18 +1718,29 @@ const AdminInvoicesScreen = ({
       return;
     }
 
+    const existingInv = editingInvoiceId
+      ? invoices.find((v) => v.id === editingInvoiceId)
+      : null;
+    const resolvedAddress = resolveMatchedClientAddress(
+      clientId,
+      recipientName,
+      (existingInv as any)?.deliveryAddress || (existingInv as any)?.clientAddress
+    );
+
     const payload = {
       invoiceNumber,
       sphRefNumber: sphRefNumber || undefined,
       quotationNumber: sphRefNumber || undefined,
       clientId,
       clientName: recipientName,
+      clientAddress: resolvedAddress,
+      deliveryAddress: resolvedAddress,
       amount: Number(grandTotal),
       total: Number(grandTotal),
       status,
       dueDate,
       createdAt: editingInvoiceId
-        ? invoices.find((v) => v.id === editingInvoiceId)?.createdAt || new Date().toISOString()
+        ? existingInv?.createdAt || new Date().toISOString()
         : new Date().toISOString(),
 
       // Extended detailed fields
@@ -1675,6 +1750,7 @@ const AdminInvoicesScreen = ({
       companyPhone,
       companyEmail,
       recipientUp,
+      projectName: invProjectName.trim(),
       invoiceDate,
       jobName,
       enablePPN,
@@ -1698,9 +1774,9 @@ const AdminInvoicesScreen = ({
       bankName,
       bankAccountName,
       bankAccountNumber,
-      signatoryName,
-      signatoryRole,
-      signatoryTitle: signatoryRole,
+      signatoryName: signatoryName || "JIDAN RAMADHA",
+      signatoryRole: "",
+      signatoryTitle: "",
       signatureImage: invoiceSignature,
       digitalSignatureUrl: invoiceSignature,
       overrideTerbilang: overrideTerbilang || computedTerbilang,
@@ -1716,7 +1792,10 @@ const AdminInvoicesScreen = ({
         );
         alert("Invoice berhasil diperbarui!");
       } else {
-        await dbService.createDocument("invoices", payload);
+        const createdId = await dbService.createDocument("invoices", payload);
+        if (createdId) {
+          setEditingInvoiceId(createdId);
+        }
         await logActivity(
           "INVOICES",
           "CREATE",
@@ -1725,6 +1804,8 @@ const AdminInvoicesScreen = ({
         alert("Invoice baru berhasil disimpan!");
       }
       if (openPreview) {
+        setDirectPreviewInvoice(null);
+        setPreviewDocMode(docMode);
         setIsPreviewOpen(true);
       } else {
         setView("list");
@@ -2028,8 +2109,16 @@ const AdminInvoicesScreen = ({
                               </button>
                             )}
                             <button
+                              onClick={() => handleOpenListDocPreview(inv, "delivery_order")}
+                              className="p-2.5 bg-teal-50 text-teal-700 hover:bg-teal-100 hover:text-teal-800 rounded-xl transition-all font-sans text-xs font-black flex items-center gap-1.5 cursor-pointer shadow-xs"
+                              title="Preview & Unduh Format Delivery Order (DO) dari Invoice ini"
+                            >
+                              <Package size={15} className="text-teal-600" />
+                              <span>Delivery Order</span>
+                            </button>
+                            <button
                               onClick={() => handleEditInvoice(inv)}
-                              className="p-2.5 hover:bg-indigo-50 hover:text-indigo-600 rounded-xl transition-all font-sans text-xs font-bold flex items-center gap-1.5"
+                              className="p-2.5 hover:bg-indigo-50 hover:text-indigo-600 rounded-xl transition-all font-sans text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                               title="Buka Builder (Edit & Print)"
                             >
                               <FileEdit size={16} />
@@ -2145,7 +2234,16 @@ const AdminInvoicesScreen = ({
               </button>
               <button
                 type="button"
-                onClick={() => handleSaveInvoice(true)}
+                onClick={() => handleSaveInvoice(true, "delivery_order")}
+                className="bg-teal-600 text-white px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:bg-teal-700 transition-all cursor-pointer flex items-center gap-2"
+                title="Simpan Invoice dan Buka Format Delivery Order (DO) untuk Download PDF"
+              >
+                <Package size={14} />
+                <span>Format Delivery Order</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveInvoice(true, "invoice")}
                 className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider shadow-md hover:bg-indigo-700 transition-all cursor-pointer flex items-center gap-2"
               >
                 <Eye size={14} />
@@ -2287,37 +2385,59 @@ const AdminInvoicesScreen = ({
                 </label>
               </div>
 
-              {/* Info PT Pengirim */}
-              <div className="md:col-span-8 space-y-2 text-right">
-                <input
-                  type="text"
-                  value={companyName}
-                  onChange={(e) => setCompanyName(e.target.value)}
-                  placeholder="Nama Perusahaan Pengirim"
-                  className="w-full text-right font-black text-base md:text-lg text-slate-900 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none pb-1"
-                />
-                <textarea
-                  rows={2}
-                  value={companyAddress}
-                  onChange={(e) => setCompanyAddress(e.target.value)}
-                  placeholder="Alamat Perusahaan Pengirim"
-                  className="w-full text-right text-xs font-semibold text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none resize-none leading-relaxed"
-                />
-                <div className="flex flex-col sm:flex-row sm:justify-end gap-2 text-xs font-bold text-slate-500">
+              {/* Info PT Pengirim (Selaras dengan Quotation & PO) */}
+              <div className="md:col-span-8 space-y-2.5">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                    INPUT NAMA PT KITA
+                  </label>
                   <input
                     type="text"
-                    value={companyPhone}
-                    onChange={(e) => setCompanyPhone(e.target.value)}
-                    placeholder="Telp: 0888-1687-794"
-                    className="text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none text-xs"
+                    required
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    placeholder="INPUT NAMA PT KITA"
+                    className="w-full px-4 py-2.5 bg-white border-2 border-slate-300 rounded-xl text-sm font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                   />
-                  <input
-                    type="text"
-                    value={companyEmail}
-                    onChange={(e) => setCompanyEmail(e.target.value)}
-                    placeholder="Email: info@gardainovasiglobaltech.id"
-                    className="text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none text-xs text-indigo-600"
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                    INPUT ALAMAT
+                  </label>
+                  <textarea
+                    rows={2}
+                    required
+                    value={companyAddress}
+                    onChange={(e) => setCompanyAddress(e.target.value)}
+                    placeholder="INPUT ALAMAT LENGKAP KANTOR / WORKSHOP..."
+                    className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none transition-all resize-none placeholder:text-slate-400"
                   />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                      NOMOR TELEPON / WA
+                    </label>
+                    <input
+                      type="text"
+                      value={companyPhone}
+                      onChange={(e) => setCompanyPhone(e.target.value)}
+                      placeholder="0888-1687-794"
+                      className="w-full px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                      EMAIL PERUSAHAAN
+                    </label>
+                    <input
+                      type="email"
+                      value={companyEmail}
+                      onChange={(e) => setCompanyEmail(e.target.value)}
+                      placeholder="pt.gardainovasiglobaltech@gmail.com"
+                      className="w-full px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-indigo-700 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                    />
+                  </div>
                 </div>
               </div>
             </div>
@@ -2331,7 +2451,7 @@ const AdminInvoicesScreen = ({
 
             {/* 3. METADATA DUA KOLOM: KIRI (KEPADA YTH) & KANAN (DETAIL INVOICE) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {/* Kolom Kiri: Kepada Yth */}
+              {/* Kolom Kiri: Kepada Yth, UP (Opsional), Proyek (Opsional) */}
               <div className="space-y-2.5 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
                 <div className="flex items-center gap-2">
                   <span className="w-20 text-[10px] font-black text-slate-500 uppercase tracking-wider shrink-0">
@@ -2353,14 +2473,14 @@ const AdminInvoicesScreen = ({
 
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
-                    KEPADA
+                    KEPADA <span className="text-rose-500">*</span>
                   </span>
                   <input
                     type="text"
                     required
                     value={recipientName}
                     onChange={(e) => setRecipientName(e.target.value)}
-                    placeholder="Nama Instansi / Perusahaan Klien"
+                    placeholder="INPUT NAMA PT"
                     className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                   />
                 </div>
@@ -2372,7 +2492,19 @@ const AdminInvoicesScreen = ({
                     type="text"
                     value={recipientUp}
                     onChange={(e) => setRecipientUp(e.target.value)}
-                    placeholder="Nama Penerima / Jabatan PIC"
+                    placeholder="INPUT NAMA PENERIMA (OPSIONAL)"
+                    className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                  />
+                </div>
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                  <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                    PROYEK
+                  </span>
+                  <input
+                    type="text"
+                    value={invProjectName}
+                    onChange={(e) => setInvProjectName(e.target.value)}
+                    placeholder="INPUT NAMA PROYEK (OPSIONAL)"
                     className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                   />
                 </div>
@@ -3099,7 +3231,7 @@ const AdminInvoicesScreen = ({
                   <span>Pilih dari Penampung TTD</span>
                 </button>
 
-                {/* INPUT NAMA LENGKAP & JABATAN */}
+                {/* INPUT NAMA LENGKAP */}
                 <div className="space-y-2">
                   <input
                     type="text"
@@ -3108,14 +3240,6 @@ const AdminInvoicesScreen = ({
                     onChange={(e) => setSignatoryName(e.target.value)}
                     placeholder="INPUT NAMA LENGKAP"
                     className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black uppercase tracking-wider text-slate-900 focus:border-slate-800 outline-none"
-                  />
-                  <input
-                    type="text"
-                    required
-                    value={signatoryRole}
-                    onChange={(e) => setSignatoryRole(e.target.value)}
-                    placeholder="INPUT NAMA JABATAN (misal: Direktur / Direktur Keuangan)"
-                    className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none"
                   />
                 </div>
               </div>
@@ -3140,7 +3264,16 @@ const AdminInvoicesScreen = ({
               </button>
               <button
                 type="button"
-                onClick={() => handleSaveInvoice(true)}
+                onClick={() => handleSaveInvoice(true, "delivery_order")}
+                className="px-6 py-3 bg-teal-600 hover:bg-teal-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2"
+                title="Simpan Invoice dan Buka Format Delivery Order (DO) untuk Download PDF"
+              >
+                <Package size={14} />
+                <span>Format Delivery Order</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSaveInvoice(true, "invoice")}
                 className="px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xl transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <Eye size={14} />
@@ -3151,66 +3284,89 @@ const AdminInvoicesScreen = ({
         </div>
       )}
 
-          {/* Interactive PDF Preview Modal for Invoice (Request 1 & 3) */}
+          {/* Interactive PDF Preview Modal for Invoice & Delivery Order */}
       <AnimatePresence>
-        {isPreviewOpen && (
-          <DocumentPreviewModal
-            isOpen={isPreviewOpen}
-            onClose={() => setIsPreviewOpen(false)}
-            type="invoice"
-            initialInvoiceData={{
-              invoiceNumber,
-              clientId,
-              clientName: recipientName,
-              recipientName,
-              recipientUp,
-              clientAddress: "",
-              invoiceDate,
-              dueDate,
-              jobName,
-              bankName,
-              bankAccountName,
-              bankAccountNumber,
-              notes: "- Pembayaran via transfer ke rekening di atas.\n- Bukti bayar mohon konfirmasi ke Admin.",
-              items,
-              enablePPN,
-              taxPercentage,
-              includeShipping,
-              shippingLabel,
-              shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
-              includeDiscount,
-              discountType,
-              discountVal: includeDiscount ? discountVal : 0,
-              includeDownPayment,
-              downPaymentLabel: paymentStages[0]?.label || downPaymentLabel,
-              downPaymentPercent: paymentStages[0]?.percent ?? downPaymentPercent,
-              downPaymentAmount,
-              remainingAmount,
-              totalFullProject,
-              paymentStages: includeDownPayment ? paymentStages : [],
-              amount: grandTotal,
-              grandTotal,
-              companyName,
-              companyAddress,
-              companyPhone,
-              companyEmail,
-              logoImage,
-              signatoryName,
-              signatoryTitle: signatoryRole,
-              signatoryRole,
-              digitalSignatureUrl: invoiceSignature,
-              signatureImage: invoiceSignature,
-              sphRefNumber: sphRefNumber || undefined,
-              poRef: sphRefNumber ? `SPH: ${sphRefNumber}` : undefined,
-              overrideTerbilang,
-            }}
-            onSaveInvoice={async (updatedData) => {
-              if (editingInvoiceId) {
-                await dbService.updateDocument("invoices", editingInvoiceId, updatedData);
-              }
-            }}
-          />
-        )}
+        {isPreviewOpen && (() => {
+          const activeEditingInv: any = editingInvoiceId
+            ? invoices.find((v) => v.id === editingInvoiceId)
+            : null;
+          const builderAddress = resolveMatchedClientAddress(
+            clientId,
+            recipientName,
+            activeEditingInv?.deliveryAddress || activeEditingInv?.clientAddress
+          );
+          const modalInvoiceData = directPreviewInvoice || {
+            invoiceNumber,
+            clientId,
+            clientName: recipientName,
+            recipientName,
+            recipientUp,
+            projectName: invProjectName,
+            clientAddress: builderAddress,
+            deliveryAddress: builderAddress,
+            doNumber: activeEditingInv?.doNumber,
+            doDate: activeEditingInv?.doDate,
+            vehicleInfo: activeEditingInv?.vehicleInfo,
+            receivedByText: activeEditingInv?.receivedByText,
+            doNotes: activeEditingInv?.doNotes,
+            invoiceDate,
+            dueDate,
+            jobName,
+            bankName,
+            bankAccountName,
+            bankAccountNumber,
+            notes: "- Pembayaran via transfer ke rekening di atas.\n- Bukti bayar mohon konfirmasi ke Admin.",
+            items,
+            enablePPN,
+            taxPercentage,
+            includeShipping,
+            shippingLabel,
+            shippingCost: includeShipping ? Number(shippingCost || 0) : 0,
+            includeDiscount,
+            discountType,
+            discountVal: includeDiscount ? discountVal : 0,
+            includeDownPayment,
+            downPaymentLabel: paymentStages[0]?.label || downPaymentLabel,
+            downPaymentPercent: paymentStages[0]?.percent ?? downPaymentPercent,
+            downPaymentAmount,
+            remainingAmount,
+            totalFullProject,
+            paymentStages: includeDownPayment ? paymentStages : [],
+            amount: grandTotal,
+            grandTotal,
+            companyName,
+            companyAddress,
+            companyPhone,
+            companyEmail,
+            logoImage,
+            signatoryName: signatoryName || "JIDAN RAMADHA",
+            signatoryTitle: "",
+            signatoryRole: "",
+            digitalSignatureUrl: invoiceSignature,
+            signatureImage: invoiceSignature,
+            sphRefNumber: sphRefNumber || undefined,
+            poRef: sphRefNumber ? `SPH: ${sphRefNumber}` : undefined,
+            overrideTerbilang,
+          };
+          const targetInvId = directPreviewInvoice?.id || editingInvoiceId;
+
+          return (
+            <DocumentPreviewModal
+              isOpen={isPreviewOpen}
+              onClose={() => {
+                setIsPreviewOpen(false);
+                setDirectPreviewInvoice(null);
+              }}
+              type={previewDocMode}
+              initialInvoiceData={modalInvoiceData}
+              onSaveInvoice={async (updatedData) => {
+                if (targetInvId) {
+                  await dbService.updateDocument("invoices", targetInvId, updatedData);
+                }
+              }}
+            />
+          );
+        })()}
       </AnimatePresence>
 
       {/* Image Repository for Invoice (Logo & Signature) */}
@@ -32405,11 +32561,13 @@ export default function App() {
   const [serviceFee, setServiceFee] = useState<number>(0);
   const [quoteCompName, setQuoteCompName] = useState<string>("PT. GARDA INOVASI GLOBALTECH");
   const [quoteCompAddress, setQuoteCompAddress] = useState<string>("Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09, Ds. Pisangan Jaya, Kec. Sepatan, Kab Tangerang, Banten 15525");
+  const [quoteCompPhone, setQuoteCompPhone] = useState<string>("0888-1687-794");
+  const [quoteCompEmail, setQuoteCompEmail] = useState<string>("pt.gardainovasiglobaltech@gmail.com");
   const [quoteCompLogo, setQuoteCompLogo] = useState<string>("");
   const [quoteSignature, setQuoteSignature] = useState<string>("");
   const [isImageRepoOpen, setIsImageRepoOpen] = useState(false);
   const [imageRepoTargetCategory, setImageRepoTargetCategory] = useState<"logo" | "signature" | "all">("all");
-  const [quotePreparedByName, setQuotePreparedByName] = useState<string>("");
+  const [quotePreparedByName, setQuotePreparedByName] = useState<string>("JIDAN RAMADHA");
   const [quotePreparedByTitle, setQuotePreparedByTitle] = useState<string>("");
   const [includeDiscount, setIncludeDiscount] = useState<boolean>(false);
   const [quoteDiscountType, setQuoteDiscountType] = useState<"rupiah" | "percent">("rupiah");
@@ -32769,10 +32927,12 @@ export default function App() {
         setQuoteTaxRate(viewingQuotation.taxRate !== undefined ? viewingQuotation.taxRate : 11);
         setQuoteCompName(viewingQuotation.compName || "PT. GARDA INOVASI GLOBALTECH");
         setQuoteCompAddress(viewingQuotation.compAddress || "Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09, Ds. Pisangan Jaya, Kec. Sepatan, Kab Tangerang, Banten 15525");
+        setQuoteCompPhone(viewingQuotation.compPhone || "0888-1687-794");
+        setQuoteCompEmail(viewingQuotation.compEmail || "pt.gardainovasiglobaltech@gmail.com");
         setQuoteCompLogo(viewingQuotation.compLogoUrl || "");
         setQuoteSignature(viewingQuotation.digitalSignatureUrl || "");
-        setQuotePreparedByName(viewingQuotation.preparedBy || currentUser?.name || "ALEXSANDER");
-        setQuotePreparedByTitle(viewingQuotation.preparedByTitle || "");
+        setQuotePreparedByName(viewingQuotation.preparedBy || "JIDAN RAMADHA");
+        setQuotePreparedByTitle("");
         setIncludeDiscount(viewingQuotation.includeDiscount !== undefined ? viewingQuotation.includeDiscount : false);
         setQuoteDiscountType(viewingQuotation.discountType || "rupiah");
         setQuoteDiscountVal(viewingQuotation.discountVal || 0);
@@ -32836,6 +32996,8 @@ export default function App() {
         setQuoteTaxRate(11);
         setQuoteCompName("PT. GARDA INOVASI GLOBALTECH");
         setQuoteCompAddress("Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09, Ds. Pisangan Jaya, Kec. Sepatan, Kab Tangerang, Banten 15525");
+        setQuoteCompPhone("0888-1687-794");
+        setQuoteCompEmail("pt.gardainovasiglobaltech@gmail.com");
         
         // Auto-load previously uploaded logo and signature from repository if available
         const savedLogo = imageRepositoryService.getLatestImage("logo");
@@ -32843,7 +33005,7 @@ export default function App() {
         const savedSig = imageRepositoryService.getLatestImage("signature");
         setQuoteSignature(savedSig || "");
 
-        setQuotePreparedByName(currentUser?.name || "ALEXSANDER");
+        setQuotePreparedByName("JIDAN RAMADHA");
         setQuotePreparedByTitle("");
         setIncludeDiscount(false);
         setQuoteDiscountType("rupiah");
@@ -36132,10 +36294,12 @@ export default function App() {
       grandTotal,
       notes: quoteNotes,
       paymentTerms: quotePaymentTerms,
-      preparedBy: quotePreparedByName || currentUser?.name || "ALEXSANDER",
-      preparedByTitle: quotePreparedByTitle?.trim() || "",
+      preparedBy: quotePreparedByName || "JIDAN RAMADHA",
+      preparedByTitle: "",
       compName: quoteCompName,
       compAddress: quoteCompAddress,
+      compPhone: quoteCompPhone,
+      compEmail: quoteCompEmail,
       compLogoUrl: quoteCompLogo,
       digitalSignatureUrl: quoteSignature,
       userId: currentUser?.id,
@@ -36317,28 +36481,45 @@ export default function App() {
 
     pdf.setTextColor(0, 0, 0);
     pdf.setFontSize(12);
-    pdf.text("PT. GARDA INOVASI GLOBALTECH", pageWidth - 15, 20, {
+    pdf.setFont("helvetica", "bold");
+    pdf.text(quotation.compName || "PT. GARDA INOVASI GLOBALTECH", pageWidth - 15, 20, {
       align: "right",
     });
     pdf.setFontSize(8);
     pdf.setFont("helvetica", "normal");
-    pdf.text(
-      "Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09",
-      pageWidth - 15,
-      25,
-      { align: "right" },
-    );
-    pdf.text(
-      "Ds. Pisangan Jaya, Kec. Sepatan, Kab Tangerang",
-      pageWidth - 15,
-      29,
-      { align: "right" },
-    );
-    pdf.text("Banten, 15525 | 0888-1687-794", pageWidth - 15, 33, {
-      align: "right",
-    });
+    const rawAddr = (quotation.compAddress || "Perumahan Griya Sepatan Blok B6 Nomor 35, RT.02/09\nDs. Pisangan Jaya, Kec. Sepatan, Kab Tangerang\nBanten, 15525").trim();
+    const addrParts = rawAddr.includes("\n")
+      ? rawAddr.split("\n").map((s) => s.trim()).filter(Boolean)
+      : rawAddr.split(",").reduce((acc: string[], part: string) => {
+          const last = acc[acc.length - 1];
+          if (!last || (last + ", " + part.trim()).length > 48) {
+            acc.push(part.trim());
+          } else {
+            acc[acc.length - 1] = `${last}, ${part.trim()}`;
+          }
+          return acc;
+        }, []);
+    const line1 = addrParts[0] || "";
+    const line2 = addrParts.slice(1, -1).join(", ") || addrParts[1] || "";
+    const cityPart = addrParts.length > 2 ? addrParts[addrParts.length - 1] : (addrParts.length === 2 ? "" : "Banten, 15525");
+    const phoneStr = (quotation.compPhone || "0888-1687-794").trim();
+    const emailStr = (quotation.compEmail || "pt.gardainovasiglobaltech@gmail.com").trim();
+    let headerY = 25;
+    if (line1) {
+      pdf.text(line1, pageWidth - 15, headerY, { align: "right" });
+      headerY += 4;
+    }
+    if (line2) {
+      pdf.text(line2, pageWidth - 15, headerY, { align: "right" });
+      headerY += 4;
+    }
+    const cityPhoneLine = [cityPart, phoneStr].filter(Boolean).join(" | ");
+    if (cityPhoneLine) {
+      pdf.text(cityPhoneLine, pageWidth - 15, headerY, { align: "right" });
+      headerY += 4;
+    }
     pdf.setTextColor(0, 51, 153);
-    pdf.text("info@globaltech.id", pageWidth - 15, 37, { align: "right" });
+    pdf.text(emailStr, pageWidth - 15, headerY, { align: "right" });
 
     pdf.setTextColor(0, 0, 0);
     pdf.setFontSize(13);
@@ -36664,8 +36845,7 @@ export default function App() {
       y += 22;
     }
 
-    const signerName = (quotation.preparedBy || "ALEXSANDER").toUpperCase();
-    const signerTitle = (quotation.preparedByTitle || "").trim();
+    const signerName = (quotation.preparedBy || "JIDAN RAMADHA").toUpperCase();
     pdf.setFontSize(8.5);
     pdf.setFont("helvetica", "bold");
     pdf.setTextColor(15, 23, 42);
@@ -36675,13 +36855,6 @@ export default function App() {
     pdf.setDrawColor(51, 65, 85);
     pdf.setLineWidth(0.4);
     pdf.line(sigLeftX, y + 1.2, sigLeftX + Math.max(nameW, 35), y + 1.2);
-
-    if (signerTitle) {
-      pdf.setFontSize(8);
-      pdf.setFont("helvetica", "normal");
-      pdf.setTextColor(71, 85, 105);
-      pdf.text(signerTitle, sigLeftX, y + 5.5);
-    }
 
     // Check for referenced BOQ project
     const connectedBoq = quotation.boqProjectId ? boqProjects.find(b => b.id === quotation.boqProjectId) : null;
@@ -36801,9 +36974,31 @@ export default function App() {
       });
     }
 
-    pdf.save(
-      `Penawaran_${quotation.recipient.split(" ")[0]}_${quotation.jobDescription.split(" ")[0]}.pdf`,
-    );
+    const cleanJob = (quotation.jobDescription || quotation.items?.[0]?.description || "PEKERJAAN")
+      .trim()
+      .toUpperCase()
+      .replace(/[\/\\:*?"<>|]+/g, " ")
+      .replace(/\s+/g, " ");
+    const cleanRecip = (quotation.recipient || "KLIEN")
+      .trim()
+      .toUpperCase()
+      .replace(/[\/\\:*?"<>|]+/g, " ")
+      .replace(/\s+/g, " ");
+    let cleanNo = (quotation.number || "SPH")
+      .trim()
+      .toUpperCase()
+      .replace(/[\/\\]+/g, "_")
+      .replace(/[^A-Z0-9_-]/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "");
+    if (!cleanNo.includes("SPH")) {
+      const d = quotation.date ? new Date(quotation.date) : new Date();
+      const validD = isNaN(d.getTime()) ? new Date() : d;
+      const bulan = validD.toLocaleString("en-US", { month: "short" }).toUpperCase();
+      const tahun = validD.getFullYear();
+      cleanNo = `${cleanNo}_SPH_GIGT_${bulan}_${tahun}`;
+    }
+    pdf.save(`PENAWARAN_${cleanJob}_${cleanRecip}_${cleanNo}.pdf`);
   };
 
   const numberToWords = (n: number): string => {
@@ -37432,7 +37627,7 @@ export default function App() {
                 </button>
               </div>
 
-              {/* INPUT NAMA PT KITA & INPUT ALAMAT (KANAN) */}
+              {/* INPUT NAMA PT KITA, ALAMAT, TELEPON & EMAIL (KANAN) */}
               <div className="md:col-span-8 space-y-2.5">
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
@@ -37460,6 +37655,32 @@ export default function App() {
                     className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none transition-all resize-none placeholder:text-slate-400"
                   />
                 </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                      NOMOR TELEPON / WA
+                    </label>
+                    <input
+                      type="text"
+                      value={quoteCompPhone}
+                      onChange={(e) => setQuoteCompPhone(e.target.value)}
+                      placeholder="0888-1687-794"
+                      className="w-full px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                      EMAIL PERUSAHAAN
+                    </label>
+                    <input
+                      type="email"
+                      value={quoteCompEmail}
+                      onChange={(e) => setQuoteCompEmail(e.target.value)}
+                      placeholder="pt.gardainovasiglobaltech@gmail.com"
+                      className="w-full px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-indigo-700 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -37475,11 +37696,11 @@ export default function App() {
 
             {/* 3. METADATA: KEPADA & UP (KIRI) | NOMOR, TANGGAL & PEKERJAAN (KANAN) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6 pt-1">
-              {/* KOLOM KIRI: KEPADA & UP & PROYEK */}
+              {/* KOLOM KIRI: KEPADA (WAJIB) & UP (OPSIONAL) & PROYEK (OPSIONAL) */}
               <div className="space-y-2.5 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                   <span className="w-20 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
-                    KEPADA
+                    KEPADA <span className="text-rose-500">*</span>
                   </span>
                   <input
                     type="text"
@@ -37498,10 +37719,9 @@ export default function App() {
                   <input
                     type="text"
                     name="attention"
-                    required
                     value={quoteAttention}
                     onChange={(e) => setQuoteAttention(e.target.value)}
-                    placeholder="INPUT NAMA PENERIMA"
+                    placeholder="INPUT NAMA PENERIMA (OPSIONAL)"
                     className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                   />
                 </div>
@@ -38208,7 +38428,7 @@ export default function App() {
                   <span>Pilih dari Penampung TTD</span>
                 </button>
 
-                {/* INPUT NAMA LENGKAP & JABATAN */}
+                {/* INPUT NAMA LENGKAP */}
                 <div className="space-y-2">
                   <input
                     type="text"
@@ -38217,13 +38437,6 @@ export default function App() {
                     onChange={(e) => setQuotePreparedByName(e.target.value)}
                     placeholder="INPUT NAMA LENGKAP"
                     className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black uppercase tracking-wider text-slate-900 focus:border-slate-800 outline-none"
-                  />
-                  <input
-                    type="text"
-                    value={quotePreparedByTitle}
-                    onChange={(e) => setQuotePreparedByTitle(e.target.value)}
-                    placeholder="JABATAN (OPSIONAL - BISA DIKOSONGKAN)"
-                    className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none"
                   />
                 </div>
               </div>

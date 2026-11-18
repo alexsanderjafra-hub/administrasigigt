@@ -237,6 +237,8 @@ export interface Quotation {
   taxRate?: number;
   compName?: string;
   compAddress?: string;
+  compPhone?: string;
+  compEmail?: string;
   compLogoUrl?: string;
   digitalSignatureUrl?: string;
   includeDiscount?: boolean;
@@ -405,6 +407,7 @@ export interface Invoice {
   remainingAmount?: number;
   totalFullProject?: number;
   paymentStages?: Array<{ id?: string; label: string; percent: number }>;
+  projectName?: string;
 }
 
 export interface MaintenanceRecord {
@@ -639,6 +642,7 @@ export interface PurchaseOrder {
   ppnAmount: number;
   grandTotal: number;
   timestamp: number;
+  projectRef?: string;
   status?: 'DRAFT' | 'SENT' | 'COMPLETED' | 'CANCELLED';
 }
 

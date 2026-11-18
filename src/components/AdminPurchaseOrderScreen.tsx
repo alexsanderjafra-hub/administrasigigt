@@ -68,6 +68,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
   const [date, setDate] = useState("");
   const [vendorName, setVendorName] = useState("");
   const [vendorAddress, setVendorAddress] = useState("");
+  const [poProjectRef, setPoProjectRef] = useState("");
   const [buyerName, setBuyerName] = useState("PT. GARDA INOVASI GLOBALTECH");
   const [buyerAddress, setBuyerAddress] = useState(
     "Perumahan Griya Sepatan Blok B6 Nomor 35\nRT.02/09, Ds. Pisangan Jaya, Kec. Sepatan,\nKab Tangerang, Banten, 15525"
@@ -75,8 +76,8 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
   const [buyerEmail, setBuyerEmail] = useState("pt.gardainovasiglobaltech@gmail.com");
   const [buyerPhone, setBuyerPhone] = useState("0888-1687-794");
   const [note, setNote] = useState("- Harga sudah termasuk ongkos pengiriman");
-  const [signerName, setSignerName] = useState("Jidan Ramadhan");
-  const [signerRole, setSignerRole] = useState("Direktur / Menyetujui");
+  const [signerName, setSignerName] = useState("JIDAN RAMADHA");
+  const [signerRole, setSignerRole] = useState("");
   const [ppnPercent, setPpnPercent] = useState<number>(11);
   const [includePPN, setIncludePPN] = useState(true);
   const [status, setStatus] = useState<"DRAFT" | "SENT" | "ACC" | "COMPLETED" | "CANCELLED">("DRAFT");
@@ -172,6 +173,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
     setDate(new Date().toISOString().split("T")[0]);
     setVendorName("");
     setVendorAddress("");
+    setPoProjectRef("");
     setBuyerName("PT. GARDA INOVASI GLOBALTECH");
     setBuyerAddress(
       "Perumahan Griya Sepatan Blok B6 Nomor 35\nRT.02/09, Ds. Pisangan Jaya, Kec. Sepatan,\nKab Tangerang, Banten, 15525"
@@ -179,8 +181,8 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
     setBuyerEmail("pt.gardainovasiglobaltech@gmail.com");
     setBuyerPhone("0888-1687-794");
     setNote("- Harga sudah termasuk ongkos pengiriman");
-    setSignerName("Jidan Ramadhan");
-    setSignerRole("Direktur / Menyetujui");
+    setSignerName("JIDAN RAMADHA");
+    setSignerRole("");
     setPpnPercent(11);
     setIncludePPN(true);
     setIncludeShipping(false);
@@ -205,14 +207,15 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
     setPoNo(po.poNo);
     setDate(po.date);
     setVendorName(po.vendorName);
-    setVendorAddress(po.vendorAddress);
+    setVendorAddress(po.vendorAddress || "");
+    setPoProjectRef((po as any).projectRef || "");
     setBuyerName(po.buyerName || "PT. GARDA INOVASI GLOBALTECH");
     setBuyerAddress(po.buyerAddress || "");
-    setBuyerEmail(po.buyerEmail || "");
-    setBuyerPhone(po.buyerPhone || "");
+    setBuyerEmail(po.buyerEmail || "pt.gardainovasiglobaltech@gmail.com");
+    setBuyerPhone(po.buyerPhone || "0888-1687-794");
     setNote(po.note || "");
-    setSignerName(po.signerName || "Jidan Ramadhan");
-    setSignerRole(po.signerRole || "Direktur / Menyetujui");
+    setSignerName(po.signerName || "JIDAN RAMADHA");
+    setSignerRole("");
     setPpnPercent(po.ppnPercent !== undefined ? po.ppnPercent : 11);
     setIncludePPN(po.ppnPercent !== undefined ? po.ppnPercent > 0 : true);
     setIncludeShipping((po as any).includeShipping || false);
@@ -231,14 +234,15 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
     setPoNo(po.poNo);
     setDate(po.date);
     setVendorName(po.vendorName);
-    setVendorAddress(po.vendorAddress);
+    setVendorAddress(po.vendorAddress || "");
+    setPoProjectRef((po as any).projectRef || "");
     setBuyerName(po.buyerName || "PT. GARDA INOVASI GLOBALTECH");
     setBuyerAddress(po.buyerAddress || "");
-    setBuyerEmail(po.buyerEmail || "");
-    setBuyerPhone(po.buyerPhone || "");
+    setBuyerEmail(po.buyerEmail || "pt.gardainovasiglobaltech@gmail.com");
+    setBuyerPhone(po.buyerPhone || "0888-1687-794");
     setNote(po.note || "");
-    setSignerName(po.signerName || "Jidan Ramadhan");
-    setSignerRole(po.signerRole || "Direktur / Menyetujui");
+    setSignerName(po.signerName || "JIDAN RAMADHA");
+    setSignerRole("");
     setPpnPercent(po.ppnPercent !== undefined ? po.ppnPercent : 11);
     setIncludePPN(po.ppnPercent !== undefined ? po.ppnPercent > 0 : true);
     setIncludeShipping((po as any).includeShipping || false);
@@ -328,8 +332,8 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
   // Save Form
   const handleSave = async (e?: React.FormEvent, openPreview: boolean = false) => {
     if (e) e.preventDefault();
-    if (!poNo || !date || !vendorName || !vendorAddress) {
-      triggerToast("Mohon lengkapi semua field utama (No PO, Tanggal, Nama & Alamat Vendor)!", "error");
+    if (!poNo || !date || !vendorName) {
+      triggerToast("Mohon lengkapi Nomor PO, Tanggal, dan Nama Supplier/Vendor (Kepada)!", "error");
       return;
     }
 
@@ -345,6 +349,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
       date,
       vendorName,
       vendorAddress,
+      projectRef: poProjectRef.trim(),
       buyerName,
       buyerAddress,
       buyerEmail,
@@ -352,8 +357,8 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
       items,
       note,
       ketentuan: ketentuan.filter(k => k.trim() !== ""),
-      signerName,
-      signerRole,
+      signerName: signerName || "JIDAN RAMADHA",
+      signerRole: "",
       totalPrice,
       ppnPercent: includePPN ? ppnPercent : 0,
       ppnAmount,
@@ -896,37 +901,59 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
                   </label>
                 </div>
 
-                {/* Profil Buyer (Kanan) */}
-                <div className="md:col-span-8 space-y-2 text-right">
-                  <input
-                    type="text"
-                    value={buyerName}
-                    onChange={(e) => setBuyerName(e.target.value)}
-                    placeholder="Nama Perusahaan Pembeli"
-                    className="w-full text-right font-black text-base md:text-lg text-slate-900 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none pb-1"
-                  />
-                  <textarea
-                    rows={2}
-                    value={buyerAddress}
-                    onChange={(e) => setBuyerAddress(e.target.value)}
-                    placeholder="Alamat Perusahaan Pembeli"
-                    className="w-full text-right text-xs font-semibold text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none resize-none leading-relaxed"
-                  />
-                  <div className="flex flex-col sm:flex-row sm:justify-end gap-2 text-xs font-bold text-slate-500">
+                {/* Profil Buyer (Kanan) - Selaras Kop Surat */}
+                <div className="md:col-span-8 space-y-2.5">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                      INPUT NAMA PT KITA
+                    </label>
                     <input
                       type="text"
-                      value={buyerPhone}
-                      onChange={(e) => setBuyerPhone(e.target.value)}
-                      placeholder="Telp: 0888-1687-794"
-                      className="text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none text-xs"
+                      required
+                      value={buyerName}
+                      onChange={(e) => setBuyerName(e.target.value)}
+                      placeholder="Nama Perusahaan Pembeli"
+                      className="w-full px-4 py-2.5 bg-white border-2 border-slate-300 rounded-xl text-sm font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                     />
-                    <input
-                      type="text"
-                      value={buyerEmail}
-                      onChange={(e) => setBuyerEmail(e.target.value)}
-                      placeholder="Email: pt.gigt@gmail.com"
-                      className="text-right bg-transparent border-b border-transparent hover:border-slate-300 focus:border-slate-800 outline-none text-xs text-indigo-600"
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                      INPUT ALAMAT
+                    </label>
+                    <textarea
+                      rows={2}
+                      required
+                      value={buyerAddress}
+                      onChange={(e) => setBuyerAddress(e.target.value)}
+                      placeholder="Alamat Perusahaan Pembeli"
+                      className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none transition-all resize-none placeholder:text-slate-400"
                     />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                        NOMOR TELEPON / WA
+                      </label>
+                      <input
+                        type="text"
+                        value={buyerPhone}
+                        onChange={(e) => setBuyerPhone(e.target.value)}
+                        placeholder="0888-1687-794"
+                        className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block">
+                        EMAIL PERUSAHAAN
+                      </label>
+                      <input
+                        type="email"
+                        value={buyerEmail}
+                        onChange={(e) => setBuyerEmail(e.target.value)}
+                        placeholder="pt.gardainovasiglobaltech@gmail.com"
+                        className="w-full px-4 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-800 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
+                      />
+                    </div>
                   </div>
                 </div>
               </div>
@@ -940,32 +967,43 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
 
               {/* 3. METADATA DUA KOLOM: KIRI (VENDOR SUPPLIER) & KANAN (DETAIL PO) */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Kolom Kiri: Vendor / Supplier */}
+                {/* Kolom Kiri: Kepada (Vendor - Wajib), Alamat Vendor, Proyek (Opsional) */}
                 <div className="space-y-2.5 bg-slate-50/70 p-4 rounded-2xl border border-slate-200">
                   <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                     <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
-                      SUPPLIER / VENDOR
+                      KEPADA <span className="text-rose-500">*</span>
                     </span>
                     <input
                       type="text"
                       required
                       value={vendorName}
                       onChange={(e) => setVendorName(e.target.value)}
-                      placeholder="Contoh: PT. Toolmate Enviro Indonesia"
+                      placeholder="INPUT NAMA SUPPLIER / VENDOR"
                       className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                     />
                   </div>
                   <div className="flex flex-col sm:flex-row sm:items-start gap-2">
                     <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0 pt-2">
-                      ALAMAT VENDOR
+                      ALAMAT
                     </span>
                     <textarea
                       rows={2}
-                      required
                       value={vendorAddress}
                       onChange={(e) => setVendorAddress(e.target.value)}
-                      placeholder="Alamat lengkap supplier / vendor..."
+                      placeholder="INPUT ALAMAT VENDOR (OPSIONAL)"
                       className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-bold text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400 resize-none leading-relaxed"
+                    />
+                  </div>
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+                    <span className="w-24 text-xs font-black text-slate-700 uppercase tracking-wider shrink-0">
+                      PROYEK
+                    </span>
+                    <input
+                      type="text"
+                      value={poProjectRef}
+                      onChange={(e) => setPoProjectRef(e.target.value)}
+                      placeholder="INPUT NAMA PROYEK / UP (OPSIONAL)"
+                      className="flex-1 px-3.5 py-2 bg-white border-2 border-slate-300 rounded-xl text-xs font-black text-slate-900 focus:border-slate-800 outline-none transition-all placeholder:text-slate-400"
                     />
                   </div>
                 </div>
@@ -1291,14 +1329,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
                     value={signerName}
                     onChange={(e) => setSignerName(e.target.value)}
                     placeholder="Nama Penandatangan"
-                    className="w-full px-2.5 py-1 text-center font-black text-xs text-slate-900 bg-white border border-slate-300 rounded-lg outline-none"
-                  />
-                  <input
-                    type="text"
-                    value={signerRole}
-                    onChange={(e) => setSignerRole(e.target.value)}
-                    placeholder="Jabatan (e.g. Direktur)"
-                    className="w-full px-2.5 py-1 text-center font-bold text-[10px] text-slate-500 bg-white border border-slate-200 rounded-lg outline-none"
+                    className="w-full px-3 py-1.5 text-center font-black uppercase tracking-wider text-xs text-slate-900 bg-white border-2 border-slate-300 rounded-xl outline-none focus:border-slate-800"
                   />
                 </div>
               </div>
@@ -1574,9 +1605,6 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
                     <p className="font-black text-slate-900 underline mt-12 relative z-10 uppercase">
                       {selectedPO.signerName}
                     </p>
-                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest relative z-10 leading-none mt-0.5">
-                      {selectedPO.signerRole || "Direktur"}
-                    </p>
                   </div>
 
                   {/* Vendor Stamp (Blank signature) */}
@@ -1604,6 +1632,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
               vendorName,
               vendorAddress,
               vendorPhone: "",
+              projectRef: poProjectRef,
               buyerName,
               buyerAddress,
               buyerEmail,
@@ -1612,7 +1641,7 @@ export const AdminPurchaseOrderScreen: React.FC<AdminPurchaseOrderScreenProps> =
               note,
               ketentuan,
               signerName,
-              signerRole,
+              signerRole: "",
               ppnPercent: includePPN ? ppnPercent : 0,
               includeShipping,
               shippingLabel,
