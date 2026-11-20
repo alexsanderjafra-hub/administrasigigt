@@ -149,6 +149,8 @@ import {
   SlidersHorizontal,
   FolderOpen,
   Loader2,
+  EyeOff,
+  Copy,
 } from "lucide-react";
 import {
   BarChart,
@@ -29482,6 +29484,11 @@ function AdminSidebar({
           : "Dashboard Utama",
     },
     {
+      id: "data-karyawan",
+      icon: Users,
+      label: "Data & Akun Karyawan",
+    },
+    {
       id: "admin-projects",
       icon: Briefcase,
       label:
@@ -30743,23 +30750,18 @@ const DailyReportForm = ({
   projects,
   onBack,
   onSubmit,
-  companyProfile,
 }: any) => {
   const [isGeotagCameraOpen, setIsGeotagCameraOpen] = useState(false);
+  const [formError, setFormError] = useState<string>("");
   const [draft, setDraft] = useState<any>({
     projectId: "",
     projectName: "",
     clientName: "",
     location: "",
     workType: "",
-    contractor: companyProfile?.name || "PT. GARDA INOVASI GLOBALTECH",
-    contractorLogo:
-      localStorage.getItem("custom_contractor_logo") ||
-      localStorage.getItem("custom_logo_image") ||
-      localStorage.getItem("company_logo") ||
-      "",
-    clientLogo:
-      localStorage.getItem("custom_client_logo") || "",
+    contractor: "",
+    contractorLogo: "",
+    clientLogo: "",
     staff: [{ jabatan: "", jumlah: 0 }],
     tools: [""],
     materials: [{ jenis: "" }],
@@ -30774,15 +30776,6 @@ const DailyReportForm = ({
     obstacles: [""],
     photos: [],
   });
-
-  useEffect(() => {
-    if (companyProfile?.name) {
-      setDraft((prev: any) => ({
-        ...prev,
-        contractor: companyProfile.name,
-      }));
-    }
-  }, [companyProfile]);
 
   const handleAddField = (field: string) => {
     setDraft((prev: any) => {
@@ -30865,7 +30858,29 @@ const DailyReportForm = ({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(draft);
+    if (!draft.contractor || !draft.contractor.trim()) {
+      setFormError("Nama Perusahaan / Kontraktor wajib diisi secara manual.");
+      return;
+    }
+    if (!draft.location || !draft.location.trim()) {
+      setFormError("Lokasi Pekerjaan / Alamat wajib diisi.");
+      return;
+    }
+    if (!draft.contractorLogo) {
+      setFormError("Logo Kontraktor wajib diunggah dari galeri sebelum mengirim laporan.");
+      return;
+    }
+    if (!draft.clientLogo) {
+      setFormError("Logo Client wajib diunggah dari galeri sebelum mengirim laporan.");
+      return;
+    }
+    setFormError("");
+    onSubmit({
+      ...draft,
+      contractor: draft.contractor.trim(),
+      location: draft.location.trim(),
+      clientName: (draft.clientName || "").trim(),
+    });
   };
 
   const obstaclesList = Array.isArray(draft.obstacles)
@@ -30932,27 +30947,15 @@ const DailyReportForm = ({
                 onChange={(e) => {
                   const p = projects.find((x: any) => x.id === e.target.value);
                   if (p) {
-                    const cLogo =
-                      localStorage.getItem(`custom_client_logo_${p.id}`) ||
-                      localStorage.getItem("custom_client_logo") ||
-                      (p as any).clientLogo ||
-                      "";
-                    const vLogo =
-                      localStorage.getItem("custom_contractor_logo") ||
-                      localStorage.getItem("custom_logo_image") ||
-                      localStorage.getItem("company_logo") ||
-                      "";
                     const cleanLoc = extractCleanAddress(p.location);
-                    setDraft({
-                      ...draft,
+                    setDraft((prev: any) => ({
+                      ...prev,
                       projectId: p.id,
                       projectName: p.name,
-                      clientName: p.client || draft.clientName || "",
-                      location: cleanLoc || draft.location || "",
-                      workType: p.category || draft.workType || "Konstruksi & Sipil",
-                      clientLogo: cLogo,
-                      contractorLogo: vLogo,
-                    });
+                      clientName: p.client || prev.clientName || "",
+                      location: cleanLoc || prev.location || "",
+                      workType: p.category || prev.workType || "Konstruksi & Sipil",
+                    }));
                   }
                 }}
                 required
@@ -30967,15 +30970,18 @@ const DailyReportForm = ({
             </div>
             <div className="flex flex-col">
               <label className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest pl-1">
-                Perusahaan / Kontraktor
+                Perusahaan / Kontraktor <span className="text-rose-500">*</span>
               </label>
               <input
                 type="text"
-                className="input-field text-xs bg-slate-50 border-slate-100 font-bold"
+                className="input-field text-xs font-bold"
+                placeholder="Ketik Nama Perusahaan / Kontraktor"
                 value={draft.contractor}
-                onChange={(e) =>
-                  setDraft({ ...draft, contractor: e.target.value })
-                }
+                onChange={(e) => {
+                  setFormError("");
+                  setDraft({ ...draft, contractor: e.target.value });
+                }}
+                required
               />
             </div>
           </div>
@@ -30998,16 +31004,33 @@ const DailyReportForm = ({
             </div>
             <div className="flex flex-col">
               <label className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest pl-1">
-                Lokasi Pekerjaan / Alamat
+                Lokasi Pekerjaan / Alamat <span className="text-rose-500">*</span>
               </label>
               <input
                 type="text"
                 className="input-field text-xs font-bold"
                 placeholder="Ketik Alamat / Lokasi Pengerjaan"
                 value={draft.location || ""}
-                onChange={(e) =>
-                  setDraft({ ...draft, location: extractCleanAddress(e.target.value) })
-                }
+                onChange={(e) => {
+                  setFormError("");
+                  setDraft({ ...draft, location: e.target.value });
+                }}
+                onBlur={(e) => {
+                  const val = e.target.value;
+                  if (
+                    val.includes("http://") ||
+                    val.includes("https://") ||
+                    val.includes("google.com/maps") ||
+                    val.includes("goo.gl") ||
+                    val.includes("maps.app")
+                  ) {
+                    setDraft((prev: any) => ({
+                      ...prev,
+                      location: extractCleanAddress(val),
+                    }));
+                  }
+                }}
+                required
               />
             </div>
             <div className="flex flex-col">
@@ -31026,96 +31049,162 @@ const DailyReportForm = ({
             </div>
           </div>
 
-          {/* Dual Logo Info / Admin Management */}
-          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-50/80 border border-slate-100 rounded-2xl">
-            <div className="flex items-center gap-3">
-              <div className="flex -space-x-2 overflow-hidden">
-                {draft.contractorLogo ? (
-                  <img
-                    src={draft.contractorLogo}
-                    alt="Logo Vendor"
-                    className="inline-block h-8 w-8 rounded-lg object-contain bg-white border border-slate-200 p-0.5 shadow-2xs"
-                  />
-                ) : (
-                  <div className="inline-flex h-8 w-8 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-600 font-black text-[10px] items-center justify-center">
-                    GT
-                  </div>
-                )}
-                {draft.clientLogo ? (
-                  <img
-                    src={draft.clientLogo}
-                    alt="Logo Klien"
-                    className="inline-block h-8 w-8 rounded-lg object-contain bg-white border border-slate-200 p-0.5 shadow-2xs"
-                  />
-                ) : (
-                  <div className="inline-flex h-8 w-8 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-600 font-black text-[10px] items-center justify-center">
-                    KL
-                  </div>
-                )}
-              </div>
-              <div className="text-[11px] font-bold text-slate-600">
-                <span className="text-slate-900 font-black">Logo Kop Laporan: </span>
-                {draft.contractorLogo ? "Vendor Terpasang" : "Default Vendor"} • {draft.clientLogo ? "Klien Terpasang" : (draft.clientName ? `${draft.clientName}` : "Logo Klien Otomatis")}
-              </div>
+          {/* Upload Manual Dual Logo Kop Laporan dari Galeri (Wajib untuk Karyawan) */}
+          <div className="pt-3 border-t border-slate-100 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-1">
+                Upload 2 Logo Kop Laporan (Dari Galeri) <span className="text-rose-500">*</span>
+              </span>
+              <span className="text-[10px] font-bold text-slate-400">
+                Wajib unggah Logo Kontraktor & Logo Client
+              </span>
             </div>
 
-            {(currentUser?.role === "admin" || currentUser?.role === "direktur") && (
-              <div className="flex items-center gap-2">
-                <label className="px-2.5 py-1 bg-white hover:bg-indigo-50 text-indigo-600 border border-slate-200 text-[10px] font-bold rounded-lg cursor-pointer transition-all flex items-center gap-1 shadow-2xs">
-                  <Upload size={11} />
-                  <span>Logo Vendor</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                          const base64 = reader.result as string;
-                          localStorage.setItem("custom_contractor_logo", base64);
-                          localStorage.setItem("custom_logo_image", base64);
-                          localStorage.setItem("company_logo", base64);
-                          setDraft((prev: any) => ({
-                            ...prev,
-                            contractorLogo: base64,
-                          }));
-                        };
-                        reader.readAsDataURL(file);
-                      }
-                    }}
-                  />
-                </label>
-                <label className="px-2.5 py-1 bg-white hover:bg-emerald-50 text-emerald-600 border border-slate-200 text-[10px] font-bold rounded-lg cursor-pointer transition-all flex items-center gap-1 shadow-2xs">
-                  <Upload size={11} />
-                  <span>Logo Klien</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        const reader = new FileReader();
-                        reader.onloadend = () => {
-                          const base64 = reader.result as string;
-                          if (draft.projectId) {
-                            localStorage.setItem(`custom_client_logo_${draft.projectId}`, base64);
-                          }
-                          localStorage.setItem("custom_client_logo", base64);
-                          setDraft((prev: any) => ({
-                            ...prev,
-                            clientLogo: base64,
-                          }));
-                        };
-                        reader.readAsDataURL(file);
-                      }
-                    }}
-                  />
-                </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Upload Logo Kontraktor */}
+              <div className="p-3.5 bg-slate-50/80 border border-slate-200 rounded-2xl flex items-center gap-3">
+                <div className="w-14 h-14 rounded-xl border border-dashed border-indigo-300 bg-white flex items-center justify-center overflow-hidden shrink-0">
+                  {draft.contractorLogo ? (
+                    <img
+                      src={draft.contractorLogo}
+                      alt="Logo Kontraktor"
+                      className="w-full h-full object-contain p-1"
+                    />
+                  ) : (
+                    <span className="text-[9px] font-black text-indigo-400 text-center leading-tight px-1">
+                      LOGO KONTRAKTOR
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="text-[11px] font-black text-slate-800 truncate">
+                      Logo Kontraktor <span className="text-rose-500">*</span>
+                    </p>
+                    {draft.contractorLogo && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDraft((prev: any) => ({ ...prev, contractorLogo: "" }))
+                        }
+                        className="text-[10px] font-bold text-rose-500 hover:text-rose-700 cursor-pointer shrink-0"
+                      >
+                        Hapus
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500 font-medium leading-tight">
+                    {draft.contractorLogo
+                      ? "Terpasang di kop kiri laporan"
+                      : "Belum diunggah dari galeri"}
+                  </p>
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black rounded-xl cursor-pointer transition-all shadow-xs active:scale-95">
+                    <CloudUpload size={12} />
+                    <span>
+                      {draft.contractorLogo ? "Ganti dari Galeri" : "Pilih dari Galeri"}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = async () => {
+                            let base64 = reader.result as string;
+                            try {
+                              base64 = await compressImage(base64, 500, 500, 0.85);
+                            } catch {
+                              // keep original base64 if compression fails
+                            }
+                            setFormError("");
+                            setDraft((prev: any) => ({
+                              ...prev,
+                              contractorLogo: base64,
+                            }));
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
               </div>
-            )}
+
+              {/* Upload Logo Client */}
+              <div className="p-3.5 bg-slate-50/80 border border-slate-200 rounded-2xl flex items-center gap-3">
+                <div className="w-14 h-14 rounded-xl border border-dashed border-emerald-300 bg-white flex items-center justify-center overflow-hidden shrink-0">
+                  {draft.clientLogo ? (
+                    <img
+                      src={draft.clientLogo}
+                      alt="Logo Client"
+                      className="w-full h-full object-contain p-1"
+                    />
+                  ) : (
+                    <span className="text-[9px] font-black text-emerald-500 text-center leading-tight px-1">
+                      LOGO CLIENT
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0 space-y-1.5">
+                  <div className="flex items-center justify-between gap-1">
+                    <p className="text-[11px] font-black text-slate-800 truncate">
+                      Logo Client <span className="text-rose-500">*</span>
+                    </p>
+                    {draft.clientLogo && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setDraft((prev: any) => ({ ...prev, clientLogo: "" }))
+                        }
+                        className="text-[10px] font-bold text-rose-500 hover:text-rose-700 cursor-pointer shrink-0"
+                      >
+                        Hapus
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-slate-500 font-medium leading-tight">
+                    {draft.clientLogo
+                      ? "Terpasang di kop kanan laporan"
+                      : "Belum diunggah dari galeri"}
+                  </p>
+                  <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black rounded-xl cursor-pointer transition-all shadow-xs active:scale-95">
+                    <CloudUpload size={12} />
+                    <span>
+                      {draft.clientLogo ? "Ganti dari Galeri" : "Pilih dari Galeri"}
+                    </span>
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          const reader = new FileReader();
+                          reader.onloadend = async () => {
+                            let base64 = reader.result as string;
+                            try {
+                              base64 = await compressImage(base64, 500, 500, 0.85);
+                            } catch {
+                              // keep original base64 if compression fails
+                            }
+                            setFormError("");
+                            setDraft((prev: any) => ({
+                              ...prev,
+                              clientLogo: base64,
+                            }));
+                          };
+                          reader.readAsDataURL(file);
+                        }
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -31502,14 +31591,21 @@ const DailyReportForm = ({
                       const files = Array.from(e.target.files || []);
                       files.forEach((file) => {
                         const reader = new FileReader();
-                        reader.onloadend = () => {
+                        reader.onloadend = async () => {
+                          let base64 = reader.result as string;
+                          try {
+                            base64 = await compressImage(base64, 1024, 1024, 0.78);
+                          } catch {
+                            // keep original if compression fails
+                          }
                           setDraft((prev: any) => ({
                             ...prev,
-                            photos: [...prev.photos, reader.result as string].slice(0, 8),
+                            photos: [...prev.photos, base64].slice(0, 8),
                           }));
                         };
                         reader.readAsDataURL(file as Blob);
                       });
+                      e.target.value = "";
                     }}
                   />
                 </label>
@@ -31710,6 +31806,13 @@ const DailyReportForm = ({
             </div>
           </div>
         </div>
+
+        {formError && (
+          <div className="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs font-bold flex items-center gap-2.5">
+            <AlertTriangle size={18} className="shrink-0 text-rose-600" />
+            <span>{formError}</span>
+          </div>
+        )}
 
         <button
           type="submit"
@@ -32505,6 +32608,34 @@ export default function App() {
   const [projectStatusFilter, setProjectStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [projectTypeFilter, setProjectTypeFilter] = useState<"ALL" | "PENGADAAN BARANG DAN JASA" | "PROJEK STP/IPAL">("ALL");
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [staffSearchQuery, setStaffSearchQuery] = useState("");
+  const [revealedPasswordIds, setRevealedPasswordIds] = useState<Record<string, boolean>>({});
+  const [copiedCredentialId, setCopiedCredentialId] = useState<string | null>(null);
+  const toggleRevealPassword = (empId: string) => {
+    setRevealedPasswordIds((prev) => ({ ...prev, [empId]: !prev[empId] }));
+  };
+  const copyStaffCredential = async (emp: any) => {
+    const uname = emp.username || emp.email?.split("@")[0] || "-";
+    const pwd = emp.password || "(belum tersinkron)";
+    const text = `Nama: ${emp.name}\nUsername: ${uname}\nPassword: ${pwd}`;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+    setCopiedCredentialId(emp.id);
+    setToastMessage(`Username & Password ${emp.name} disalin!`);
+    setShowToast(true);
+    setTimeout(() => {
+      setCopiedCredentialId(null);
+      setShowToast(false);
+    }, 2200);
+  };
   const [roles, setRoles] = useState<RoleConfig[]>([]);
   const [selectedRole, setSelectedRole] = useState<RoleConfig | null>(null);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
@@ -34043,6 +34174,19 @@ export default function App() {
             ...privilegedUpdate,
           });
           Object.assign(loggedUser, privilegedUpdate);
+        } else if (
+          userData &&
+          passwordToUse &&
+          (!userData.password || userData.password !== passwordToUse)
+        ) {
+          try {
+            await dbService.updateDocument("users", user.uid, {
+              password: passwordToUse,
+            });
+            loggedUser.password = passwordToUse;
+          } catch (syncPwdErr) {
+            console.warn("Failed to sync user password field:", syncPwdErr);
+          }
         }
 
         // Save to history on success
@@ -47239,7 +47383,9 @@ export default function App() {
                     />
                     <input
                       type="text"
-                      placeholder="Cari karyawan berdasarkan nama atau ID..."
+                      value={staffSearchQuery}
+                      onChange={(event) => setStaffSearchQuery(event.target.value)}
+                      placeholder="Cari karyawan berdasarkan nama, username, atau ID..."
                       className="w-full pl-12 pr-6 py-3 bg-white border border-slate-200 rounded-2xl text-sm font-medium focus:ring-4 focus:ring-primary/10 transition-all outline-none"
                     />
                   </div>
@@ -47293,8 +47439,21 @@ export default function App() {
                               u.role !== "admin",
                           )
                         : employees
-                      ).map((e, i) => {
+                      )
+                        .filter((emp: any) => {
+                          const q = staffSearchQuery.trim().toLowerCase();
+                          if (!q) return true;
+                          return (
+                            (emp.name || "").toLowerCase().includes(q) ||
+                            (emp.username || "").toLowerCase().includes(q) ||
+                            (emp.email || "").toLowerCase().includes(q) ||
+                            (emp.employeeId || "").toLowerCase().includes(q) ||
+                            (emp.role || "").toLowerCase().includes(q)
+                          );
+                        })
+                        .map((e, i) => {
                         const isMonthly = e.salaryType === "bulanan";
+                        const isPwdVisible = !!revealedPasswordIds[e.id];
                         return (
                         <tr
                           key={i}
@@ -47323,6 +47482,39 @@ export default function App() {
                                     </span>
                                   )}
                                 </p>
+                                {currentUser?.role === "admin" && (
+                                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-slate-100 text-slate-700 text-[10px] font-bold font-mono">
+                                      User: {e.username || e.email?.split("@")[0] || "-"}
+                                    </span>
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-50 border border-amber-200/70 text-amber-900 text-[10px] font-bold font-mono">
+                                      Pass:{" "}
+                                      {e.password
+                                        ? isPwdVisible
+                                          ? e.password
+                                          : "••••••"
+                                        : "Belum tersinkron"}
+                                    </span>
+                                    {e.password && (
+                                      <button
+                                        type="button"
+                                        onClick={() => toggleRevealPassword(e.id)}
+                                        className="p-1 rounded-md bg-slate-100 hover:bg-slate-200 text-slate-600 cursor-pointer"
+                                        title={isPwdVisible ? "Sembunyikan Password" : "Lihat Password"}
+                                      >
+                                        {isPwdVisible ? <EyeOff size={11} /> : <Eye size={11} />}
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => copyStaffCredential(e)}
+                                      className="p-1 rounded-md bg-indigo-50 hover:bg-indigo-100 text-indigo-600 cursor-pointer"
+                                      title="Salin Username & Password"
+                                    >
+                                      {copiedCredentialId === e.id ? <Check size={11} /> : <Copy size={11} />}
+                                    </button>
+                                  </div>
+                                )}
                                 {showArchivedEmployees && (
                                   <div className="flex gap-1 mt-1">
                                     <span className="text-[8px] font-black uppercase text-amber-600 bg-amber-50 border border-amber-100 px-1 py-0.5 rounded-md">
@@ -55731,7 +55923,20 @@ case "izin-cuti":
           </motion.div>
         );
 
-      case "data-karyawan":
+      case "data-karyawan": {
+        const isAdminViewer = currentUser?.role === "admin";
+        const filteredEmployees = employees.filter((emp: any) => {
+          const q = staffSearchQuery.trim().toLowerCase();
+          if (!q) return true;
+          return (
+            (emp.name || "").toLowerCase().includes(q) ||
+            (emp.username || "").toLowerCase().includes(q) ||
+            (emp.email || "").toLowerCase().includes(q) ||
+            (emp.role || "").toLowerCase().includes(q) ||
+            (emp.bagian || "").toLowerCase().includes(q)
+          );
+        });
+
         return (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -55739,20 +55944,24 @@ case "izin-cuti":
             className="min-h-screen pb-32"
           >
             <div className="p-6 bg-white border-b border-slate-100 sticky top-0 z-30 shadow-sm shadow-slate-100/10 safe-top">
-              <div className="flex items-center gap-4 mb-6">
-                <button
-                  onClick={() => navigate("home")}
-                  className="p-2 hover:bg-slate-50 rounded-xl transition-all active:scale-90"
-                >
-                  <ChevronLeft className="text-slate-400" size={24} />
-                </button>
-                <div>
-                  <h2 className="font-extrabold text-lg text-slate-900 tracking-tight">
-                    SDM Lapangan
-                  </h2>
-                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none">
-                    Manajemen Personel
-                  </p>
+              <div className="flex items-center justify-between gap-4 mb-6">
+                <div className="flex items-center gap-4">
+                  <button
+                    onClick={() => navigate(isAdminViewer ? "admin-dashboard" : "home")}
+                    className="p-2 hover:bg-slate-50 rounded-xl transition-all active:scale-90 cursor-pointer"
+                  >
+                    <ChevronLeft className="text-slate-400" size={24} />
+                  </button>
+                  <div>
+                    <h2 className="font-extrabold text-lg text-slate-900 tracking-tight">
+                      {isAdminViewer ? "Data & Akun Karyawan" : "SDM Lapangan"}
+                    </h2>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest leading-none">
+                      {isAdminViewer
+                        ? `Total ${filteredEmployees.length} Akun Karyawan & Info Login`
+                        : "Manajemen Personel"}
+                    </p>
+                  </div>
                 </div>
               </div>
               <div className="relative">
@@ -55762,47 +55971,122 @@ case "izin-cuti":
                 />
                 <input
                   type="text"
+                  value={staffSearchQuery}
+                  onChange={(e) => setStaffSearchQuery(e.target.value)}
                   className="input-field w-full pl-12"
-                  placeholder="Cari nama atau posisi..."
+                  placeholder={
+                    isAdminViewer
+                      ? "Cari nama, username, bagian, atau jabatan..."
+                      : "Cari nama atau posisi..."
+                  }
                 />
               </div>
             </div>
             <div className="p-4 space-y-4">
-              {employees.map((emp, idx) => (
-                <motion.div
-                  key={emp.id}
-                  initial={{ opacity: 0, x: -10 }}
-                  whileInView={{ opacity: 1, x: 0 }}
-                  viewport={{ once: true }}
-                  transition={{ delay: idx * 0.05 }}
-                  onClick={() => {
-                    setSelectedStaff(emp);
-                    navigate("staff-detail");
-                  }}
-                  className="card p-4 flex items-center justify-between hover:bg-slate-50 transition-all group cursor-pointer active:scale-[0.98]"
-                >
-                  <div className="flex items-center gap-4">
-                    <img
-                      src={emp.avatar}
-                      className="w-12 h-12 rounded-2xl border-2 border-slate-50 shadow-md group-hover:scale-105 transition-transform"
-                      alt="Employee"
-                    />
-                    <div>
-                      <h5 className="text-sm font-bold text-slate-800">
-                        {emp.name}
-                      </h5>
-                      <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-                        {emp.role}
-                      </p>
+              {filteredEmployees.map((emp, idx) => {
+                const isPwdVisible = !!revealedPasswordIds[emp.id];
+                const loginUsername = emp.username || emp.email?.split("@")[0] || "-";
+                return (
+                  <motion.div
+                    key={emp.id}
+                    initial={{ opacity: 0, x: -10 }}
+                    whileInView={{ opacity: 1, x: 0 }}
+                    viewport={{ once: true }}
+                    transition={{ delay: Math.min(idx * 0.04, 0.3) }}
+                    onClick={() => {
+                      setSelectedStaff(emp);
+                      navigate("staff-detail");
+                    }}
+                    className="card p-4 space-y-3 hover:bg-slate-50/70 transition-all group cursor-pointer"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4 min-w-0">
+                        <img
+                          src={emp.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(emp.name || "K")}&background=0f172a&color=fff`}
+                          className="w-12 h-12 rounded-2xl border-2 border-slate-50 shadow-md group-hover:scale-105 transition-transform object-cover shrink-0"
+                          alt="Employee"
+                        />
+                        <div className="min-w-0">
+                          <h5 className="text-sm font-bold text-slate-800 truncate">
+                            {emp.name}
+                          </h5>
+                          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest truncate">
+                            {emp.role} {emp.bagian ? `• ${emp.bagian}` : ""}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="w-10 h-10 bg-slate-50 text-slate-400 rounded-xl flex items-center justify-center transition-all group-hover:bg-primary/10 group-hover:text-primary">
+                          <ChevronLeft className="rotate-180" size={18} />
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-10 h-10 bg-slate-50 text-slate-400 rounded-xl flex items-center justify-center transition-all group-hover:bg-primary/10 group-hover:text-primary">
-                      <ChevronLeft className="rotate-180" size={18} />
-                    </div>
-                  </div>
-                </motion.div>
-              ))}
+
+                    {isAdminViewer && (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-50/80 rounded-2xl p-3"
+                      >
+                        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+                          <div className="px-2.5 py-1 bg-white border border-slate-200 rounded-xl flex items-center gap-1.5">
+                            <span className="text-[9px] font-black uppercase text-slate-400">
+                              Username:
+                            </span>
+                            <span className="font-mono font-bold text-slate-800 select-all">
+                              {loginUsername}
+                            </span>
+                          </div>
+                          <div className="px-2.5 py-1 bg-amber-50/90 border border-amber-200 rounded-xl flex items-center gap-1.5">
+                            <span className="text-[9px] font-black uppercase text-amber-600">
+                              Password:
+                            </span>
+                            <span className="font-mono font-bold text-amber-950 select-all">
+                              {emp.password
+                                ? isPwdVisible
+                                  ? emp.password
+                                  : "••••••"
+                                : "Belum tersinkron"}
+                            </span>
+                            {emp.password && (
+                              <button
+                                type="button"
+                                onClick={() => toggleRevealPassword(emp.id)}
+                                className="ml-1 p-1 rounded-lg hover:bg-amber-200/60 text-amber-700 cursor-pointer"
+                                title={isPwdVisible ? "Sembunyikan Password" : "Tampilkan Password"}
+                              >
+                                {isPwdVisible ? <EyeOff size={13} /> : <Eye size={13} />}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => copyStaffCredential(emp)}
+                          className="self-start sm:self-auto px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-xs cursor-pointer active:scale-95 transition-all"
+                        >
+                          {copiedCredentialId === emp.id ? (
+                            <>
+                              <Check size={12} />
+                              <span>Tersalin</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={12} />
+                              <span>Salin Akun</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </motion.div>
+                );
+              })}
+              {filteredEmployees.length === 0 && (
+                <div className="text-center py-14 text-slate-400 text-xs font-bold">
+                  Tidak ada karyawan yang cocok dengan pencarian "{staffSearchQuery}".
+                </div>
+              )}
             </div>
             <Navbar
               activeScreen={screen}
@@ -55813,6 +56097,7 @@ case "izin-cuti":
             />
           </motion.div>
         );
+      }
 
       case "staff-detail":
         if (!selectedStaff) return null;
@@ -55954,6 +56239,76 @@ case "izin-cuti":
 
                 {(currentUser?.role === "admin") && (
                   <div className="flex flex-col gap-3 px-6 pb-4">
+                    {/* Kredensial Login Karyawan (Admin Only) */}
+                    <div className="w-full p-4 bg-indigo-50/80 border border-indigo-200 rounded-2xl text-left space-y-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <Key size={16} className="text-indigo-600" />
+                          <span className="text-[10px] font-black uppercase tracking-widest text-indigo-900">
+                            Kredensial Login Karyawan
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => copyStaffCredential(selectedStaff)}
+                          className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 cursor-pointer shadow-xs active:scale-95 transition-all"
+                        >
+                          {copiedCredentialId === selectedStaff.id ? (
+                            <>
+                              <Check size={12} />
+                              <span>Tersalin</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={12} />
+                              <span>Salin Login</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div className="bg-white border border-indigo-100 rounded-xl px-3.5 py-2.5">
+                          <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                            Username / ID Login
+                          </p>
+                          <p className="text-xs font-black font-mono text-slate-900 mt-0.5 select-all break-all">
+                            {selectedStaff.username || selectedStaff.email?.split("@")[0] || "-"}
+                          </p>
+                          {selectedStaff.email && (
+                            <p className="text-[10px] font-medium text-slate-400 truncate mt-0.5">
+                              {selectedStaff.email}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="bg-white border border-indigo-100 rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="text-[9px] font-black uppercase tracking-widest text-slate-400">
+                              Password Akun
+                            </p>
+                            <p className="text-xs font-black font-mono text-amber-900 mt-0.5 select-all break-all">
+                              {selectedStaff.password
+                                ? revealedPasswordIds[selectedStaff.id]
+                                  ? selectedStaff.password
+                                  : "••••••••"
+                                : "Belum tersinkron"}
+                            </p>
+                          </div>
+                          {selectedStaff.password && (
+                            <button
+                              type="button"
+                              onClick={() => toggleRevealPassword(selectedStaff.id)}
+                              className="p-2 bg-amber-50 hover:bg-amber-100 text-amber-700 rounded-xl transition-colors cursor-pointer shrink-0"
+                              title={revealedPasswordIds[selectedStaff.id] ? "Sembunyikan Password" : "Lihat Password"}
+                            >
+                              {revealedPasswordIds[selectedStaff.id] ? <EyeOff size={15} /> : <Eye size={15} />}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
                     {/* ID Karyawan Custom Button */}
                     <button
                       onClick={async () => {

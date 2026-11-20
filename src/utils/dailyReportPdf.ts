@@ -59,7 +59,12 @@ export const renderDailyReportContentToPDF = (
   // Render Logo Kontraktor (Kiri)
   if (contractorLogo) {
     try {
-      doc.addImage(contractorLogo, "PNG", 15, 6, 24, 15);
+      const cFmt =
+        contractorLogo.startsWith("data:image/jpeg") ||
+        contractorLogo.startsWith("data:image/jpg")
+          ? "JPEG"
+          : "PNG";
+      doc.addImage(contractorLogo, cFmt, 15, 6, 24, 15);
     } catch (e) {
       console.error("Error drawing contractor logo to PDF:", e);
     }
@@ -86,7 +91,12 @@ export const renderDailyReportContentToPDF = (
   // Render Logo Klien (Kanan)
   if (clientLogo) {
     try {
-      doc.addImage(clientLogo, "PNG", 171, 6, 24, 15);
+      const klFmt =
+        clientLogo.startsWith("data:image/jpeg") ||
+        clientLogo.startsWith("data:image/jpg")
+          ? "JPEG"
+          : "PNG";
+      doc.addImage(clientLogo, klFmt, 171, 6, 24, 15);
     } catch (e) {
       console.error("Error drawing client logo to PDF:", e);
     }

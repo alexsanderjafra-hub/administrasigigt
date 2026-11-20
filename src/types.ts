@@ -43,6 +43,8 @@ export interface FieldReport {
 export interface Employee {
   id: string;
   username: string; // Used for linking data
+  email?: string;
+  password?: string;
   name: string;
   role: string;
   phone: string;

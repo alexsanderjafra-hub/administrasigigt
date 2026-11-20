@@ -69,7 +69,12 @@ export const compressImage = (base64Str: string, maxWidth = 400, maxHeight = 400
         reject(new Error('Failed to get canvas context'));
         return;
       }
-      const isPng = base64Str.includes('image/png');
+      const isPng = base64Str.includes('image/png') || base64Str.includes('image/webp');
+      if (!isPng) {
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, width, height);
+      }
+      ctx.drawImage(img, 0, 0, width, height);
       resolve(canvas.toDataURL(isPng ? 'image/png' : 'image/jpeg', quality));
     };
     img.onerror = (error) => reject(error);
