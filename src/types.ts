@@ -538,6 +538,9 @@ export interface DailyReport {
   submittedByName: string;
   submittedByRole: string;
   timestamp: number;
+  editedBy?: string;
+  editedByName?: string;
+  editedAt?: number;
 }
 
 export type ScreenId = 

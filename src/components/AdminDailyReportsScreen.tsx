@@ -29,6 +29,7 @@ import {
   Sparkles,
   MapPin,
   CheckCircle2,
+  Pencil,
 } from "lucide-react";
 import { DailyReport, Project, ScreenId, RoleConfig, CompanyProfile } from "../types";
 import { dbService } from "../services/db";
@@ -38,6 +39,7 @@ import {
   formatIndonesianDateUpper,
   formatIndonesianDateShort,
 } from "../utils/dailyReportPdf";
+import { EditDailyReportModal } from "./EditDailyReportModal";
 
 interface AdminDailyReportsScreenProps {
   projects: Project[];
@@ -65,8 +67,13 @@ export function AdminDailyReportsScreen({
   const [dateFilter, setDateFilter] = useState("");
   const [selectedReportIds, setSelectedReportIds] = useState<Set<string>>(new Set());
   const [previewReport, setPreviewReport] = useState<DailyReport | null>(null);
+  const [editingReport, setEditingReport] = useState<DailyReport | null>(null);
+  const [toastNotice, setToastNotice] = useState<string>("");
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const [activeTab, setActiveTab] = useState<"projects" | "all-reports">("projects");
+  const isAdminUser =
+    ["admin", "owner", "direktur"].includes(String(currentUser?.role || "").toLowerCase()) ||
+    Boolean(currentUser?.isAdmin);
   const [isLogoModalOpen, setIsLogoModalOpen] = useState(false);
   const [logoTargetProject, setLogoTargetProject] = useState<string>("all");
   const [contractorLogoState, setContractorLogoState] = useState<string>(() => {
@@ -81,39 +88,67 @@ export function AdminDailyReportsScreen({
     return localStorage.getItem("custom_client_logo") || "";
   });
 
+  const normalizeProjName = (name?: string) =>
+    (name || "").replace(/\s+/g, " ").trim().toLowerCase();
+
   // Group daily reports by project ID or project name
-  const reportsByProject = useMemo(() => {
+  const { reportsByProject, extraProjects } = useMemo(() => {
     const map = new Map<string, DailyReport[]>();
-    // Group existing reports
-    dailyReports.forEach((report) => {
-      // Find matching project
-      const matchProject = projects.find(
-        (p) =>
-          p.id === report.projectId ||
-          p.name.toLowerCase().trim() === (report.projectName || "").toLowerCase().trim()
-      );
-      const key = matchProject ? matchProject.id : report.projectId || report.projectName || "other";
-      if (!map.has(key)) {
-        map.set(key, []);
-      }
-      map.get(key)!.push(report);
-    });
+    const extraMap = new Map<string, Project>();
 
     // Ensure all registered projects have an entry in the map
     projects.forEach((p) => {
-      if (!map.has(p.id)) {
-        map.set(p.id, []);
+      map.set(p.id, []);
+    });
+
+    // Group existing reports
+    dailyReports.forEach((report) => {
+      const normRepName = normalizeProjName(report.projectName);
+      const matchProject = projects.find(
+        (p) =>
+          (report.projectId && p.id === report.projectId) ||
+          (normRepName && normalizeProjName(p.name) === normRepName)
+      );
+      if (matchProject) {
+        map.get(matchProject.id)!.push(report);
+      } else {
+        const key = report.projectId || (normRepName ? `custom_${normRepName}` : "other");
+        if (!map.has(key)) {
+          map.set(key, []);
+          extraMap.set(key, {
+            id: key,
+            name: report.projectName || "Proyek Lainnya",
+            client: report.clientName || "-",
+            location: report.location || "Lokasi Lapangan",
+            startDate: report.date ? new Date(report.date).toISOString().split("T")[0] : "",
+            endDate: "",
+            status: "ACTIVE",
+            priority: "Medium",
+            progress: 0,
+            manager: report.submittedByName || report.contractor || "-",
+            description: report.workType || "Konstruksi & Sipil",
+            tasks: [],
+          });
+        }
+        map.get(key)!.push(report);
       }
     });
 
-    return map;
+    return {
+      reportsByProject: map,
+      extraProjects: Array.from(extraMap.values()),
+    };
   }, [dailyReports, projects]);
+
+  const allDisplayProjects = useMemo(() => {
+    return [...projects, ...extraProjects];
+  }, [projects, extraProjects]);
 
   // Selected project object if any
   const currentProject = useMemo(() => {
     if (!selectedProjectId) return null;
-    return projects.find((p) => p.id === selectedProjectId) || null;
-  }, [selectedProjectId, projects]);
+    return allDisplayProjects.find((p) => p.id === selectedProjectId) || null;
+  }, [selectedProjectId, allDisplayProjects]);
 
   // Reports for the selected project
   const currentProjectReports = useMemo(() => {
@@ -373,7 +408,7 @@ export function AdminDailyReportsScreen({
           {activeTab === "projects" ? (
             /* GRID DAFTAR PROYEK */
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {projects
+              {allDisplayProjects
                 .filter((p) => {
                   const s = searchQuery.toLowerCase().trim();
                   return (
@@ -504,7 +539,23 @@ export function AdminDailyReportsScreen({
                 </div>
               ) : (
                 <div className="divide-y divide-slate-100">
-                  {dailyReports.map((report) => {
+                  {[...dailyReports]
+                    .filter((report) => {
+                      const s = searchQuery.toLowerCase().trim();
+                      if (!s) return true;
+                      return (
+                        (report.projectName || "").toLowerCase().includes(s) ||
+                        (report.submittedByName || "").toLowerCase().includes(s) ||
+                        (report.clientName || "").toLowerCase().includes(s) ||
+                        (report.location || "").toLowerCase().includes(s)
+                      );
+                    })
+                    .sort(
+                      (a, b) =>
+                        new Date(b.timestamp || b.date || 0).getTime() -
+                        new Date(a.timestamp || a.date || 0).getTime()
+                    )
+                    .map((report) => {
                     const titleUpper = `DAILY REPORT ${(
                       report.projectName || "PROJEK"
                     ).toUpperCase()} ${formatIndonesianDateUpper(
@@ -517,13 +568,18 @@ export function AdminDailyReportsScreen({
                         className="p-4 sm:p-5 hover:bg-slate-50/80 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4"
                       >
                         <div className="space-y-1">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <span className="font-mono text-xs font-black text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100">
                               {titleUpper}
                             </span>
                             {report.workType && (
                               <span className="text-[11px] font-bold text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full">
                                 {report.workType}
+                              </span>
+                            )}
+                            {report.editedAt && (
+                              <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                                Diedit Admin
                               </span>
                             )}
                           </div>
@@ -546,23 +602,44 @@ export function AdminDailyReportsScreen({
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2 self-end sm:self-center">
+                        <div className="flex flex-wrap items-center gap-2 self-end sm:self-center">
                           <button
                             onClick={() => setPreviewReport(report)}
-                            className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all"
+                            className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
                             title="Lihat Detail Laporan"
                           >
                             <Eye size={15} />
                             <span className="hidden md:inline">Detail</span>
                           </button>
+                          {isAdminUser && (
+                            <button
+                              onClick={() => setEditingReport(report)}
+                              className="py-2.5 px-3 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                              title="Edit Laporan Harian"
+                            >
+                              <Pencil size={14} />
+                              <span>Edit</span>
+                            </button>
+                          )}
                           <button
                             onClick={() => generateDailyReportPDF(report)}
-                            className="py-2.5 px-3.5 bg-primary text-white hover:bg-primary/90 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
+                            className="py-2.5 px-3.5 bg-primary text-white hover:bg-primary/90 rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all cursor-pointer"
                             title="Download PDF Laporan Ini"
                           >
                             <Download size={15} />
                             <span>Download PDF</span>
                           </button>
+                          {isAdminUser && (
+                            <button
+                              onClick={() =>
+                                handleDeleteReport(report.id, report.projectName || "Proyek")
+                              }
+                              className="p-2.5 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-xl transition-colors cursor-pointer"
+                              title="Hapus Laporan Harian"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -770,6 +847,11 @@ export function AdminDailyReportsScreen({
                             <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-100 text-blue-700">
                               {report.workType || "Konstruksi & Sipil"}
                             </span>
+                            {report.editedAt && (
+                              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                Diedit Admin
+                              </span>
+                            )}
                           </div>
 
                           {/* Quick Badges */}
@@ -819,26 +901,37 @@ export function AdminDailyReportsScreen({
                       </div>
 
                       {/* Right: Actions */}
-                      <div className="flex items-center gap-2 self-end lg:self-center shrink-0">
+                      <div className="flex flex-wrap items-center gap-2 self-end lg:self-center shrink-0">
                         <button
                           onClick={() => setPreviewReport(report)}
-                          className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all"
+                          className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
                           title="Lihat rincian lengkap laporan"
                         >
                           <Eye size={15} />
                           <span>Rincian</span>
                         </button>
 
+                        {isAdminUser && (
+                          <button
+                            onClick={() => setEditingReport(report)}
+                            className="px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                            title="Edit Laporan Harian"
+                          >
+                            <Pencil size={14} />
+                            <span>Edit</span>
+                          </button>
+                        )}
+
                         <button
                           onClick={() => generateDailyReportPDF(report)}
-                          className="px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md shadow-primary/20 transition-all"
+                          className="px-4 py-2 bg-primary hover:bg-primary/90 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 shadow-md shadow-primary/20 transition-all cursor-pointer"
                           title="Download 1 file PDF (2 lembar)"
                         >
                           <Download size={15} />
                           <span>Download PDF</span>
                         </button>
 
-                        {currentUser?.role === "admin" && (
+                        {isAdminUser && (
                           <button
                             onClick={() =>
                               handleDeleteReport(
@@ -846,7 +939,7 @@ export function AdminDailyReportsScreen({
                                 report.projectName || currentProject?.name || "Proyek"
                               )
                             }
-                            className="p-2 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-xl transition-colors"
+                            className="p-2 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-xl transition-colors cursor-pointer"
                             title="Hapus Laporan Harian"
                           >
                             <Trash2 size={16} />
@@ -1094,20 +1187,31 @@ export function AdminDailyReportsScreen({
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between">
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
               <button
                 onClick={() => setPreviewReport(null)}
-                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900"
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 cursor-pointer"
               >
                 Tutup
               </button>
-              <button
-                onClick={() => generateDailyReportPDF(previewReport)}
-                className="px-5 py-2.5 bg-primary text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-primary/20 hover:scale-105 active:scale-95 transition-all"
-              >
-                <Download size={16} />
-                <span>Download PDF Laporan Ini</span>
-              </button>
+              <div className="flex items-center gap-2">
+                {isAdminUser && (
+                  <button
+                    onClick={() => setEditingReport(previewReport)}
+                    className="px-4 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer"
+                  >
+                    <Pencil size={14} />
+                    <span>Edit Laporan</span>
+                  </button>
+                )}
+                <button
+                  onClick={() => generateDailyReportPDF(previewReport)}
+                  className="px-5 py-2.5 bg-primary text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-primary/20 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                >
+                  <Download size={16} />
+                  <span>Download PDF Laporan Ini</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -1334,6 +1438,36 @@ export function AdminDailyReportsScreen({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ================= MODAL: EDIT LAPORAN HARIAN (ADMIN) ================= */}
+      {editingReport && (
+        <EditDailyReportModal
+          report={editingReport}
+          projects={projects}
+          currentUser={currentUser}
+          onClose={() => setEditingReport(null)}
+          onSaved={(updated) => {
+            if (setDailyReports) {
+              setDailyReports(
+                dailyReports.map((r) => (r.id === updated.id ? updated : r))
+              );
+            }
+            if (previewReport?.id === updated.id) {
+              setPreviewReport(updated);
+            }
+            setEditingReport(null);
+            setToastNotice("Perubahan laporan harian berhasil disimpan!");
+            setTimeout(() => setToastNotice(""), 3000);
+          }}
+        />
+      )}
+
+      {toastNotice && (
+        <div className="fixed bottom-6 right-6 z-[150] px-5 py-3 bg-emerald-600 text-white rounded-2xl shadow-xl text-xs font-black flex items-center gap-2 animate-in fade-in">
+          <CheckCircle2 size={16} />
+          <span>{toastNotice}</span>
         </div>
       )}
     </div>

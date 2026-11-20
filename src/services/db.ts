@@ -537,6 +537,24 @@ export const dbService = {
     }
   },
 
+  async createDocumentStrict(collectionPath: string, data: any): Promise<string> {
+    const finalDocId = String(data?.customId || data?.id || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
+    const sanitized = sanitizeFirestoreData({ ...data, id: finalDocId }) || {};
+    const docRef = doc(db, collectionPath, finalDocId);
+    await setDoc(docRef, {
+      ...sanitized,
+      id: finalDocId,
+      createdAt: sanitized.createdAt || Timestamp.now(),
+      updatedAt: Timestamp.now()
+    }, { merge: true });
+
+    const map = getLocalCollectionStore(collectionPath);
+    map.set(finalDocId, { ...data, id: finalDocId, createdAt: Date.now(), updatedAt: new Date().toISOString() });
+    saveLocalCollectionStore(collectionPath, map);
+    removeDeletedCollectionId(collectionPath, finalDocId);
+    return finalDocId;
+  },
+
   async updateDocument(collectionPath: string, docId: string, data: any): Promise<void> {
     const finalDocId = docId || data?.id || data?.customId;
     if (finalDocId) {

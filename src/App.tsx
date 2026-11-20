@@ -218,6 +218,7 @@ import {
 } from "firebase/auth";
 import { GeotagCameraModal } from "./components/GeotagCameraModal";
 import { AdminDailyReportsScreen } from "./components/AdminDailyReportsScreen";
+import { EditDailyReportModal } from "./components/EditDailyReportModal";
 import { generateDailyReportPDF as generateDailyReportPDFUtil, generateBatchDailyReportsPDF, formatIndonesianDateUpper } from "./utils/dailyReportPdf";
 import { EKatalog } from "./components/EKatalog";
 import { AdminPurchaseOrderScreen } from "./components/AdminPurchaseOrderScreen";
@@ -4839,6 +4840,33 @@ const AdminFieldReportsTab = ({
     "ALL" | "PENDING" | "APPROVED" | "PROSES"
   >("ALL");
   const [selectedImg, setSelectedImg] = useState<string | null>(null);
+  const [editingFieldReport, setEditingFieldReport] = useState<FieldReport | null>(null);
+  const [isSavingFieldEdit, setIsSavingFieldEdit] = useState(false);
+
+  const isAdminFieldUser =
+    ["admin", "owner", "direktur"].includes(String(user?.role || "").toLowerCase()) ||
+    Boolean(user?.isAdmin);
+
+  const handleSaveFieldReportEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingFieldReport?.id) return;
+    setIsSavingFieldEdit(true);
+    try {
+      await dbService.updateDocument("reports", editingFieldReport.id, {
+        title: editingFieldReport.title || "",
+        location: editingFieldReport.location || "",
+        category: editingFieldReport.category || "",
+        priority: editingFieldReport.priority || "Medium",
+        estimatedCost: Number(editingFieldReport.estimatedCost) || 0,
+        description: editingFieldReport.description || "",
+      });
+      setEditingFieldReport(null);
+    } catch (err) {
+      console.error("Gagal memperbarui laporan lapangan:", err);
+    } finally {
+      setIsSavingFieldEdit(false);
+    }
+  };
 
   const handleUpdateStatus = async (
     reportId: string,
@@ -4852,8 +4880,7 @@ const AdminFieldReportsTab = ({
   };
 
   const handleDeleteReport = async (reportId: string) => {
-    if (user?.role !== "admin") {
-      alert("Hanya admin yang dapat menghapus laporan lapangan.");
+    if (!isAdminFieldUser) {
       return;
     }
     if (window.confirm("Apakah Anda yakin ingin menghapus laporan ini?")) {
@@ -5109,10 +5136,19 @@ const AdminFieldReportsTab = ({
                         Proses
                       </button>
                     )}
-                    {user?.role === "admin" && (
+                    {isAdminFieldUser && (
+                      <button
+                        onClick={() => setEditingFieldReport({ ...report })}
+                        className="p-2 text-amber-600 hover:bg-amber-50 rounded-xl transition border border-amber-200 cursor-pointer"
+                        title="Edit Laporan Lapangan"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    )}
+                    {isAdminFieldUser && (
                       <button
                         onClick={() => report.id && handleDeleteReport(report.id)}
-                        className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl transition border border-rose-100"
+                        className="p-2 text-rose-600 hover:bg-rose-50 rounded-xl transition border border-rose-100 cursor-pointer"
                         title="Hapus Laporan"
                       >
                         <Trash2 size={14} />
@@ -5123,6 +5159,131 @@ const AdminFieldReportsTab = ({
               </div>
             </motion.div>
           ))}
+        </div>
+      )}
+
+      {/* Modal Edit Laporan Cepat / Umum (Admin) */}
+      {editingFieldReport && (
+        <div
+          className="fixed inset-0 z-[120] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setEditingFieldReport(null)}
+        >
+          <form
+            onSubmit={handleSaveFieldReportEdit}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl border border-slate-100"
+          >
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-black text-slate-900">Edit Laporan Lapangan</h3>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  Pelapor: {editingFieldReport.userName || "-"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingFieldReport(null)}
+                className="p-2 text-slate-400 hover:text-slate-700 rounded-full hover:bg-slate-100 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">
+                  Judul Laporan
+                </label>
+                <input
+                  type="text"
+                  className="input-field text-xs font-bold w-full"
+                  value={editingFieldReport.title || ""}
+                  onChange={(e) =>
+                    setEditingFieldReport({ ...editingFieldReport, title: e.target.value })
+                  }
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">
+                    Kategori
+                  </label>
+                  <input
+                    type="text"
+                    className="input-field text-xs font-bold w-full"
+                    value={editingFieldReport.category || ""}
+                    onChange={(e) =>
+                      setEditingFieldReport({ ...editingFieldReport, category: e.target.value })
+                    }
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">
+                    Prioritas
+                  </label>
+                  <select
+                    className="input-field text-xs font-bold w-full"
+                    value={editingFieldReport.priority || "Medium"}
+                    onChange={(e) =>
+                      setEditingFieldReport({
+                        ...editingFieldReport,
+                        priority: e.target.value as any,
+                      })
+                    }
+                  >
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">
+                  Lokasi / Site
+                </label>
+                <input
+                  type="text"
+                  className="input-field text-xs font-bold w-full"
+                  value={editingFieldReport.location || ""}
+                  onChange={(e) =>
+                    setEditingFieldReport({ ...editingFieldReport, location: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider block mb-1">
+                  Deskripsi / Rincian
+                </label>
+                <textarea
+                  rows={3}
+                  className="input-field text-xs font-medium w-full"
+                  value={editingFieldReport.description || ""}
+                  onChange={(e) =>
+                    setEditingFieldReport({ ...editingFieldReport, description: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setEditingFieldReport(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingFieldEdit}
+                className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black rounded-xl flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+              >
+                <Save size={14} />
+                <span>{isSavingFieldEdit ? "Menyimpan..." : "Simpan"}</span>
+              </button>
+            </div>
+          </form>
         </div>
       )}
 
@@ -6414,6 +6575,7 @@ const AdminAnalyticsScreen = ({
   roles,
   documents,
   companyProfile,
+  onEditDailyReport,
 }: {
   employees: Employee[];
   projects: Project[];
@@ -6426,6 +6588,7 @@ const AdminAnalyticsScreen = ({
   roles: RoleConfig[];
   documents: Document[];
   companyProfile?: any;
+  onEditDailyReport?: (report: DailyReport) => void;
 }) => {
   const [period, setPeriod] = useState("Bulan Ini");
   const [activeTab, setActiveTab] = useState<
@@ -7128,12 +7291,26 @@ const AdminAnalyticsScreen = ({
                             </span>
                           </td>
                           <td className="px-8 py-6 text-right">
-                            <button
-                              onClick={() => generateDailyReportPDF(report)}
-                              className="h-10 px-5 bg-white border border-slate-200 text-slate-900 rounded-xl font-black text-[9px] uppercase tracking-widest shadow-sm flex items-center gap-2 hover:bg-slate-900 hover:text-white hover:border-slate-900 transition-all ml-auto"
-                            >
-                              <Download size={14} /> Unduh PDF
-                            </button>
+                            <div className="flex items-center justify-end gap-2">
+                              {onEditDailyReport &&
+                                (["admin", "owner", "direktur"].includes(
+                                  String(user?.role || "").toLowerCase(),
+                                ) ||
+                                  Boolean(user?.isAdmin)) && (
+                                  <button
+                                    onClick={() => onEditDailyReport(report)}
+                                    className="h-10 px-4 bg-amber-50 border border-amber-200 text-amber-700 rounded-xl font-black text-[9px] uppercase tracking-widest shadow-sm flex items-center gap-1.5 hover:bg-amber-100 transition-all cursor-pointer"
+                                  >
+                                    <Pencil size={13} /> Edit
+                                  </button>
+                                )}
+                              <button
+                                onClick={() => generateDailyReportPDF(report)}
+                                className="h-10 px-5 bg-white border border-slate-200 text-slate-900 rounded-xl font-black text-[9px] uppercase tracking-widest shadow-sm flex items-center gap-2 hover:bg-slate-900 hover:text-white hover:border-slate-900 transition-all cursor-pointer"
+                              >
+                                <Download size={14} /> Unduh PDF
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -30753,6 +30930,7 @@ const DailyReportForm = ({
 }: any) => {
   const [isGeotagCameraOpen, setIsGeotagCameraOpen] = useState(false);
   const [formError, setFormError] = useState<string>("");
+  const [isSubmittingReport, setIsSubmittingReport] = useState(false);
   const [draft, setDraft] = useState<any>({
     projectId: "",
     projectName: "",
@@ -30856,8 +31034,9 @@ const DailyReportForm = ({
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingReport) return;
     if (!draft.contractor || !draft.contractor.trim()) {
       setFormError("Nama Perusahaan / Kontraktor wajib diisi secara manual.");
       return;
@@ -30875,12 +31054,19 @@ const DailyReportForm = ({
       return;
     }
     setFormError("");
-    onSubmit({
-      ...draft,
-      contractor: draft.contractor.trim(),
-      location: draft.location.trim(),
-      clientName: (draft.clientName || "").trim(),
-    });
+    setIsSubmittingReport(true);
+    try {
+      await onSubmit({
+        ...draft,
+        contractor: draft.contractor.trim(),
+        location: draft.location.trim(),
+        clientName: (draft.clientName || "").trim(),
+      });
+    } catch (err: any) {
+      setFormError("Gagal mengirim laporan ke server: " + (err?.message || "Silakan coba lagi."));
+    } finally {
+      setIsSubmittingReport(false);
+    }
   };
 
   const obstaclesList = Array.isArray(draft.obstacles)
@@ -31114,7 +31300,7 @@ const DailyReportForm = ({
                           reader.onloadend = async () => {
                             let base64 = reader.result as string;
                             try {
-                              base64 = await compressImage(base64, 500, 500, 0.85);
+                              base64 = await compressImage(base64, 360, 360, 0.8);
                             } catch {
                               // keep original base64 if compression fails
                             }
@@ -31186,7 +31372,7 @@ const DailyReportForm = ({
                           reader.onloadend = async () => {
                             let base64 = reader.result as string;
                             try {
-                              base64 = await compressImage(base64, 500, 500, 0.85);
+                              base64 = await compressImage(base64, 360, 360, 0.8);
                             } catch {
                               // keep original base64 if compression fails
                             }
@@ -31594,7 +31780,7 @@ const DailyReportForm = ({
                         reader.onloadend = async () => {
                           let base64 = reader.result as string;
                           try {
-                            base64 = await compressImage(base64, 1024, 1024, 0.78);
+                            base64 = await compressImage(base64, 800, 800, 0.72);
                           } catch {
                             // keep original if compression fails
                           }
@@ -31619,10 +31805,16 @@ const DailyReportForm = ({
           <GeotagCameraModal
             isOpen={isGeotagCameraOpen}
             onClose={() => setIsGeotagCameraOpen(false)}
-            onCapture={(photo) => {
+            onCapture={async (photo) => {
+              let finalPhoto = photo;
+              try {
+                finalPhoto = await compressImage(photo, 800, 800, 0.72);
+              } catch {
+                // keep captured photo
+              }
               setDraft((prev: any) => ({
                 ...prev,
-                photos: [...prev.photos, photo].slice(0, 8),
+                photos: [...prev.photos, finalPhoto].slice(0, 8),
               }));
             }}
             initialData={{
@@ -31816,9 +32008,10 @@ const DailyReportForm = ({
 
         <button
           type="submit"
-          className="btn-primary w-full py-5 text-lg font-black tracking-tighter shadow-2xl shadow-primary/30 flex items-center justify-center gap-3 active:scale-95 transition-all cursor-pointer"
+          disabled={isSubmittingReport}
+          className="btn-primary w-full py-5 text-lg font-black tracking-tighter shadow-2xl shadow-primary/30 flex items-center justify-center gap-3 active:scale-95 transition-all cursor-pointer disabled:opacity-60"
         >
-          KIRIM LAPORAN SEKARANG <Send size={24} />
+          {isSubmittingReport ? "MENGIRIM LAPORAN..." : "KIRIM LAPORAN SEKARANG"} <Send size={24} />
         </button>
       </form>
     </motion.div>
@@ -33287,6 +33480,7 @@ export default function App() {
   const [lateReason, setLateReason] = useState<string>("");
   const [showLateDialog, setShowLateDialog] = useState(false);
   const [dailyReports, setDailyReports] = useState<DailyReport[]>([]);
+  const [editingDailyReport, setEditingDailyReport] = useState<DailyReport | null>(null);
   const [reportFormType, setReportFormType] = useState<
     "PROJECT" | "EXPENSE" | "DAILY" | null
   >(null);
@@ -34120,9 +34314,10 @@ export default function App() {
         // Ensure role is correctly identified
         // Fallback for priority admins who might not have a document yet
         const loggedUser = userData
-          ? { ...userData, id: user.uid }
+          ? { ...userData, id: user.uid, uid: user.uid }
           : {
               id: user.uid,
+              uid: user.uid,
               role: email === "owner@gigt.com" ? "owner" : email === "direktur@gigt.com" ? "direktur" : "admin",
               isAdmin: true,
               name:
@@ -34240,7 +34435,7 @@ export default function App() {
               dailyRate: email === "owner@gigt.com" ? 1000000 : email === "direktur@gigt.com" ? 800000 : 500000,
             };
             await dbService.setDocument("users", user.uid, adminData);
-            const loggedUser = { ...adminData, id: user.uid };
+            const loggedUser = { ...adminData, id: user.uid, uid: user.uid };
             setCurrentUser(loggedUser);
             localStorage.setItem("workflow_pro_user", JSON.stringify(loggedUser));
             saveLoginToHistory(identifier, password);
@@ -38757,7 +38952,7 @@ export default function App() {
       };
 
       await dbService.setDocument("users", user.uid, userData);
-      const loggedUser = { ...userData, id: user.uid };
+      const loggedUser = { ...userData, id: user.uid, uid: user.uid };
       setCurrentUser(loggedUser);
       localStorage.setItem("workflow_pro_user", JSON.stringify(loggedUser));
       alert("Akun berhasil dibuat!");
@@ -39032,9 +39227,10 @@ export default function App() {
 
           if (userData || isPriorityAdmin) {
             const loggedUser = userData
-              ? { ...userData, id: user.uid }
+              ? { ...userData, id: user.uid, uid: user.uid }
               : {
                   id: user.uid,
+                  uid: user.uid,
                   role: userEmail === "owner@gigt.com" ? "owner" : userEmail === "direktur@gigt.com" ? "direktur" : "admin",
                   isAdmin: true,
                   name:
@@ -39243,10 +39439,55 @@ export default function App() {
       [orderBy("createdAt", "desc")],
     );
 
+    let hasSyncedLocalDailyReports = false;
     const unsubscribeDailyReports = dbService.onCollectionSnapshot<DailyReport>(
       "dailyReports",
       (data) => {
         setDailyReports(data);
+
+        // Recover any previously stranded local daily reports whose Firestore write failed earlier
+        if (!hasSyncedLocalDailyReports && auth.currentUser?.uid) {
+          hasSyncedLocalDailyReports = true;
+          const uid = auth.currentUser.uid;
+          const remoteIds = new Set((data || []).map((r) => r.id));
+          const localMap = getLocalCollectionStore<DailyReport>("dailyReports");
+          const stranded = Array.from(localMap.values()).filter((lr) => {
+            if (!lr || !lr.id || remoteIds.has(lr.id)) return false;
+            const matchesOwner =
+              !lr.submittedBy ||
+              lr.submittedBy === uid ||
+              (currentUser?.name && lr.submittedByName === currentUser.name);
+            return matchesOwner || currentUser?.role === "admin";
+          });
+
+          stranded.forEach(async (lr) => {
+            try {
+              const repaired: any = {
+                ...lr,
+                submittedBy: lr.submittedBy || uid,
+              };
+              const approxSize = new Blob([JSON.stringify(repaired)]).size;
+              if (approxSize > 880_000) {
+                if (repaired.contractorLogo) {
+                  try { repaired.contractorLogo = await compressImage(repaired.contractorLogo, 280, 280, 0.72); } catch {}
+                }
+                if (repaired.clientLogo) {
+                  try { repaired.clientLogo = await compressImage(repaired.clientLogo, 280, 280, 0.72); } catch {}
+                }
+                if (Array.isArray(repaired.photos) && repaired.photos.length > 0) {
+                  repaired.photos = await Promise.all(
+                    repaired.photos.map(async (ph: string) => {
+                      try { return await compressImage(ph, 640, 640, 0.58); } catch { return ph; }
+                    })
+                  );
+                }
+              }
+              await dbService.createDocumentStrict("dailyReports", repaired);
+            } catch (syncErr) {
+              console.warn("Stranded dailyReport sync skipped:", syncErr);
+            }
+          });
+        }
       },
       [orderBy("timestamp", "desc")],
     );
@@ -40938,25 +41179,81 @@ export default function App() {
 
   const handleDailyReportSubmit = async (draft: any) => {
     try {
-      const newReport: Omit<DailyReport, "id"> = {
-        ...draft,
-        submittedBy: currentUser.uid,
-        submittedByName: currentUser.name || currentUser.displayName,
-        submittedByRole: currentUser.role || "Karyawan",
-        timestamp: Date.now(),
-        status: "PENDING",
-      } as any; // use as any to avoid strict type mismatch if some fields are missing in draft
+      const submitterUid =
+        auth.currentUser?.uid || currentUser?.uid || currentUser?.id || "";
+      if (!submitterUid) {
+        throw new Error("Sesi login tidak valid. Silakan login ulang lalu kirim kembali.");
+      }
 
-      await dbService.createDocument("dailyReports", newReport);
+      const matchedProj = projects.find(
+        (p) =>
+          p.id === draft.projectId ||
+          p.name.replace(/\s+/g, " ").trim().toLowerCase() ===
+            (draft.projectName || "").replace(/\s+/g, " ").trim().toLowerCase(),
+      );
+
+      const newReport: any = {
+        ...draft,
+        projectId: matchedProj?.id || draft.projectId || "",
+        projectName: matchedProj?.name || draft.projectName || "PROYEK",
+        submittedBy: submitterUid,
+        submittedByName:
+          currentUser?.name || currentUser?.displayName || currentUser?.username || "Karyawan",
+        submittedByRole: currentUser?.role || "Karyawan",
+        timestamp: Date.now(),
+        date: Date.now(),
+        status: "PENDING",
+      };
+
+      // Guard against Firestore 1MB document limit by adapting image sizes if needed
+      let payloadBytes = new Blob([JSON.stringify(newReport)]).size;
+      if (payloadBytes > 880_000) {
+        if (newReport.contractorLogo) {
+          try {
+            newReport.contractorLogo = await compressImage(newReport.contractorLogo, 280, 280, 0.72);
+          } catch {}
+        }
+        if (newReport.clientLogo) {
+          try {
+            newReport.clientLogo = await compressImage(newReport.clientLogo, 280, 280, 0.72);
+          } catch {}
+        }
+        if (Array.isArray(newReport.photos) && newReport.photos.length > 0) {
+          newReport.photos = await Promise.all(
+            newReport.photos.map(async (ph: string) => {
+              try {
+                return await compressImage(ph, 680, 680, 0.6);
+              } catch {
+                return ph;
+              }
+            }),
+          );
+        }
+        payloadBytes = new Blob([JSON.stringify(newReport)]).size;
+        if (payloadBytes > 930_000 && Array.isArray(newReport.photos) && newReport.photos.length > 0) {
+          newReport.photos = await Promise.all(
+            newReport.photos.map(async (ph: string) => {
+              try {
+                return await compressImage(ph, 520, 520, 0.48);
+              } catch {
+                return ph;
+              }
+            }),
+          );
+        }
+      }
+
+      await dbService.createDocumentStrict("dailyReports", newReport);
+
       await logActivity(
         "REPORT",
         "CREATE",
-        `Mengirim laporan harian projek: ${draft.projectName}`,
+        `Mengirim laporan harian projek: ${newReport.projectName}`,
       );
 
       await dbService.createDocument("notifications", {
         title: "Laporan Harian Baru",
-        message: `${newReport.submittedByName} mengirim laporan harian baru untuk proyek: ${draft.projectName || "Umum"}`,
+        message: `${newReport.submittedByName} mengirim laporan harian baru untuk proyek: ${newReport.projectName || "Umum"}`,
         type: "INFO",
         category: "Laporan",
         read: false,
@@ -40964,13 +41261,16 @@ export default function App() {
         createdAt: Date.now(),
       });
 
-      setToastMessage("Laporan harian berhasil dikirim!");
+      setToastMessage("Laporan harian berhasil dikirim ke server!");
       setShowToast(true);
       setReportFormType(null);
       setTimeout(() => setShowToast(false), 3000);
     } catch (err: any) {
-      setToastMessage("Gagal mengirim laporan: " + err.message);
+      const msg = err?.message || "Gagal menyimpan laporan ke server";
+      setToastMessage("Gagal mengirim laporan: " + msg);
       setShowToast(true);
+      setTimeout(() => setShowToast(false), 4500);
+      throw err;
     }
   };
 
@@ -43699,12 +43999,11 @@ export default function App() {
 
           {/* TAB: LAPORAN HARIAN PROYEK */}
           {projectManageTab === "laporan-harian" && (() => {
+            const normProj = (v?: string) => (v || "").replace(/\s+/g, " ").trim().toLowerCase();
             const projectDailyReports = dailyReports.filter(
               (r) =>
-                r.projectId === projectToManage.id ||
-                (r.projectName &&
-                  projectToManage.name &&
-                  r.projectName.toLowerCase() === projectToManage.name.toLowerCase())
+                (r.projectId && r.projectId === projectToManage.id) ||
+                (normProj(r.projectName) && normProj(r.projectName) === normProj(projectToManage.name))
             );
 
             return (
@@ -43871,21 +44170,41 @@ export default function App() {
                                 📋
                               </div>
                               <div>
-                                <h4 className="text-sm font-black text-slate-900 tracking-tight">
-                                  {new Date(report.timestamp).toLocaleDateString("id-ID", {
-                                    weekday: "long",
-                                    day: "2-digit",
-                                    month: "long",
-                                    year: "numeric",
-                                  })}
-                                </h4>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h4 className="text-sm font-black text-slate-900 tracking-tight">
+                                    {new Date(report.timestamp).toLocaleDateString("id-ID", {
+                                      weekday: "long",
+                                      day: "2-digit",
+                                      month: "long",
+                                      year: "numeric",
+                                    })}
+                                  </h4>
+                                  {report.editedAt && (
+                                    <span className="px-2 py-0.5 bg-indigo-50 text-indigo-700 text-[9px] font-black rounded-full border border-indigo-100 uppercase">
+                                      Diedit Admin
+                                    </span>
+                                  )}
+                                </div>
                                 <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
                                   Dikirim PKL {new Date(report.timestamp).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })} WIB • Oleh <span className="text-slate-700 font-black">{report.submittedByName || "Supervisor"}</span> ({report.submittedByRole || "Team Leader"})
                                 </p>
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-2 self-end sm:self-auto">
+                            <div className="flex flex-wrap items-center gap-2 self-end sm:self-auto">
+                              {(currentUser?.role === "admin" ||
+                                currentUser?.role === "owner" ||
+                                currentUser?.role === "direktur" ||
+                                currentUser?.isAdmin) && (
+                                <button
+                                  onClick={() => setEditingDailyReport(report)}
+                                  className="px-3.5 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-2xs active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                                  title="Edit Laporan Harian"
+                                >
+                                  <Pencil size={14} />
+                                  <span>Edit</span>
+                                </button>
+                              )}
                               <button
                                 onClick={() => generateDailyReportPDF(report)}
                                 className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-sm active:scale-95 flex items-center gap-2 cursor-pointer"
@@ -50750,6 +51069,7 @@ export default function App() {
             roles={roles}
             documents={documents}
             companyProfile={companyProfile}
+            onEditDailyReport={(r) => setEditingDailyReport(r)}
           />
         );
 
@@ -57632,6 +57952,23 @@ case "izin-cuti":
       {renderReminderModal()}
       {renderSalaryDetailModal()}
       {renderLogoutModal()}
+      {editingDailyReport && (
+        <EditDailyReportModal
+          report={editingDailyReport}
+          projects={projects}
+          currentUser={currentUser}
+          onClose={() => setEditingDailyReport(null)}
+          onSaved={(updated) => {
+            setDailyReports((prev) =>
+              prev.map((r) => (r.id === updated.id ? updated : r))
+            );
+            setEditingDailyReport(null);
+            setToastMessage("Laporan harian berhasil diperbarui!");
+            setShowToast(true);
+            setTimeout(() => setShowToast(false), 3000);
+          }}
+        />
+      )}
 
       {/* Notification Center */}
       <NotificationCenter
