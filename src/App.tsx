@@ -9011,6 +9011,7 @@ const AdminDebtScreen = ({
 
   const [paymentForm, setPaymentForm] = useState({
     amount: "",
+    adminFee: "",
     date: new Date().toISOString().split("T")[0],
     note: "",
     paymentMethod: "TRANSFER" as "CASH" | "TRANSFER",
@@ -9022,6 +9023,7 @@ const AdminDebtScreen = ({
   const [showGroupPaymentModal, setShowGroupPaymentModal] = useState<{ contactName: string; totalRemaining: number; debtType: "HUTANG" | "PIUTANG" } | null>(null);
   const [groupPaymentForm, setGroupPaymentForm] = useState({
     amount: "",
+    adminFee: "",
     date: new Date().toISOString().split("T")[0],
     note: "",
     paymentMethod: "TRANSFER" as "CASH" | "TRANSFER",
@@ -9075,6 +9077,7 @@ const AdminDebtScreen = ({
   const [statusChangeForm, setStatusChangeForm] = useState({
     status: "PAID" as "PAID" | "UNPAID",
     paymentAmount: "",
+    adminFee: "",
     date: new Date().toISOString().split("T")[0],
     note: "",
     paymentMethod: "TRANSFER" as "TRANSFER" | "CASH",
@@ -9264,10 +9267,13 @@ const AdminDebtScreen = ({
     setShowPaymentModal(record);
     setPaymentForm({
       amount: remaining.toString(),
+      adminFee: "",
       date: new Date().toISOString().split("T")[0],
       note: `Pelunasan Penuh (${record.type === "HUTANG" ? "Hutang" : "Piutang"})`,
       paymentMethod: "TRANSFER",
       sumberDana: "REKENING PT",
+      pemilikUangPribadi: "FAISAL MUSTOPA",
+      personalHolder: "FAISAL MUSTOPA",
     });
   };
 
@@ -9291,6 +9297,7 @@ const AdminDebtScreen = ({
     setStatusChangeForm({
       status: target,
       paymentAmount: (rem > 0 ? rem : contractVal).toString(),
+      adminFee: "",
       date: new Date().toISOString().split("T")[0],
       note: `Pelunasan ${record.type === "HUTANG" ? "Hutang" : "Piutang"} (${record.contactName})`,
       paymentMethod: "TRANSFER",
@@ -9307,7 +9314,7 @@ const AdminDebtScreen = ({
     const targetStatus = statusChangeForm.status;
 
     if (targetStatus === "PAID") {
-      const payAmt = Number(statusChangeForm.paymentAmount) || remaining || contractValue;
+      const payAmt = parseRupiahNum(statusChangeForm.paymentAmount) || remaining || contractValue;
       if (payAmt <= 0) {
         alert("Nominal pelunasan harus lebih dari 0.");
         return;
@@ -9323,7 +9330,7 @@ const AdminDebtScreen = ({
         const dateFormatted = `${dd}${mm}${yy}`;
 
         let prefix = record.type === "HUTANG" ? "BNK" : "INC";
-        if (record.type === "HUTANG" && statusChangeForm.paymentMethod === "CASH") {
+        if (record.type === "HUTANG" && (statusChangeForm.paymentMethod === "CASH" || statusChangeForm.sumberDana === "DANA PATTYCASH" || statusChangeForm.sumberDana === "REKENING PRIBADI")) {
           prefix = "PRS";
         }
 
@@ -9335,9 +9342,20 @@ const AdminDebtScreen = ({
         }
         const chosenCustomId = `${prefix}-${dateFormatted}-${nextNumStr}`;
 
+        const sDanaUpper = (statusChangeForm.sumberDana || "").toUpperCase();
+        const isPribadiSC = sDanaUpper.includes("PRIBADI");
+        const isPattyCashSC = sDanaUpper.includes("PATTY") || sDanaUpper.includes("PETTY");
+        const flowTypeSC = record.type === "HUTANG"
+          ? (isPribadiSC ? "PERSONAL_TALANGAN_REIMBURSE" : isPattyCashSC ? "OUT_PERSONAL_SPEND" : "OUT_BANK_DIRECT")
+          : "IN";
+        const adminFeeSC = statusChangeForm.paymentMethod === "TRANSFER" ? parseRupiahNum(statusChangeForm.adminFee) : 0;
+
         const finRecord: any = {
           type: record.type === "HUTANG" ? "OUT" : "IN",
-          flowType: statusChangeForm.paymentMethod === "CASH" ? "KAS BESAR" : "REKENING PT",
+          flowType: flowTypeSC,
+          paymentMethod: statusChangeForm.paymentMethod,
+          sumberDana: statusChangeForm.sumberDana || "REKENING PT",
+          adminFee: adminFeeSC,
           customId: chosenCustomId,
           category: record.type === "HUTANG" ? "Pembayaran Hutang" : "Penerimaan Piutang",
           amount: payAmt,
@@ -9345,11 +9363,19 @@ const AdminDebtScreen = ({
           description: statusChangeForm.note || `Pelunasan ${record.type} [${record.customId || record.id}] - ${record.contactName}`,
           recordedBy: user.name,
           timestamp: Date.now(),
+          isUserCreated: true,
+          isManualUserCreated: true,
+          isLiveNewTransaction: true,
           ...(record.type === "HUTANG" ? { refHutang: record.customId || record.id } : { refPiutang: record.customId || record.id }),
         };
 
         finId = await dbService.createDocument("financialRecords", finRecord);
-        setFinancialRecords?.((prev) => [{ id: finId, ...finRecord } as FinancialRecord, ...prev]);
+        const fullFinRec = { id: finId || chosenCustomId, ...finRecord } as FinancialRecord;
+        saveFinancialOverride(fullFinRec);
+        recordActiveUserTransaction(fullFinRec);
+        recordLivePostBaselineId(chosenCustomId, finRecord.date);
+        if (finId) recordLivePostBaselineId(finId, finRecord.date);
+        setFinancialRecords?.((prev) => [fullFinRec, ...prev]);
       }
 
       const newPaymentEntry: DebtPayment = {
@@ -9857,11 +9883,12 @@ const AdminDebtScreen = ({
     e.preventDefault();
     if (!showPaymentModal) return;
 
-    const paymentAmount = Number(paymentForm.amount);
+    const paymentAmount = parseRupiahNum(paymentForm.amount);
     if (isNaN(paymentAmount) || paymentAmount <= 0) {
       alert("Masukkan nominal pembayaran yang valid (lebih dari 0).");
       return;
     }
+    const adminFeeNum = paymentForm.paymentMethod === "TRANSFER" ? parseRupiahNum(paymentForm.adminFee) : 0;
     const currPayments = showPaymentModal.payments || [];
     const totalPaidBefore = currPayments.reduce((a, b) => a + b.amount, 0);
     const remainingBefore = Math.max(0, showPaymentModal.amount - totalPaidBefore);
@@ -9912,6 +9939,7 @@ const AdminDebtScreen = ({
       type: showPaymentModal.type === "HUTANG" ? "OUT" : "IN",
       flowType: flowTypeVal,
       amount: paymentAmount,
+      adminFee: adminFeeNum,
       date: paymentForm.date,
       paymentMethod: paymentForm.paymentMethod,
       category:
@@ -9923,6 +9951,9 @@ const AdminDebtScreen = ({
       linkedDebtId: showPaymentModal.id,
       recordedBy: user.name,
       timestamp: Date.now(),
+      isUserCreated: true,
+      isManualUserCreated: true,
+      isLiveNewTransaction: true,
       customId: chosenCustomId,
       sumberDana: paymentForm.sumberDana,
       personalHolder: isPattyCashPay ? (paymentForm.personalHolder || "Faisal Mustopa (Admin)") : (isPribadiPay ? (paymentForm.pemilikUangPribadi || paymentForm.personalHolder || "FAISAL MUSTOPA") : ""),
@@ -9932,6 +9963,11 @@ const AdminDebtScreen = ({
     };
 
     const finId = await dbService.createDocument("financialRecords", finRecord);
+    const fullFinRecPay = { id: finId || chosenCustomId, ...finRecord } as FinancialRecord;
+    saveFinancialOverride(fullFinRecPay);
+    recordActiveUserTransaction(fullFinRecPay);
+    recordLivePostBaselineId(chosenCustomId, finRecord.date);
+    if (finId) recordLivePostBaselineId(finId, finRecord.date);
     await logActivity(
       "DEBT",
       "UPDATE",
@@ -9969,7 +10005,7 @@ const AdminDebtScreen = ({
     });
 
     setFinancialRecords((prev) => [
-      { id: finId, ...finRecord } as FinancialRecord,
+      fullFinRecPay,
       ...prev,
     ]);
 
@@ -10009,6 +10045,7 @@ const AdminDebtScreen = ({
     setShowPaymentModal(null);
     setPaymentForm({
       amount: "",
+      adminFee: "",
       date: new Date().toISOString().split("T")[0],
       note: "",
       paymentMethod: "TRANSFER",
@@ -10023,11 +10060,12 @@ const AdminDebtScreen = ({
     if (!showGroupPaymentModal) return;
 
     const contactName = showGroupPaymentModal.contactName;
-    const paymentAmount = Number(groupPaymentForm.amount);
+    const paymentAmount = parseRupiahNum(groupPaymentForm.amount);
     if (!paymentAmount || paymentAmount <= 0) {
       alert("Masukkan nominal pembayaran yang valid.");
       return;
     }
+    const adminFeeGroupNum = groupPaymentForm.paymentMethod === "TRANSFER" ? parseRupiahNum(groupPaymentForm.adminFee) : 0;
 
     const debtType = showGroupPaymentModal.debtType;
     const targetNormalizedName = normalizeContactName(contactName);
@@ -10093,10 +10131,15 @@ const AdminDebtScreen = ({
       customId: chosenCustomId,
       category: debtType === "HUTANG" ? "Pembayaran Hutang" : "Penerimaan Piutang",
       amount: paymentAmount,
+      adminFee: adminFeeGroupNum,
+      paymentMethod: groupPaymentForm.paymentMethod,
       date: groupPaymentForm.date,
       description: groupPaymentForm.note || `Pembayaran Total ${debtType} Kontak: ${targetNormalizedName}`,
       recordedBy: user.name,
       timestamp: Date.now(),
+      isUserCreated: true,
+      isManualUserCreated: true,
+      isLiveNewTransaction: true,
       refHutang: `[${targetNormalizedName}] Pembayaran Total ${debtType}`,
       sumberDana: groupPaymentForm.sumberDana,
       personalHolder: isPattyCashGroup ? (groupPaymentForm.personalHolder || "Faisal Mustopa (Admin)") : (isPribadiGroup ? (groupPaymentForm.pemilikUangPribadi || groupPaymentForm.personalHolder || "FAISAL MUSTOPA") : ""),
@@ -10151,8 +10194,13 @@ const AdminDebtScreen = ({
       linkedDebtId: allocsToStore[0]?.debtId,
       refHutang: refHutangSummary,
     });
+    const fullGroupFinRec = { ...finRecord, id: finId || chosenCustomId, debtAllocations: allocsToStore, linkedDebtId: allocsToStore[0]?.debtId, refHutang: refHutangSummary } as FinancialRecord;
+    saveFinancialOverride(fullGroupFinRec);
+    recordActiveUserTransaction(fullGroupFinRec);
+    recordLivePostBaselineId(chosenCustomId, finRecord.date);
+    if (finId) recordLivePostBaselineId(finId, finRecord.date);
     setFinancialRecords?.((prev) => [
-      { ...finRecord, id: finId, debtAllocations: allocsToStore, linkedDebtId: allocsToStore[0]?.debtId, refHutang: refHutangSummary },
+      fullGroupFinRec,
       ...prev,
     ]);
 
@@ -10189,6 +10237,7 @@ const AdminDebtScreen = ({
     setShowGroupPaymentModal(null);
     setGroupPaymentForm({
       amount: "",
+      adminFee: "",
       date: new Date().toISOString().split("T")[0],
       note: "",
       paymentMethod: "TRANSFER",
@@ -13800,6 +13849,32 @@ const AdminDebtScreen = ({
                     </div>
                   </div>
 
+                  {paymentForm.paymentMethod === "TRANSFER" && (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                        Biaya Admin Transfer (Rp)
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        placeholder="0"
+                        className="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl text-sm font-bold outline-none ring-primary/10 focus:ring-4 transition-all"
+                        value={paymentForm.adminFee}
+                        onChange={(e) =>
+                          setPaymentForm({
+                            ...paymentForm,
+                            adminFee: e.target.value.replace(/[^0-9.]/g, ""),
+                          })
+                        }
+                      />
+                      {parseRupiahNum(paymentForm.adminFee) > 0 && (
+                        <p className="text-[11px] font-bold text-rose-600 ml-1">
+                          Total Terpotong dari {paymentForm.sumberDana}: Rp {(parseRupiahNum(paymentForm.amount) + parseRupiahNum(paymentForm.adminFee)).toLocaleString("id-ID")} (Pokok Rp {parseRupiahNum(paymentForm.amount).toLocaleString("id-ID")} + Admin Rp {parseRupiahNum(paymentForm.adminFee).toLocaleString("id-ID")})
+                        </p>
+                      )}
+                    </div>
+                  )}
+
                   {/* Sumber Dana (Dari/Ke) */}
                   <div className="space-y-3">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
@@ -14079,42 +14154,61 @@ const AdminDebtScreen = ({
                     </div>
 
                     {statusChangeForm.createFinancialRecord && (
-                      <div className="grid grid-cols-2 gap-3 pt-1">
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 mb-1">
-                            Metode Pembayaran
-                          </label>
-                          <select
-                            value={statusChangeForm.paymentMethod}
-                            onChange={(e) =>
-                              setStatusChangeForm({
-                                ...statusChangeForm,
-                                paymentMethod: e.target.value as any,
-                                sumberDana: e.target.value === "CASH" ? "KAS BESAR" : "REKENING PT",
-                              })
-                            }
-                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
-                          >
-                            <option value="TRANSFER">TRANSFER BANK</option>
-                            <option value="CASH">TUNAI (CASH)</option>
-                          </select>
+                      <div className="space-y-3 pt-1">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                              Metode Pembayaran
+                            </label>
+                            <select
+                              value={statusChangeForm.paymentMethod}
+                              onChange={(e) =>
+                                setStatusChangeForm({
+                                  ...statusChangeForm,
+                                  paymentMethod: e.target.value as any,
+                                  sumberDana: e.target.value === "CASH" ? "KAS BESAR" : "REKENING PT",
+                                })
+                              }
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
+                            >
+                              <option value="TRANSFER">TRANSFER BANK</option>
+                              <option value="CASH">TUNAI (CASH)</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                              Sumber / Alur Dana
+                            </label>
+                            <select
+                              value={statusChangeForm.sumberDana}
+                              onChange={(e) =>
+                                setStatusChangeForm({ ...statusChangeForm, sumberDana: e.target.value })
+                              }
+                              className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
+                            >
+                              <option value="REKENING PT">REKENING PT</option>
+                              <option value="DANA PATTYCASH">DANA PATTYCASH</option>
+                              <option value="REKENING PRIBADI">REKENING PRIBADI</option>
+                            </select>
+                          </div>
                         </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-slate-600 mb-1">
-                            Sumber / Alur Dana
-                          </label>
-                          <select
-                            value={statusChangeForm.sumberDana}
-                            onChange={(e) =>
-                              setStatusChangeForm({ ...statusChangeForm, sumberDana: e.target.value })
-                            }
-                            className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none"
-                          >
-                            <option value="REKENING PT">REKENING PT</option>
-                            <option value="KAS BESAR">KAS BESAR</option>
-                            <option value="REKENING PRIBADI">REKENING PRIBADI</option>
-                          </select>
-                        </div>
+                        {statusChangeForm.paymentMethod === "TRANSFER" && (
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-600 mb-1">
+                              Biaya Admin Transfer (Rp)
+                            </label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              placeholder="0"
+                              value={statusChangeForm.adminFee}
+                              onChange={(e) =>
+                                setStatusChangeForm({ ...statusChangeForm, adminFee: e.target.value.replace(/[^0-9.]/g, "") })
+                              }
+                              className="w-full px-3.5 py-2 bg-white border border-emerald-300 rounded-xl text-xs font-bold font-mono text-slate-800 outline-none"
+                            />
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -15020,6 +15114,32 @@ const AdminDebtScreen = ({
                     </select>
                   </div>
                 </div>
+
+                {groupPaymentForm.paymentMethod === "TRANSFER" && (
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
+                      Biaya Admin Transfer (Rp)
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      placeholder="0"
+                      className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none"
+                      value={groupPaymentForm.adminFee}
+                      onChange={(e) =>
+                        setGroupPaymentForm({
+                          ...groupPaymentForm,
+                          adminFee: e.target.value.replace(/[^0-9.]/g, ""),
+                        })
+                      }
+                    />
+                    {parseRupiahNum(groupPaymentForm.adminFee) > 0 && (
+                      <p className="text-[11px] font-bold text-rose-600 ml-1">
+                        Total Terpotong dari {groupPaymentForm.sumberDana}: Rp {(parseRupiahNum(groupPaymentForm.amount) + parseRupiahNum(groupPaymentForm.adminFee)).toLocaleString("id-ID")} (Pokok Rp {parseRupiahNum(groupPaymentForm.amount).toLocaleString("id-ID")} + Admin Rp {parseRupiahNum(groupPaymentForm.adminFee).toLocaleString("id-ID")})
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">
@@ -17424,6 +17544,46 @@ export const parseBankAllocations = (refIdBankStr: string, totalAmount: number):
   return results.filter((a) => a.bankId && a.bankId !== "-");
 };
 
+export const parseRupiahNum = (val: any): number => {
+  if (typeof val === "number") return Number.isFinite(val) ? val : 0;
+  if (val === null || val === undefined || val === "") return 0;
+  let s = String(val).trim().replace(/Rp/gi, "").replace(/\s+/g, "");
+  if (!s) return 0;
+  if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, "");
+  } else if (/^-?\d{1,3}(,\d{3})+$/.test(s)) {
+    s = s.replace(/,/g, "");
+  } else {
+    s = s.replace(/[^0-9.,-]/g, "").replace(/,/g, ".");
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : 0;
+};
+
+export const parseBankAllocationsWithAdmin = (
+  refIdBankStr: string,
+  totalAmount: any,
+  adminFee?: any
+): Array<{ bankId: string; amount: number }> => {
+  const principal = parseRupiahNum(totalAmount);
+  const adm = parseRupiahNum(adminFee);
+  const allocs = parseBankAllocations(refIdBankStr, principal);
+  if (adm <= 0 || allocs.length === 0) return allocs;
+  if (allocs.length === 1) {
+    return [{ ...allocs[0], amount: allocs[0].amount + adm }];
+  }
+  const sumPrincipal = allocs.reduce((s, a) => s + a.amount, 0);
+  let distributed = 0;
+  return allocs.map((a, idx) => {
+    if (idx === allocs.length - 1) {
+      return { ...a, amount: a.amount + (adm - distributed) };
+    }
+    const share = sumPrincipal > 0 ? Math.round((adm * a.amount) / sumPrincipal) : Math.floor(adm / allocs.length);
+    distributed += share;
+    return { ...a, amount: a.amount + share };
+  });
+};
+
 export const serializeAllocations = (allocations: Array<{ bankId: string; amount: number }>) => {
   const valid = allocations.filter((a) => a.bankId && a.amount > 0);
   if (valid.length === 0) return "";
@@ -17448,9 +17608,9 @@ const formatRefIdBankDisplay = (refIdBankStr: string, totalAmount: number): stri
     .join(" + ");
 };
 
-const RefIdBankBadgeList = ({ refIdBankStr, totalAmount }: { refIdBankStr: string; totalAmount: number }) => {
+const RefIdBankBadgeList = ({ refIdBankStr, totalAmount, adminFee }: { refIdBankStr: string; totalAmount: number; adminFee?: number }) => {
   if (!refIdBankStr) return <span className="text-slate-400">-</span>;
-  const allocations = parseBankAllocations(refIdBankStr, totalAmount);
+  const allocations = parseBankAllocationsWithAdmin(refIdBankStr, totalAmount, adminFee);
   if (allocations.length === 0) return <span className="text-slate-400">-</span>;
   
   return (
@@ -18490,8 +18650,8 @@ const AdminFinanceScreen = ({
   const OFFICIAL_BASE_INCOME = 1728295627;
   const OFFICIAL_BASE_EXPENSE = 1515739194;
   const OFFICIAL_BASE_BANK = 17732970; // Terkunci tepat Rp 17.732.970 per 31 Oktober 2026 (Sisa Kas di PT Bank)
-  const OFFICIAL_BASE_PERSONAL_HOLD = 5872184; // Terkunci tepat Rp 5.872.184 per 31 Oktober 2026 (Sisa Dana PT di Tangan)
-  const OFFICIAL_BASE_BALANCE = 23605154; // Terkunci tepat Rp 23.605.154 (Saldo Laba Bersih PT Konsolidasi: 17.732.970 + 5.872.184)
+  const OFFICIAL_BASE_PERSONAL_HOLD = 5872184; // Historis sebelum Nov 1 (KPI Sisa Dana PT di Tangan dihitung dari SUM Sisa Talangan mulai 1 Nov 2026)
+  const OFFICIAL_BASE_BALANCE = 23605154; // Saldo historis awal sebelum perubahan Nov 1+
 
   // 1. Total Pemasukan Riil (Income)
   const income = useMemo(() => {
@@ -18502,13 +18662,13 @@ const AdminFinanceScreen = ({
             r.type === "IN" &&
             (r.referenceId === filterProject || r.projectId === filterProject),
         )
-        .reduce((acc, curr) => acc + curr.amount, 0);
+        .reduce((acc, curr) => acc + parseRupiahNum(curr.amount), 0);
     }
     let newIncomeDelta = 0;
     financialRecords.forEach((r) => {
       if (!isLivePostBaselineTransaction(r)) return;
       if (r.type === "IN") {
-        newIncomeDelta += r.amount;
+        newIncomeDelta += parseRupiahNum(r.amount);
       }
     });
     return OFFICIAL_BASE_INCOME + newIncomeDelta;
@@ -18525,49 +18685,54 @@ const AdminFinanceScreen = ({
             !isReimbursementOrDebtRepayment(r) &&
             (r.referenceId === filterProject || r.projectId === filterProject),
         )
-        .reduce((acc, curr) => acc + (curr.amount + (curr.adminFee || 0)), 0);
+        .reduce((acc, curr) => acc + (parseRupiahNum(curr.amount) + parseRupiahNum(curr.adminFee)), 0);
     }
     let newExpenseDelta = 0;
     financialRecords.forEach((r) => {
       if (!isLivePostBaselineTransaction(r)) return;
       if (r.type === "OUT" && !isCustodyTransfer(r) && !isReimbursementOrDebtRepayment(r)) {
-        newExpenseDelta += (r.amount + (r.adminFee || 0));
+        newExpenseDelta += (parseRupiahNum(r.amount) + parseRupiahNum(r.adminFee));
       }
     });
     return OFFICIAL_BASE_EXPENSE + newExpenseDelta;
   }, [financialRecords, filterProject, isCustodyTransfer]);
 
-  // 3. Saldo Bank Utama PT (Main PT Account) - Mutasi masuk kas bank PT dikurangi mutasi keluar bank PT
+  // 3. Saldo Bank Utama PT (Main PT Account) - Mutasi masuk kas bank PT dikurangi mutasi keluar bank PT (+ adminFee)
   const bankBalance = useMemo(() => {
     if (filterProject !== "ALL") {
       const projIncome = financialRecords
         .filter((r) => r.type === "IN" && (r.referenceId === filterProject || r.projectId === filterProject))
-        .reduce((acc, curr) => acc + curr.amount, 0);
+        .reduce((acc, curr) => acc + (parseRupiahNum(curr.amount) - parseRupiahNum(curr.adminFee)), 0);
       const projOutFromBank = financialRecords
         .filter(
-          (r) =>
-            r.type === "OUT" &&
-            (r.referenceId === filterProject || r.projectId === filterProject) &&
-            (r.sumberDana === "REKENING PT" || !r.sumberDana) &&
-            r.flowType !== "OUT_PERSONAL_SPEND"
+          (r) => {
+            if (r.type !== "OUT") return false;
+            if (r.referenceId !== filterProject && r.projectId !== filterProject) return false;
+            const s = (r.sumberDana || "").toUpperCase();
+            const isPersonal = r.flowType === "PERSONAL_TALANGAN_REIMBURSE" || s.includes("PRIBADI") || s.includes("NON-PT");
+            const isPattySpend = r.flowType === "OUT_PERSONAL_SPEND" || s.includes("PATTY") || s.includes("PETTY");
+            return !isPersonal && !isPattySpend && (s === "REKENING PT" || !s);
+          }
         )
-        .reduce((acc, curr) => acc + curr.amount + (curr.adminFee || 0), 0);
+        .reduce((acc, curr) => acc + parseRupiahNum(curr.amount) + parseRupiahNum(curr.adminFee), 0);
       return projIncome - projOutFromBank;
     }
 
     let newBankDelta = 0;
     financialRecords.forEach((r) => {
       if (!isLivePostBaselineTransaction(r)) return;
+      const s = (r.sumberDana || "").toUpperCase();
+      const amt = parseRupiahNum(r.amount);
+      const adm = parseRupiahNum(r.adminFee);
       if (r.type === "IN") {
-        newBankDelta += r.amount;
+        newBankDelta += (amt - adm);
       } else if (r.type === "OUT") {
-        const s = (r.sumberDana || "").toUpperCase();
         const isPersonal = r.flowType === "PERSONAL_TALANGAN_REIMBURSE" || s.includes("PRIBADI") || s.includes("NON-PT");
-        const isPattySpend = r.flowType === "OUT_PERSONAL_SPEND" || s.includes("PATTY") || s === "DANA PATTYCASH";
-        
-        // Outflow from bank PT: direct PT spending or transfer to patty cash/staff
+        const isPattySpend = r.flowType === "OUT_PERSONAL_SPEND" || s.includes("PATTY") || s.includes("PETTY") || s === "DANA PATTYCASH";
+
+        // Outflow from bank PT: direct PT spending or transfer to patty cash/staff (pokok + adminFee)
         if (!isPersonal && !isPattySpend) {
-          newBankDelta -= (r.amount + (r.adminFee || 0));
+          newBankDelta -= (amt + adm);
         }
       }
     });
@@ -18575,10 +18740,19 @@ const AdminFinanceScreen = ({
     return OFFICIAL_BASE_BANK + newBankDelta;
   }, [financialRecords, filterProject]);
 
-  // Clean, sanitized detailed list of all Sisa Talangan / Petty Cash per Bank ID
+  // Clean, sanitized detailed list of all Sisa Talangan / Petty Cash per Bank ID (All historical & live records)
   const detailedTalanganList = useMemo(() => {
     // 1. Baselines (June 2026 remnants)
-    const list = isUsingJuneBaseline ? [
+    const list: Array<{
+      id: string;
+      customId: string;
+      date: string;
+      holder: string;
+      description: string;
+      initialAmount: number;
+      spentAmount: number;
+      balance: number;
+    }> = isUsingJuneBaseline ? [
       {
         id: "BASE-JIDAN",
         customId: "SISA JUNI",
@@ -18617,77 +18791,34 @@ const AdminFinanceScreen = ({
       if (item.customId) seenTalanganKeys.add(item.customId.toUpperCase());
     });
 
-    // Pre-parse bank allocations ONCE in O(N) instead of O(N^2) inside each custody transfer
+    // Pre-parse bank allocations ONCE in O(N) (including adminFee!)
     const parsedSpendRecords: Array<{
       id: string;
       customId: string;
-      isJune: boolean;
       allocations: Array<{ bankIdUpper: string; amount: number }>;
     }> = [];
-    const spendByExactBankId = new Map<string, Array<{ id: string; customId: string; isJune: boolean; amount: number }>>();
+    const spendByExactBankId = new Map<string, Array<{ id: string; customId: string; amount: number }>>();
 
     financialRecords.forEach((sp) => {
+      if (isUsingJuneBaseline && sp.date.startsWith("2026-06")) return;
       if (sp.type !== "OUT") return;
       if (!sp.refIdBank || sp.refIdBank.trim() === "" || sp.refIdBank === "-") return;
       const spId = sp.id || "";
       const spCustomId = sp.customId || "";
-      const isJune = Boolean(sp.date && sp.date.startsWith("2026-06"));
-      const allocs = parseBankAllocations(sp.refIdBank, sp.amount).map((a) => ({
+      const allocs = parseBankAllocationsWithAdmin(sp.refIdBank, sp.amount, sp.adminFee).map((a) => ({
         bankIdUpper: (a.bankId || "").trim().toUpperCase(),
         amount: a.amount,
       }));
       if (allocs.length === 0) return;
-      parsedSpendRecords.push({ id: spId, customId: spCustomId, isJune, allocations: allocs });
+      parsedSpendRecords.push({ id: spId, customId: spCustomId, allocations: allocs });
       allocs.forEach((a) => {
         if (!a.bankIdUpper) return;
         const arr = spendByExactBankId.get(a.bankIdUpper);
-        const entry = { id: spId, customId: spCustomId, isJune, amount: a.amount };
+        const entry = { id: spId, customId: spCustomId, amount: a.amount };
         if (arr) arr.push(entry);
         else spendByExactBankId.set(a.bankIdUpper, [entry]);
       });
     });
-
-    const computeLinkedSpent = (recId: string, recCustomId: string, filterOutJune: boolean): number => {
-      const rCustom = (recCustomId || recId || "").trim().toUpperCase();
-      const rId = (recId || "").trim().toUpperCase();
-      let total = 0;
-
-      // Fast path for exact matches (covers ~99% of allocations in O(1))
-      const checkedSpendIds = new Set<string>();
-      const accumulateEntries = (entries?: Array<{ id: string; customId: string; isJune: boolean; amount: number }>) => {
-        if (!entries) return;
-        for (const e of entries) {
-          if (filterOutJune && e.isJune) continue;
-          if (e.id === recId || (recCustomId && e.customId === recCustomId)) continue;
-          const uid = `${e.id}|${e.customId}`;
-          if (checkedSpendIds.has(uid)) continue;
-          checkedSpendIds.add(uid);
-          total += e.amount;
-        }
-      };
-
-      if (rCustom) accumulateEntries(spendByExactBankId.get(rCustom));
-      if (rId && rId !== rCustom) accumulateEntries(spendByExactBankId.get(rId));
-
-      // Substring match fallback (only for bankId >= 6 chars that wasn't already exact-matched)
-      if (rCustom.length >= 6) {
-        for (const sp of parsedSpendRecords) {
-          if (filterOutJune && sp.isJune) continue;
-          if (sp.id === recId || (recCustomId && sp.customId === recCustomId)) continue;
-          const uid = `${sp.id}|${sp.customId}`;
-          if (checkedSpendIds.has(uid)) continue;
-          const matching = sp.allocations.find(
-            (a) => a.bankIdUpper !== rCustom && a.bankIdUpper !== rId && a.bankIdUpper.length >= 6 && rCustom.includes(a.bankIdUpper)
-          );
-          if (matching) {
-            checkedSpendIds.add(uid);
-            total += matching.amount;
-          }
-        }
-      }
-
-      return total;
-    };
 
     // 2. Scan through all OUT records from Bank PT that are custody transfers (Patty Cash / Kasbon topups)
     financialRecords.forEach((record) => {
@@ -18730,20 +18861,50 @@ const AdminFinanceScreen = ({
           holder = "Faisal Mustopa (Admin)";
         }
 
-        const linkedSpent = computeLinkedSpent(record.id, record.customId || record.id, isUsingJuneBaseline);
+        let linkedSpent = 0;
+        const checkedSpendIds = new Set<string>();
+        const accumulateEntries = (entries?: Array<{ id: string; customId: string; amount: number }>) => {
+          if (!entries) return;
+          for (const e of entries) {
+            if (e.id === record.id || (record.customId && e.customId === record.customId)) continue;
+            const uid = `${e.id}|${e.customId}`;
+            if (checkedSpendIds.has(uid)) continue;
+            checkedSpendIds.add(uid);
+            linkedSpent += e.amount;
+          }
+        };
+
+        if (rCustom) accumulateEntries(spendByExactBankId.get(rCustom));
+        if (rId && rId !== rCustom) accumulateEntries(spendByExactBankId.get(rId));
+
+        if (rCustom.length >= 6) {
+          for (const sp of parsedSpendRecords) {
+            if (sp.id === record.id || (record.customId && sp.customId === record.customId)) continue;
+            const uid = `${sp.id}|${sp.customId}`;
+            if (checkedSpendIds.has(uid)) continue;
+            const matching = sp.allocations.find(
+              (a) => a.bankIdUpper !== rCustom && a.bankIdUpper !== rId && a.bankIdUpper.length >= 6 && rCustom.includes(a.bankIdUpper)
+            );
+            if (matching) {
+              checkedSpendIds.add(uid);
+              linkedSpent += matching.amount;
+            }
+          }
+        }
 
         if (rId) seenTalanganKeys.add(rId);
         if (rCustom) seenTalanganKeys.add(rCustom);
 
+        const initialAmt = parseRupiahNum(record.amount);
         list.push({
           id: record.id,
           customId: record.customId || "BNK-TOPUP",
           date: record.date,
           holder,
           description: record.description,
-          initialAmount: record.amount,
+          initialAmount: initialAmt,
           spentAmount: linkedSpent,
-          balance: Math.max(0, record.amount - linkedSpent),
+          balance: Math.max(0, initialAmt - linkedSpent),
         });
       }
     });
@@ -18807,7 +18968,7 @@ const AdminFinanceScreen = ({
       const spendByBankId = new Map<string, number>();
       financialRecords.forEach((sp) => {
         if (sp.type !== "OUT" || !sp.refIdBank || sp.refIdBank.trim() === "" || sp.refIdBank === "-") return;
-        const allocs = parseBankAllocations(sp.refIdBank, sp.amount);
+        const allocs = parseBankAllocationsWithAdmin(sp.refIdBank, sp.amount, sp.adminFee);
         allocs.forEach((a) => {
           const aId = (a.bankId || "").trim().toUpperCase();
           if (aId) spendByBankId.set(aId, (spendByBankId.get(aId) || 0) + a.amount);
@@ -18818,14 +18979,15 @@ const AdminFinanceScreen = ({
         const rCustom = (r.customId || r.id || "").trim().toUpperCase();
         const rId = (r.id || "").trim().toUpperCase();
         const linkedSpent = (spendByBankId.get(rCustom) || 0) + (rId && rId !== rCustom ? (spendByBankId.get(rId) || 0) : 0);
+        const initAmt = parseRupiahNum(r.amount);
         items.push({
           id: r.id,
           customId: r.customId || r.id,
           holder: r.rekPenerima || r.personalHolder || "PIC",
           description: r.description || "Transfer Kasbon / Petty Cash",
-          initialAmount: r.amount,
+          initialAmount: initAmt,
           spentAmount: linkedSpent,
-          balance: Math.max(0, r.amount - linkedSpent),
+          balance: Math.max(0, initAmt - linkedSpent),
         });
       });
     }
@@ -18833,7 +18995,7 @@ const AdminFinanceScreen = ({
     return items;
   }, [detailedTalanganList, financialRecords, isCustodyTransfer]);
 
-  // Dynamic remaining balance calculator that precisely accounts for other transactions, prior allocations, and form edits
+  // Dynamic remaining balance calculator that precisely accounts for other transactions, adminFee, prior allocations, and form edits
   const getBankRemainingBalance = useCallback(
     (
       bankRec: { id?: string; customId?: string; amount?: number; initialAmount?: number; balance?: number },
@@ -18855,7 +19017,7 @@ const AdminFinanceScreen = ({
         return tC === targetId || tI === targetId || (rawId && (tC === rawId || tI === rawId));
       });
 
-      const initialAmt = Number(
+      const initialAmt = parseRupiahNum(
         bankRec.amount ?? (bankRec as any).initialAmount ?? talanganItem?.initialAmount ?? 0
       );
 
@@ -18873,7 +19035,7 @@ const AdminFinanceScreen = ({
             return Boolean(r.refIdBank && r.refIdBank.trim() !== "" && r.refIdBank !== "-");
           })
           .reduce((sum, r) => {
-            const allocs = parseBankAllocations(r.refIdBank || "", r.amount);
+            const allocs = parseBankAllocationsWithAdmin(r.refIdBank || "", r.amount, r.adminFee);
             const match = allocs.find((a) => {
               const aId = (a.bankId || "").trim().toUpperCase();
               return aId === targetId || aId === rawId || (aId.length >= 6 && targetId.includes(aId));
@@ -18883,9 +19045,9 @@ const AdminFinanceScreen = ({
       }
 
       // If editing a transaction that already contributed to this bankRec in the database,
-      // un-deduct its prior allocation from baseSpent so we don't double count it with currentAllocations in the form
+      // un-deduct its prior allocation (including adminFee) from baseSpent so we don't double count it with currentAllocations in the form
       if (isEdit && editingTransaction && editingTransaction.refIdBank) {
-        const prevAllocs = parseBankAllocations(editingTransaction.refIdBank, editingTransaction.amount);
+        const prevAllocs = parseBankAllocationsWithAdmin(editingTransaction.refIdBank, editingTransaction.amount, editingTransaction.adminFee);
         const prevMatch = prevAllocs.find((a) => {
           const aId = (a.bankId || "").trim().toUpperCase();
           return aId === targetId || aId === rawId || (aId.length >= 6 && targetId.includes(aId));
@@ -18905,7 +19067,7 @@ const AdminFinanceScreen = ({
             const aId = (a.bankId || "").trim().toUpperCase();
             return aId === targetId || aId === rawId || (aId.length >= 6 && targetId.includes(aId));
           })
-          .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+          .reduce((sum, a) => sum + (parseRupiahNum(a.amount) || 0), 0);
         remaining = Math.max(0, remaining - allocatedInForm);
       }
 
@@ -18916,7 +19078,7 @@ const AdminFinanceScreen = ({
 
   const handleAutoPecah = useCallback(
     (allocs: Array<{ bankId: string; amount: number }>, totalAmountStr: string, isEdit: boolean) => {
-      const totalToAllocate = Number(totalAmountStr || 0);
+      const totalToAllocate = parseRupiahNum(totalAmountStr);
       if (totalToAllocate <= 0) return;
 
       let remainingToAllocate = totalToAllocate;
@@ -19080,14 +19242,14 @@ const AdminFinanceScreen = ({
     const { bankId } = selectedPattyCashDetail;
 
     return selectedPattyCashRecords.reduce((sum, rec) => {
-      const adminVal = Number(rec.adminFee || 0);
+      const adminVal = parseRupiahNum(rec.adminFee);
+      const amtVal = parseRupiahNum(rec.amount);
       if (bankId && bankId !== "ALL" && bankId !== "SISA JUNI") {
-        const allocs = parseBankAllocations(rec.refIdBank || "", rec.amount);
+        const allocs = parseBankAllocationsWithAdmin(rec.refIdBank || "", rec.amount, rec.adminFee);
         const match = allocs.find((a) => a.bankId === bankId);
-        const adminShare = allocs.length > 0 && match ? (adminVal / allocs.length) : (match ? adminVal : 0);
-        return sum + (match ? match.amount + adminShare : rec.amount + adminVal);
+        return sum + (match ? match.amount : amtVal + adminVal);
       }
-      return sum + rec.amount + adminVal;
+      return sum + amtVal + adminVal;
     }, 0);
   }, [selectedPattyCashRecords, selectedPattyCashDetail]);
 
@@ -19107,10 +19269,9 @@ const AdminFinanceScreen = ({
         const linkedSpent = financialRecords
           .filter((r) => r.flowType === "OUT_PERSONAL_SPEND")
           .reduce((sum, r) => {
-            const allocs = parseBankAllocations(r.refIdBank || "", r.amount);
+            const allocs = parseBankAllocationsWithAdmin(r.refIdBank || "", r.amount, r.adminFee);
             const match = allocs.find((a) => a.bankId === customId);
-            const adminShare = allocs.length > 0 && match ? (Number(r.adminFee || 0) / allocs.length) : (match ? Number(r.adminFee || 0) : 0);
-            return sum + (match ? match.amount + adminShare : 0);
+            return sum + (match ? match.amount : 0);
           }, 0);
 
         setSelectedPattyCashDetail({
@@ -19317,36 +19478,43 @@ const AdminFinanceScreen = ({
     doc.save(`Laporan_PattyCash_${safeBankId}_${new Date().toISOString().slice(0, 10)}.pdf`);
   }, [selectedPattyCashDetail, selectedPattyCashRecords, selectedPattyCashTotalSpent, projects]);
 
-  // 4. Saldo yang Masih Berada di Tangan Personal (Petty Cash/Kasbon held by Staff)
+  // 4. Saldo yang Masih Berada di Tangan Personal (Petty Cash / Sisa Dana PT di Tangan)
+  // Dijumlahkan (SUM) langsung dari Sisa Talangan (detailedTalanganList) mulai tanggal 1 November 2026 sampai terbaru dan seterusnya
   const personalHoldBalance = useMemo(() => {
     if (filterProject !== "ALL") {
       const projTopups = financialRecords
-        .filter((r) => r.type === "OUT" && (r.flowType === "OUT_PERSONAL_TRANSFER" || isPattyCashCategory(r.category)) && (r.projectId === filterProject || r.referenceId === filterProject))
-        .reduce((acc, curr) => acc + curr.amount, 0);
+        .filter((r) => {
+          const d = normalizeRecordDate(r);
+          return (
+            d >= "2026-11-01" &&
+            r.type === "OUT" &&
+            (r.flowType === "OUT_PERSONAL_TRANSFER" || isPattyCashCategory(r.category)) &&
+            (r.projectId === filterProject || r.referenceId === filterProject)
+          );
+        })
+        .reduce((acc, curr) => acc + parseRupiahNum(curr.amount), 0);
       const projSpends = financialRecords
-        .filter((r) => r.type === "OUT" && r.flowType === "OUT_PERSONAL_SPEND" && (r.projectId === filterProject || r.referenceId === filterProject))
-        .reduce((acc, curr) => acc + curr.amount, 0);
+        .filter((r) => {
+          const d = normalizeRecordDate(r);
+          const s = (r.sumberDana || "").toUpperCase();
+          return (
+            d >= "2026-11-01" &&
+            r.type === "OUT" &&
+            (r.flowType === "OUT_PERSONAL_SPEND" || s.includes("PATTY") || s.includes("PETTY") || s === "DANA PATTYCASH") &&
+            (r.projectId === filterProject || r.referenceId === filterProject)
+          );
+        })
+        .reduce((acc, curr) => acc + parseRupiahNum(curr.amount) + parseRupiahNum(curr.adminFee), 0);
       return Math.max(0, projTopups - projSpends);
     }
 
-    let newHoldDelta = 0;
-    financialRecords.forEach((r) => {
-      if (!isLivePostBaselineTransaction(r)) return;
-      if (r.type === "OUT") {
-        const s = (r.sumberDana || "").toUpperCase();
-        const isPattySpend = r.flowType === "OUT_PERSONAL_SPEND" || s.includes("PATTY") || s === "DANA PATTYCASH";
-        const isTopup = r.flowType === "OUT_PERSONAL_TRANSFER" || isPattyCashCategory(r.category);
-
-        if (isPattySpend) {
-          newHoldDelta -= r.amount;
-        } else if (isTopup) {
-          newHoldDelta += r.amount;
-        }
-      }
-    });
-
-    return Math.max(0, OFFICIAL_BASE_PERSONAL_HOLD + newHoldDelta);
-  }, [filterProject, financialRecords, isPattyCashCategory]);
+    return detailedTalanganList
+      .filter((item) => {
+        const d = normalizeDateOnly(item.date);
+        return d >= "2026-11-01";
+      })
+      .reduce((sum, item) => sum + (item.balance || 0), 0);
+  }, [filterProject, detailedTalanganList, financialRecords, isPattyCashCategory, normalizeDateOnly, normalizeRecordDate]);
 
   const totalTransferKePribadiGlobal = useMemo(() => {
     return talanganSummary.reduce((sum, s) => sum + s.received, 0);
@@ -19357,18 +19525,17 @@ const AdminFinanceScreen = ({
   }, [talanganSummary]);
 
   // Consolidated Net Balance is the sum of Sisa Kas di Rekening PT (bankBalance) and Sisa Dana PT di Tangan (personalHoldBalance)
-  // Tepat Rp 23.605.154 saat awal, dan terpotong secara live saat user menginput transaksi baru
   const balance = bankBalance + personalHoldBalance;
 
-  // Dynamic Holder Registry & Kasbon Balance Summary per employee/owner
+  // Dynamic Holder Registry & Kasbon Balance Summary per employee/owner (all dates preserved, includes adminFee)
   const personalHoldersSummary = useMemo(() => {
     const summaryMap: Record<string, { received: number; spent: number; reimbursed: number }> = {};
 
     // Seed defaults with June 2026 starting balances
-    summaryMap["Faisal Mustopa (Admin)"] = { 
-      received: BASE_TRANSFERS_TO_PERSONAL, 
-      spent: BASE_SPENT_BY_PERSONAL, 
-      reimbursed: 0 
+    summaryMap["Faisal Mustopa (Admin)"] = {
+      received: BASE_TRANSFERS_TO_PERSONAL,
+      spent: BASE_SPENT_BY_PERSONAL,
+      reimbursed: 0,
     };
     summaryMap["Jidan Ramadhan"] = { received: 0, spent: 0, reimbursed: 0 };
 
@@ -19393,8 +19560,9 @@ const AdminFinanceScreen = ({
         ? "Faisal Mustopa (Admin)"
         : holder;
 
+      const s = (r.sumberDana || "").toUpperCase();
       const isCust = isCustodyTransfer(r);
-      const isSp = r.flowType === "OUT_PERSONAL_SPEND" && r.sumberDana !== "REKENING PRIBADI";
+      const isSp = r.flowType === "OUT_PERSONAL_SPEND" && !s.includes("PRIBADI") && !s.includes("NON-PT");
       const isReimb = r.flowType === "PERSONAL_TALANGAN_REIMBURSE";
 
       if (!isCust && !isSp && !isReimb) return;
@@ -19403,12 +19571,15 @@ const AdminFinanceScreen = ({
         summaryMap[normalizedHolder] = { received: 0, spent: 0, reimbursed: 0 };
       }
 
+      const amt = parseRupiahNum(r.amount);
+      const adm = parseRupiahNum(r.adminFee);
+
       if (isCust) {
-        summaryMap[normalizedHolder].received += r.amount;
+        summaryMap[normalizedHolder].received += amt;
       } else if (isSp) {
-        summaryMap[normalizedHolder].spent += r.amount;
+        summaryMap[normalizedHolder].spent += (amt + adm);
         if (r.refIdBank) {
-          const allocations = parseBankAllocations(r.refIdBank, r.amount);
+          const allocations = parseBankAllocationsWithAdmin(r.refIdBank, amt, adm);
           allocations.forEach((alloc) => {
             const b = financialRecords.find((rec) => rec.customId === alloc.bankId);
             if (b && !isCustodyTransfer(b)) {
@@ -19417,7 +19588,7 @@ const AdminFinanceScreen = ({
           });
         }
       } else if (isReimb) {
-        summaryMap[normalizedHolder].reimbursed += r.amount;
+        summaryMap[normalizedHolder].reimbursed += (amt + adm);
       }
     });
 
@@ -19432,11 +19603,11 @@ const AdminFinanceScreen = ({
       .filter((h) => {
         return h.received > 0 || h.spent > 0 || h.reimbursed > 0 || h.name === "Faisal Mustopa (Admin)" || h.name === "Jidan Ramadhan";
       });
-  }, [financialRecords, employees, isCustodyTransfer]);
+  }, [financialRecords, employees, isCustodyTransfer, isUsingJuneBaseline, BASE_TRANSFERS_TO_PERSONAL, BASE_SPENT_BY_PERSONAL]);
 
 
 
-  // All transfers from PT to personal (Patty Cash only)
+  // All transfers from PT to personal (Patty Cash only, all dates preserved)
   const incomingTransfers = useMemo(() => {
     return financialRecords.filter((r) => {
       const isPattyCash = isPattyCashCategory(r.category);
@@ -19501,10 +19672,10 @@ const AdminFinanceScreen = ({
   }, [incomingTransfers, searchQuery, filterProject, filterCategory, filterTimeRange]);
 
   const totalIncomingTransfersFiltered = useMemo(() => {
-    return incomingTransfersFiltered.reduce((sum, r) => sum + r.amount, 0);
+    return incomingTransfersFiltered.reduce((sum, r) => sum + parseRupiahNum(r.amount), 0);
   }, [incomingTransfersFiltered]);
 
-  // All spends from personal accounts (Dana Talangan)
+  // All spends from personal accounts (Dana Talangan, all dates preserved)
   const outgoingSpends = useMemo(() => {
     return financialRecords.filter((r) => r.flowType === "OUT_PERSONAL_SPEND");
   }, [financialRecords]);
@@ -19563,7 +19734,7 @@ const AdminFinanceScreen = ({
   }, [outgoingSpends, searchQuery, filterProject, filterCategory, filterTimeRange, filterPattyCashBankId]);
 
   const totalOutgoingSpendsFiltered = useMemo(() => {
-    return outgoingSpendsFiltered.reduce((sum, r) => sum + r.amount, 0);
+    return outgoingSpendsFiltered.reduce((sum, r) => sum + parseRupiahNum(r.amount) + parseRupiahNum(r.adminFee), 0);
   }, [outgoingSpendsFiltered]);
 
   const personnelOptions = useMemo(() => {
@@ -19682,8 +19853,11 @@ const AdminFinanceScreen = ({
   const pattyCashSpendsByBankId = useMemo(() => {
     const map = new Map<string, number>();
     financialRecords.forEach((r) => {
-      if (r.flowType !== "OUT_PERSONAL_SPEND" || !r.refIdBank) return;
-      const allocs = parseBankAllocations(r.refIdBank, r.amount);
+      if (r.type !== "OUT" || !r.refIdBank) return;
+      const s = (r.sumberDana || "").toUpperCase();
+      if (r.flowType === "PERSONAL_TALANGAN_REIMBURSE" || s.includes("PRIBADI") || s.includes("NON-PT")) return;
+      if (r.flowType !== "OUT_PERSONAL_SPEND" && !s.includes("PATTY") && !s.includes("PETTY")) return;
+      const allocs = parseBankAllocationsWithAdmin(r.refIdBank, r.amount, r.adminFee);
       allocs.forEach((a) => {
         if (a.bankId) {
           const uId = a.bankId.trim().toUpperCase();
@@ -19811,9 +19985,9 @@ const AdminFinanceScreen = ({
 
     const isSalary = formData.category && formData.category.toLowerCase().includes("gaji");
     
-    let allocationsToInsert = bankAllocations.filter((a) => a.bankId && a.amount > 0);
+    let allocationsToInsert = bankAllocations.filter((a) => a.bankId && parseRupiahNum(a.amount) > 0);
     if (allocationsToInsert.length === 0) {
-      allocationsToInsert = [{ bankId: formData.refIdBank || "", amount: Number(formData.amount) }];
+      allocationsToInsert = [{ bankId: formData.refIdBank || "", amount: parseRupiahNum(formData.amount) }];
     }
 
     let currentRecordsList = [...financialRecords];
@@ -19852,8 +20026,8 @@ const AdminFinanceScreen = ({
           description: eachDescription,
           flowType: formData.type === "IN" ? "IN" : formData.flowType,
           personalHolder: formData.personalHolder || "",
-          amount: alloc.amount,
-          adminFee: i === 0 && formData.paymentMethod === "TRANSFER" ? Number(formData.adminFee || 0) : 0,
+          amount: parseRupiahNum(alloc.amount),
+          adminFee: i === 0 && formData.paymentMethod === "TRANSFER" ? parseRupiahNum(formData.adminFee) : 0,
           projectId: formData.projectId || "",
           referenceId: formData.projectId || "",
           recordedBy: user.name,
@@ -19897,13 +20071,18 @@ const AdminFinanceScreen = ({
           }
           if (!eachRecord.refIdBank) {
             const normHolder = (eachRecord.personalHolder || "").toLowerCase();
-            const targetTopup = detailedTalanganList.find((t) => {
+            const isMatch = (t: any) => {
               const tHolder = t.holder.toLowerCase();
               const matches = (normHolder.includes("jidan") && tHolder.includes("jidan")) ||
                               (normHolder.includes("yasin") && tHolder.includes("yasin")) ||
                               (!normHolder.includes("jidan") && !normHolder.includes("yasin") && tHolder.includes("faisal"));
               return matches && t.balance > 0;
-            }) || detailedTalanganList.find((t) => t.balance > 0);
+            };
+            const targetTopup =
+              detailedTalanganList.find((t) => normalizeDateOnly(t.date) >= "2026-11-01" && isMatch(t)) ||
+              detailedTalanganList.find((t) => normalizeDateOnly(t.date) >= "2026-11-01" && t.balance > 0) ||
+              detailedTalanganList.find(isMatch) ||
+              detailedTalanganList.find((t) => t.balance > 0);
 
             if (targetTopup && targetTopup.customId) {
               eachRecord.refIdBank = targetTopup.customId;
@@ -20597,8 +20776,8 @@ const AdminFinanceScreen = ({
       flowType: editFormData.type === "IN" ? "IN" : (isPersonalSumberEdit ? "PERSONAL_TALANGAN_REIMBURSE" : editFormData.flowType),
       personalHolder: editFormData.personalHolder || editFormData.pemilikUangPribadi || "",
       pemilikUangPribadi: editFormData.pemilikUangPribadi || editFormData.personalHolder || (isPersonalSumberEdit ? "FAISAL MUSTOPA" : ""),
-      amount: Number(editFormData.amount),
-      adminFee: editFormData.paymentMethod === "TRANSFER" ? Number(editFormData.adminFee || 0) : 0,
+      amount: parseRupiahNum(editFormData.amount),
+      adminFee: editFormData.paymentMethod === "TRANSFER" ? parseRupiahNum(editFormData.adminFee) : 0,
       projectId: editFormData.projectId || "",
       referenceId: editFormData.projectId || "",
       customId: finalCustomId,
@@ -23305,7 +23484,7 @@ const AdminFinanceScreen = ({
                   <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">
                     Sisa Dana PT di Tangan
                   </p>
-                  <p className="text-xs font-black text-sky-400 leading-none">
+                  <p className={`text-xs font-black leading-none ${personalHoldBalance < 0 ? "text-rose-400 font-bold" : "text-sky-400"}`}>
                     {formatCurrency(personalHoldBalance)}
                   </p>
                 </div>
@@ -23853,7 +24032,7 @@ const AdminFinanceScreen = ({
                             : (rCustom ? (pattyCashSpendsByBankId.get(rCustom) || 0) : 0);
 
                           const isTalanganType = isPattyCashCategory(record.category);
-                          const sisaTalangan = Math.max(0, talanganItem ? talanganItem.balance : (record.amount - linkedSpent));
+                          const sisaTalangan = talanganItem ? talanganItem.balance : Math.max(0, parseRupiahNum(record.amount) - linkedSpent);
                           const shouldShowTalangan = isTalanganType || linkedSpent > 0;
 
                           // Check selection status via O(1) Set lookup
@@ -23963,8 +24142,8 @@ const AdminFinanceScreen = ({
                                     )}
                                   </td>
                                   <td className="py-3 px-3 text-right font-mono font-bold text-slate-900">
-                                    {record.type === "OUT" && record.adminFee && Number(record.adminFee) > 0 ? (
-                                      <span className="text-[#ef4444]">-Rp {Number(record.adminFee).toLocaleString("id-ID")}</span>
+                                    {parseRupiahNum(record.adminFee) > 0 ? (
+                                      <span className="text-[#ef4444]">-Rp {parseRupiahNum(record.adminFee).toLocaleString("id-ID")}</span>
                                     ) : (
                                       <span className="text-slate-400">-</span>
                                     )}
@@ -24056,7 +24235,15 @@ const AdminFinanceScreen = ({
                                   <td className="py-3 px-3 border-r border-slate-100 font-semibold text-slate-700 w-64 uppercase">{record.description}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-bold text-slate-600 whitespace-nowrap">{record.rekPenerima || record.personalHolder || "PIHAK LAIN"}</td>
                                   <td className="py-3 px-3 text-right border-r border-slate-100 font-mono font-black text-rose-600">
-                                    -Rp {record.amount.toLocaleString("id-ID")}
+                                    <div>-Rp {parseRupiahNum(record.amount).toLocaleString("id-ID")}</div>
+                                    {parseRupiahNum(record.adminFee) > 0 && (
+                                      <div className="text-[10px] font-bold text-slate-500 mt-0.5 leading-tight">
+                                        + Adm: Rp {parseRupiahNum(record.adminFee).toLocaleString("id-ID")}
+                                        <div className="text-rose-700 font-black">
+                                          Total: -Rp {(parseRupiahNum(record.amount) + parseRupiahNum(record.adminFee)).toLocaleString("id-ID")}
+                                        </div>
+                                      </div>
+                                    )}
                                   </td>
                                   <td className="py-3 px-3 text-right border-r border-slate-100 font-mono font-black text-amber-600 bg-amber-50/10">
                                     {shouldShowTalangan ? (
@@ -24124,10 +24311,18 @@ const AdminFinanceScreen = ({
                                   </td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-extrabold text-slate-500 whitespace-nowrap">{getDisplaySumberUang(record)}</td>
                                   <td className="py-3 px-3 text-right border-r border-slate-100 font-mono font-black text-purple-600">
-                                    -Rp {record.amount.toLocaleString("id-ID")}
+                                    <div>-Rp {parseRupiahNum(record.amount).toLocaleString("id-ID")}</div>
+                                    {parseRupiahNum(record.adminFee) > 0 && (
+                                      <div className="text-[10px] font-bold text-slate-500 mt-0.5 leading-tight">
+                                        + Adm: Rp {parseRupiahNum(record.adminFee).toLocaleString("id-ID")}
+                                        <div className="text-rose-600 font-black">
+                                          Total: -Rp {(parseRupiahNum(record.amount) + parseRupiahNum(record.adminFee)).toLocaleString("id-ID")}
+                                        </div>
+                                      </div>
+                                    )}
                                   </td>
                                   <td className="py-3 px-3 text-center border-r border-slate-100" title={record.refIdBank}>
-                                    <RefIdBankBadgeList refIdBankStr={record.refIdBank || ""} totalAmount={record.amount} />
+                                    <RefIdBankBadgeList refIdBankStr={record.refIdBank || ""} totalAmount={record.amount} adminFee={record.adminFee} />
                                   </td>
                                   <td className="py-3 px-3 text-center border-r border-slate-100 whitespace-nowrap">
                                     {record.refHutang ? (
@@ -24373,7 +24568,11 @@ const AdminFinanceScreen = ({
                                   </td>
                                   <td className="py-2.5 px-3 text-right font-mono font-black">
                                     <span className={`px-2 py-1 rounded-lg ${
-                                      item.balance > 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-100" : "bg-slate-50 text-slate-400"
+                                      item.balance < 0
+                                        ? "bg-rose-50 text-rose-600 border border-rose-200"
+                                        : item.balance > 0
+                                        ? "bg-emerald-50 text-emerald-700 border border-emerald-100"
+                                        : "bg-slate-50 text-slate-400"
                                     }`}>
                                       {formatCurrency(item.balance)}
                                     </span>
@@ -24446,7 +24645,12 @@ const AdminFinanceScreen = ({
                                 </td>
                                 <td className="py-2.5 px-3 text-slate-600 font-semibold">{rec.description}</td>
                                 <td className="py-2.5 px-3 text-right font-mono font-black text-emerald-600">
-                                  {formatCurrency(rec.amount)}
+                                  <div>{formatCurrency(parseRupiahNum(rec.amount) - (rec.type === "IN" ? parseRupiahNum(rec.adminFee) : 0))}</div>
+                                  {parseRupiahNum(rec.adminFee) > 0 && (
+                                    <div className="text-[10px] font-bold text-slate-400 mt-0.5">
+                                      Adm: Rp {parseRupiahNum(rec.adminFee).toLocaleString("id-ID")}
+                                    </div>
+                                  )}
                                 </td>
                                 {user?.role !== "owner" && user?.role !== "direktur" && (
                                   <td className="py-2.5 px-3 text-center">
@@ -24571,10 +24775,18 @@ const AdminFinanceScreen = ({
                                   )}
                                 </td>
                                 <td className="py-2.5 px-3 text-center">
-                                  <RefIdBankBadgeList refIdBankStr={rec.refIdBank || ""} totalAmount={rec.amount} />
+                                  <RefIdBankBadgeList refIdBankStr={rec.refIdBank || ""} totalAmount={rec.amount} adminFee={rec.adminFee} />
                                 </td>
                                 <td className="py-2.5 px-3 text-right font-mono font-black text-rose-600">
-                                  -{formatCurrency(rec.amount)}
+                                  <div>-{formatCurrency(parseRupiahNum(rec.amount))}</div>
+                                  {parseRupiahNum(rec.adminFee) > 0 && (
+                                    <div className="text-[10px] font-bold text-slate-500 mt-0.5 leading-tight">
+                                      + Adm: Rp {parseRupiahNum(rec.adminFee).toLocaleString("id-ID")}
+                                      <div className="text-rose-700 font-black">
+                                        Total: -{formatCurrency(parseRupiahNum(rec.amount) + parseRupiahNum(rec.adminFee))}
+                                      </div>
+                                    </div>
+                                  )}
                                 </td>
                                 {user?.role !== "owner" && user?.role !== "direktur" && (
                                   <td className="py-2.5 px-3 text-center">
@@ -25481,7 +25693,7 @@ const AdminFinanceScreen = ({
                             let updatedSumber = formData.sumberDana;
 
                             const lowerCat = cat.toLowerCase();
-                            if (lowerCat.includes("petty cash") || lowerCat.includes("patty cash") || lowerCat.includes("kas kecil")) {
+                            if (isPattyCashCategory(cat)) {
                               updatedFlow = "OUT_PERSONAL_TRANSFER";
                               updatedSumber = "REKENING PT";
                               if (!updatedHolder) {
@@ -25622,7 +25834,7 @@ const AdminFinanceScreen = ({
                             } else if (val === "REKENING PRIBADI") {
                               newFlow = "PERSONAL_TALANGAN_REIMBURSE";
                             } else if (val === "REKENING PT") {
-                              newFlow = "OUT_BANK_DIRECT";
+                              newFlow = isPattyCashCategory(formData.category) ? "OUT_PERSONAL_TRANSFER" : "OUT_BANK_DIRECT";
                             }
                             setFormData({
                               ...formData,
@@ -25777,18 +25989,23 @@ const AdminFinanceScreen = ({
                             Biaya Admin (IDR)
                           </label>
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="numeric"
                             placeholder="0"
                             value={formData.adminFee}
                             onChange={(e) =>
                               setFormData({
                                 ...formData,
-                                adminFee: e.target.value,
+                                adminFee: e.target.value.replace(/[^0-9.]/g, ""),
                               })
                             }
-                            onWheel={(e) => e.currentTarget.blur()}
-                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
                           />
+                          {parseRupiahNum(formData.adminFee) > 0 && (
+                            <p className="text-[11px] font-bold text-rose-600 ml-2">
+                              Otomatis Terpotong dari {formData.sumberDana || "REKENING PT"}: Rp {(parseRupiahNum(formData.amount) + parseRupiahNum(formData.adminFee)).toLocaleString("id-ID")} (Pokok Rp {parseRupiahNum(formData.amount).toLocaleString("id-ID")} + Admin Rp {parseRupiahNum(formData.adminFee).toLocaleString("id-ID")})
+                            </p>
+                          )}
                         </div>
                       )}
 
@@ -26546,10 +26763,10 @@ const AdminFinanceScreen = ({
 
                                           // Auto-assign remaining transaction amount if not set or zero
                                           if (selectedBankId && (!updated[idx].amount || updated[idx].amount <= 0)) {
-                                            const totalToAllocate = Number(formData.amount || 0);
+                                            const totalToAllocate = parseRupiahNum(formData.amount);
                                             const allocatedInOtherRows = updated
                                               .filter((_, i) => i !== idx)
-                                              .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+                                              .reduce((sum, a) => sum + (parseRupiahNum(a.amount) || 0), 0);
                                             const needed = Math.max(0, totalToAllocate - allocatedInOtherRows);
                                             updated[idx].amount = needed;
                                           }
@@ -26567,8 +26784,9 @@ const AdminFinanceScreen = ({
                                           const targetId = (r.id || "").trim().toUpperCase();
                                           const currentAllocId = (alloc.bankId || "").trim().toUpperCase();
                                           const isSelected = Boolean(currentAllocId) && (currentAllocId === targetCid || currentAllocId === targetId);
-                                          const allocAmt = Number(alloc.amount) || 0;
-                                          const left = isSelected ? Math.max(0, available - allocAmt) : available;
+                                          const allocAmt = parseRupiahNum(alloc.amount) || 0;
+                                          const adminForIdx = formData.paymentMethod === "TRANSFER" && idx === 0 ? parseRupiahNum(formData.adminFee) : 0;
+                                          const left = isSelected ? available - allocAmt - adminForIdx : available;
                                           return (
                                             <option key={`${r.id || r.customId || 'topup'}-${rIdx}`} value={r.customId || r.id}>
                                               {r.customId || "KSP"} - {r.holder} ({r.description.length > 28 ? r.description.slice(0, 28) + "..." : r.description}) [Sisa: Rp {left.toLocaleString("id-ID")}]
@@ -26614,19 +26832,23 @@ const AdminFinanceScreen = ({
 
                                   {alloc.bankId && (() => {
                                     const available = getBankRemainingBalance({ customId: alloc.bankId }, false, bankAllocations, idx);
-                                    const allocatedAmt = Number(alloc.amount) || 0;
-                                    const sisaAfter = available - allocatedAmt;
+                                    const allocatedAmt = parseRupiahNum(alloc.amount) || 0;
+                                    const adminForIdx = formData.paymentMethod === "TRANSFER" && idx === 0 ? parseRupiahNum(formData.adminFee) : 0;
+                                    const sisaAfter = available - allocatedAmt - adminForIdx;
                                     return (
                                       <div className="flex items-center justify-between flex-wrap gap-2 text-[11px] font-bold px-3.5 py-2 bg-amber-50/80 rounded-xl border border-amber-200/90 shadow-2xs">
                                         <div className="flex items-center gap-2">
                                           <span className="text-amber-800 font-mono font-black">{alloc.bankId}</span>
                                           <span className="text-slate-300">•</span>
                                           <span className="text-slate-600">Saldo Awal / Tersedia: <strong className="font-mono text-slate-800">Rp {available.toLocaleString("id-ID")}</strong></span>
+                                          {adminForIdx > 0 && (
+                                            <span className="text-rose-600 font-bold">(Termasuk Admin: Rp {adminForIdx.toLocaleString("id-ID")})</span>
+                                          )}
                                         </div>
                                         <div className="flex items-center gap-1.5">
                                           <span className="text-amber-900 font-extrabold">Sisa Saldo Setelah Terpotong:</span>
                                           <span className={`font-mono font-black text-xs px-2 py-0.5 rounded-lg ${sisaAfter < 0 ? "bg-rose-100 text-rose-700 font-bold" : sisaAfter === 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
-                                            Rp {Math.max(0, sisaAfter).toLocaleString("id-ID")}
+                                            Rp {sisaAfter.toLocaleString("id-ID")}
                                           </span>
                                         </div>
                                       </div>
@@ -27053,7 +27275,7 @@ const AdminFinanceScreen = ({
                             let updatedSumber = editFormData.sumberDana;
 
                             const lowerCat = cat.toLowerCase();
-                            if (lowerCat.includes("petty cash") || lowerCat.includes("patty cash") || lowerCat.includes("kas kecil")) {
+                            if (isPattyCashCategory(cat)) {
                               updatedFlow = "OUT_PERSONAL_TRANSFER";
                               updatedSumber = "REKENING PT";
                               if (!updatedHolder) {
@@ -27194,7 +27416,7 @@ const AdminFinanceScreen = ({
                             } else if (val === "REKENING PRIBADI") {
                               newFlow = "PERSONAL_TALANGAN_REIMBURSE";
                             } else if (val === "REKENING PT") {
-                              newFlow = "OUT_BANK_DIRECT";
+                              newFlow = isPattyCashCategory(editFormData.category) ? "OUT_PERSONAL_TRANSFER" : "OUT_BANK_DIRECT";
                             }
                             setEditFormData({
                               ...editFormData,
@@ -27454,18 +27676,23 @@ const AdminFinanceScreen = ({
                             Biaya Admin (IDR)
                           </label>
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="numeric"
                             placeholder="0"
                             value={editFormData.adminFee}
                             onChange={(e) =>
                               setEditFormData({
                                 ...editFormData,
-                                adminFee: e.target.value,
+                                adminFee: e.target.value.replace(/[^0-9.]/g, ""),
                               })
                             }
-                            onWheel={(e) => e.currentTarget.blur()}
-                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            className="w-full px-6 py-5 md:py-6 bg-white border border-slate-100 rounded-3xl text-sm md:text-base font-bold focus:ring-4 focus:ring-primary/5 outline-none transition-all"
                           />
+                          {parseRupiahNum(editFormData.adminFee) > 0 && (
+                            <p className="text-[11px] font-bold text-rose-600 ml-2">
+                              Otomatis Terpotong dari {editFormData.sumberDana || "REKENING PT"}: Rp {(parseRupiahNum(editFormData.amount) + parseRupiahNum(editFormData.adminFee)).toLocaleString("id-ID")} (Pokok Rp {parseRupiahNum(editFormData.amount).toLocaleString("id-ID")} + Admin Rp {parseRupiahNum(editFormData.adminFee).toLocaleString("id-ID")})
+                            </p>
+                          )}
                         </div>
                       )}
 
@@ -28223,10 +28450,10 @@ const AdminFinanceScreen = ({
 
                                           // Auto-assign remaining transaction amount if not set or zero
                                           if (selectedBankId && (!updated[idx].amount || updated[idx].amount <= 0)) {
-                                            const totalToAllocate = Number(editFormData.amount || 0);
+                                            const totalToAllocate = parseRupiahNum(editFormData.amount);
                                             const allocatedInOtherRows = updated
                                               .filter((_, i) => i !== idx)
-                                              .reduce((sum, a) => sum + (Number(a.amount) || 0), 0);
+                                              .reduce((sum, a) => sum + (parseRupiahNum(a.amount) || 0), 0);
                                             const needed = Math.max(0, totalToAllocate - allocatedInOtherRows);
                                             updated[idx].amount = needed;
                                           }
@@ -28244,8 +28471,9 @@ const AdminFinanceScreen = ({
                                           const targetId = (r.id || "").trim().toUpperCase();
                                           const currentAllocId = (alloc.bankId || "").trim().toUpperCase();
                                           const isSelected = Boolean(currentAllocId) && (currentAllocId === targetCid || currentAllocId === targetId);
-                                          const allocAmt = Number(alloc.amount) || 0;
-                                          const left = isSelected ? Math.max(0, available - allocAmt) : available;
+                                          const allocAmt = parseRupiahNum(alloc.amount) || 0;
+                                          const adminForIdx = editFormData.paymentMethod === "TRANSFER" && idx === 0 ? parseRupiahNum(editFormData.adminFee) : 0;
+                                          const left = isSelected ? available - allocAmt - adminForIdx : available;
                                           return (
                                             <option key={`${r.id || r.customId || 'topup'}-${rIdx}`} value={r.customId || r.id}>
                                               {r.customId || "KSP"} - {r.holder} ({r.description.length > 28 ? r.description.slice(0, 28) + "..." : r.description}) [Sisa: Rp {left.toLocaleString("id-ID")}]
@@ -28291,19 +28519,23 @@ const AdminFinanceScreen = ({
 
                                   {alloc.bankId && (() => {
                                     const available = getBankRemainingBalance({ customId: alloc.bankId }, true, editBankAllocations, idx);
-                                    const allocatedAmt = Number(alloc.amount) || 0;
-                                    const sisaAfter = available - allocatedAmt;
+                                    const allocatedAmt = parseRupiahNum(alloc.amount) || 0;
+                                    const adminForIdx = editFormData.paymentMethod === "TRANSFER" && idx === 0 ? parseRupiahNum(editFormData.adminFee) : 0;
+                                    const sisaAfter = available - allocatedAmt - adminForIdx;
                                     return (
                                       <div className="flex items-center justify-between flex-wrap gap-2 text-[11px] font-bold px-3.5 py-2 bg-amber-50/80 rounded-xl border border-amber-200/90 shadow-2xs">
                                         <div className="flex items-center gap-2">
                                           <span className="text-amber-800 font-mono font-black">{alloc.bankId}</span>
                                           <span className="text-slate-300">•</span>
                                           <span className="text-slate-600">Saldo Awal / Tersedia: <strong className="font-mono text-slate-800">Rp {available.toLocaleString("id-ID")}</strong></span>
+                                          {adminForIdx > 0 && (
+                                            <span className="text-rose-600 font-bold">(Termasuk Admin: Rp {adminForIdx.toLocaleString("id-ID")})</span>
+                                          )}
                                         </div>
                                         <div className="flex items-center gap-1.5">
                                           <span className="text-amber-900 font-extrabold">Sisa Saldo Setelah Terpotong:</span>
                                           <span className={`font-mono font-black text-xs px-2 py-0.5 rounded-lg ${sisaAfter < 0 ? "bg-rose-100 text-rose-700 font-bold" : sisaAfter === 0 ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>
-                                            Rp {Math.max(0, sisaAfter).toLocaleString("id-ID")}
+                                            Rp {sisaAfter.toLocaleString("id-ID")}
                                           </span>
                                         </div>
                                       </div>
