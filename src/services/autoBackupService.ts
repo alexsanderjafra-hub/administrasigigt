@@ -335,7 +335,8 @@ export const autoBackupService = {
     }
     masterSyncTimeout = setTimeout(async () => {
       if (isQuotaExhausted()) return;
-      if (!Array.isArray(financialRecords) || financialRecords.length < 100) return;
+      const isDeleteOrExplicit = /hapus|delete|sinkron/i.test(triggerReason);
+      if (!Array.isArray(financialRecords) || (!isDeleteOrExplicit && financialRecords.length < 100)) return;
       try {
         const now = Date.now();
         const dateStr = new Date(now).toISOString();
@@ -345,14 +346,102 @@ export const autoBackupService = {
           timestamp: now,
           trigger: triggerReason,
           financialRecordsCount: financialRecords.length,
-          debtRecordsCount: debtRecords.length,
+          debtRecordsCount: (debtRecords || []).length,
           projectsCount: (projects || []).length,
           financialRecords,
-          debtRecords,
+          debtRecords: debtRecords || [],
           projects: projects || [],
         });
       } catch (_) {}
-    }, 1500);
+    }, 600);
+  },
+
+  purgeDeletedFromCaches: (
+    type: "financial" | "debt" | "project",
+    deletedIds: string[]
+  ) => {
+    if (!Array.isArray(deletedIds) || deletedIds.length === 0) return;
+    const upperSet = new Set(deletedIds.map((x) => String(x || "").trim().toUpperCase()).filter(Boolean));
+    if (upperSet.size === 0) return;
+
+    const matchesDeleted = (item: any): boolean => {
+      if (!item) return false;
+      const k1 = String(item.id || "").trim().toUpperCase();
+      const k2 = String(item.customId || "").trim().toUpperCase();
+      return (k1 && upperSet.has(k1)) || (k2 && upperSet.has(k2));
+    };
+
+    try {
+      if (cachedInMemoryPayload) {
+        if (type === "financial" && Array.isArray(cachedInMemoryPayload.financialRecords)) {
+          cachedInMemoryPayload.financialRecords = cachedInMemoryPayload.financialRecords.filter((r) => !matchesDeleted(r));
+        } else if (type === "debt" && Array.isArray(cachedInMemoryPayload.debtRecords)) {
+          cachedInMemoryPayload.debtRecords = cachedInMemoryPayload.debtRecords.filter((r) => !matchesDeleted(r));
+        } else if (type === "project" && Array.isArray(cachedInMemoryPayload.projects)) {
+          cachedInMemoryPayload.projects = cachedInMemoryPayload.projects.filter((r) => !matchesDeleted(r));
+        }
+        safeSetLocalStorage(PERSISTENT_CACHE_KEY, JSON.stringify(cachedInMemoryPayload));
+      } else if (typeof window !== "undefined") {
+        const raw = localStorage.getItem(PERSISTENT_CACHE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === "object") {
+            if (type === "financial" && Array.isArray(parsed.financialRecords)) {
+              parsed.financialRecords = parsed.financialRecords.filter((r: any) => !matchesDeleted(r));
+            } else if (type === "debt" && Array.isArray(parsed.debtRecords)) {
+              parsed.debtRecords = parsed.debtRecords.filter((r: any) => !matchesDeleted(r));
+            } else if (type === "project" && Array.isArray(parsed.projects)) {
+              parsed.projects = parsed.projects.filter((r: any) => !matchesDeleted(r));
+            }
+            safeSetLocalStorage(PERSISTENT_CACHE_KEY, JSON.stringify(parsed));
+          }
+        }
+      }
+      if (typeof window !== "undefined") {
+        const cacheKey =
+          type === "financial"
+            ? FINANCE_CACHE_KEY
+            : type === "debt"
+              ? DEBTS_CACHE_KEY
+              : PROJECTS_CACHE_KEY;
+        const rawSub = localStorage.getItem(cacheKey);
+        if (rawSub) {
+          const arr = JSON.parse(rawSub);
+          if (Array.isArray(arr)) {
+            safeSetLocalStorage(cacheKey, JSON.stringify(arr.filter((r: any) => !matchesDeleted(r))));
+          }
+        }
+      }
+      const history = autoBackupService.getAvailableBackups();
+      if (Array.isArray(history) && history.length > 0) {
+        let histChanged = false;
+        const cleanedHist = history.map((snap) => {
+          if (!snap?.data) return snap;
+          histChanged = true;
+          return {
+            ...snap,
+            data: {
+              financialRecords:
+                type === "financial"
+                  ? (snap.data.financialRecords || []).filter((r: any) => !matchesDeleted(r))
+                  : snap.data.financialRecords || [],
+              debtRecords:
+                type === "debt"
+                  ? (snap.data.debtRecords || []).filter((r: any) => !matchesDeleted(r))
+                  : snap.data.debtRecords || [],
+              projects:
+                type === "project"
+                  ? (snap.data.projects || []).filter((r: any) => !matchesDeleted(r))
+                  : snap.data.projects || [],
+            },
+          };
+        });
+        if (histChanged) {
+          cachedInMemoryHistory = cleanedHist;
+          safeSetLocalStorage(BACKUP_HISTORY_KEY, JSON.stringify(cleanedHist));
+        }
+      }
+    } catch (_) {}
   },
 
   /**

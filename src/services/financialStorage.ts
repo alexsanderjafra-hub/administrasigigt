@@ -350,6 +350,19 @@ export const markFinancialRecordDeleted = (idOrCustomId: string): void => {
   }
 };
 
+export const unmarkFinancialRecordDeleted = (idOrCustomId: string): void => {
+  try {
+    const key = (idOrCustomId || "").trim().toUpperCase();
+    if (!key) return;
+    const set = getDeletedFinancialIds();
+    if (set.has(key)) {
+      set.delete(key);
+      scheduleLocalStoragePersist(DELETED_FINANCIAL_IDS_KEY, () => JSON.stringify(Array.from(set)));
+    }
+    idbStorage.delete("overrides", `DELETED_${key}`).catch(() => {});
+  } catch (_) {}
+};
+
 /**
  * Retrieve user-edited modifications for debt records (Hutang / Piutang).
  */

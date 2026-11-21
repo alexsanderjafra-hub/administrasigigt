@@ -236,7 +236,17 @@ import { DebtPaymentManager } from "./components/DebtPaymentManager";
 import { SyncBackupModal } from "./components/SyncBackupModal";
 import { AdminSystemBackupManager } from "./components/AdminSystemBackupManager";
 import { autoBackupService } from "./services/autoBackupService";
-import { isQuotaExhausted, getDeletedCollectionIds, getLocalCollectionStore } from "./services/db";
+import {
+  isQuotaExhausted,
+  getDeletedCollectionIds,
+  addDeletedCollectionId,
+  getLocalCollectionStore,
+  getPendingCollectionIds,
+  applyCloudDeletedRegistry,
+  isDeletedByCloudRegistry,
+  recordCloudDeletion,
+  clearCloudDeletion,
+} from "./services/db";
 import {
   initFinancialStorage,
   getFinancialOverrides,
@@ -244,6 +254,7 @@ import {
   removeFinancialOverride,
   getDeletedFinancialIds,
   markFinancialRecordDeleted,
+  unmarkFinancialRecordDeleted,
   getDebtOverrides,
   saveDebtOverride,
   removeDebtOverride,
@@ -10498,6 +10509,9 @@ const AdminDebtScreen = ({
 
     if (targetPay && targetPay.financialRecordId) {
       try {
+        markFinancialRecordDeleted(targetPay.financialRecordId);
+        removeActiveUserTransaction(targetPay.financialRecordId);
+        recordCloudDeletion("financial", [targetPay.financialRecordId]);
         await dbService.deleteDocument("financialRecords", targetPay.financialRecordId);
       } catch (e) {
         console.error("Failed to delete financial record:", e);
@@ -10608,12 +10622,14 @@ const AdminDebtScreen = ({
           if (mf.id) {
             finIdsToDelete.add(mf.id);
             markFinancialRecordDeleted(mf.id);
+            removeActiveUserTransaction(mf.id);
             removeFinancialOverride(mf.id);
             await dbService.deleteDocument("financialRecords", mf.id).catch(() => {});
           }
           if (mf.customId) {
             finIdsToDelete.add(mf.customId);
             markFinancialRecordDeleted(mf.customId);
+            removeActiveUserTransaction(mf.customId);
             removeFinancialOverride(mf.customId);
             await dbService.deleteDocument("financialRecords", mf.customId).catch(() => {});
           }
@@ -10622,11 +10638,19 @@ const AdminDebtScreen = ({
         setFinancialRecords(updatedFinList);
       }
 
+      recordCloudDeletion("debt", [id, customId, originFinId, originCustId]);
+      autoBackupService.purgeDeletedFromCaches("debt", [id, customId].filter(Boolean));
       autoBackupService.saveInstantDataSnapshot(
         updatedFinList,
         updatedDebtList,
         projects,
         `Hapus ${type === "HUTANG" ? "Hutang" : "Piutang"} [${displayId}] dan Transaksi Terkait`
+      );
+      autoBackupService.syncMasterSnapshotOnly(
+        updatedFinList,
+        updatedDebtList,
+        projects,
+        `Hapus ${type === "HUTANG" ? "Hutang" : "Piutang"} [${displayId}]`
       );
 
       await logActivity(
@@ -20123,6 +20147,8 @@ const AdminFinanceScreen = ({
         }
 
         let finId = eachCustomId;
+        unmarkFinancialRecordDeleted(eachCustomId);
+        clearCloudDeletion("financial", [eachCustomId]);
         try {
           finId = await dbService.createDocument("financialRecords", {
             ...eachRecord,
@@ -20135,6 +20161,10 @@ const AdminFinanceScreen = ({
         } catch (dbErr) {
           console.warn("createDocument fallback:", dbErr);
           finId = eachCustomId;
+        }
+        if (finId && finId !== eachCustomId) {
+          unmarkFinancialRecordDeleted(finId);
+          clearCloudDeletion("financial", [finId]);
         }
         const newRecordFull = { 
           id: finId || eachCustomId, 
@@ -20734,12 +20764,18 @@ const AdminFinanceScreen = ({
       });
       setFinancialRecords(nextList);
 
-      // 4. Update instant backup snapshot
+      // 4. Update instant backup snapshot & cloud master snapshot
       autoBackupService.saveInstantDataSnapshot(
         nextList,
         debtRecords,
         projects,
         `Ubah Kategori Transaksi ${targetCustomId || id} -> ${newCategory}`
+      );
+      autoBackupService.syncMasterSnapshotOnly(
+        nextList,
+        debtRecords,
+        projects,
+        `Ubah Kategori Transaksi ${targetCustomId || id}`
       );
 
       await logActivity(
@@ -20920,6 +20956,7 @@ const AdminFinanceScreen = ({
         }).catch(() => {});
       }
       if (originalCustomId && originalCustomId !== docId && originalCustomId !== finalCustomId) {
+        removeActiveUserTransaction(originalCustomId);
         await dbService.deleteDocument("financialRecords", originalCustomId).catch(() => {});
       }
       setFinancialRecords((prev) =>
@@ -21365,6 +21402,12 @@ const AdminFinanceScreen = ({
           projects,
           `Update Transaksi ${finalCustomId} (${updatedRecord.sumberDana || "Rekening PT"})`
         );
+        autoBackupService.syncMasterSnapshotOnly(
+          nextFin,
+          finalDebtList,
+          projects,
+          `Update Transaksi ${finalCustomId}`
+        );
         return nextFin;
       });
 
@@ -21471,10 +21514,13 @@ const AdminFinanceScreen = ({
 
       await dbService.deleteDocument("financialRecords", id).catch(() => {});
       markFinancialRecordDeleted(id);
+      removeActiveUserTransaction(id);
       if (targetFin?.customId) {
         markFinancialRecordDeleted(targetFin.customId);
+        removeActiveUserTransaction(targetFin.customId);
         await dbService.deleteDocument("financialRecords", targetFin.customId).catch(() => {});
       }
+      recordCloudDeletion("financial", [id, targetFin?.customId]);
       removeFinancialOverride(id);
       if (targetFin?.customId) removeFinancialOverride(targetFin.customId);
       removeLivePostBaselineId(id);
@@ -21521,6 +21567,7 @@ const AdminFinanceScreen = ({
 
       for (const d of spawnedDebts) {
         addDeletedDebtOriginId(d.id, d.customId, id, targetCustomId);
+        recordCloudDeletion("debt", [d.id, d.customId, id, targetCustomId]);
         removeDebtOverride(d.id);
         if (d.customId) removeDebtOverride(d.customId);
         await dbService.deleteDocument("debtRecords", d.id).catch(() => {});
@@ -21542,7 +21589,14 @@ const AdminFinanceScreen = ({
       const nextFinList = financialRecords.filter((r) => r.id !== id && r.customId !== id && (!targetFin?.customId || r.customId !== targetFin.customId));
       setFinancialRecords(nextFinList);
       setSelectedIds((prev) => prev.filter((item) => item !== id));
+      autoBackupService.purgeDeletedFromCaches("financial", [id, targetFin?.customId].filter(Boolean) as string[]);
       autoBackupService.saveInstantDataSnapshot(
+        nextFinList,
+        updatedDebtList,
+        projects,
+        `Hapus Transaksi Keuangan ${targetFin?.customId || id}`
+      );
+      autoBackupService.syncMasterSnapshotOnly(
         nextFinList,
         updatedDebtList,
         projects,
@@ -21699,25 +21753,46 @@ const AdminFinanceScreen = ({
         });
       }
 
+      const allDeletedFinIds: string[] = [];
+      const customIdsToDelete: string[] = [];
       for (const sId of selectedIds) {
+        allDeletedFinIds.push(sId);
         markFinancialRecordDeleted(sId);
+        removeActiveUserTransaction(sId);
         removeFinancialOverride(sId);
+        removeLivePostBaselineId(sId);
         const sFin = financialRecords.find((f) => f.id === sId);
         if (sFin?.customId) {
+          allDeletedFinIds.push(sFin.customId);
           markFinancialRecordDeleted(sFin.customId);
+          removeActiveUserTransaction(sFin.customId);
           removeFinancialOverride(sFin.customId);
+          removeLivePostBaselineId(sFin.customId);
+          if (sFin.customId !== sId) customIdsToDelete.push(sFin.customId);
         }
       }
+      recordCloudDeletion("financial", allDeletedFinIds);
 
-      await Promise.all(
-        selectedIds.map((id) =>
-          dbService.deleteDocument("financialRecords", id),
-        ),
-      );
-      const nextFinList = financialRecords.filter((r) => !selectedIds.includes(r.id));
+      await Promise.all([
+        ...selectedIds.map((id) => dbService.deleteDocument("financialRecords", id).catch(() => {})),
+        ...customIdsToDelete.map((cid) => dbService.deleteDocument("financialRecords", cid).catch(() => {})),
+      ]);
+      const deletedSetUpper = new Set(allDeletedFinIds.map((x) => x.trim().toUpperCase()));
+      const nextFinList = financialRecords.filter((r) => {
+        const k1 = (r.id || "").trim().toUpperCase();
+        const k2 = (r.customId || "").trim().toUpperCase();
+        return (!k1 || !deletedSetUpper.has(k1)) && (!k2 || !deletedSetUpper.has(k2));
+      });
       setFinancialRecords?.(nextFinList);
       setSelectedIds([]);
+      autoBackupService.purgeDeletedFromCaches("financial", allDeletedFinIds);
       autoBackupService.saveInstantDataSnapshot(
+        nextFinList,
+        updatedDebtList,
+        projects,
+        `Hapus Bulk ${selectedIds.length} Transaksi Keuangan`
+      );
+      autoBackupService.syncMasterSnapshotOnly(
         nextFinList,
         updatedDebtList,
         projects,
@@ -33198,11 +33273,15 @@ export default function App() {
         });
       }
       if (records.length > 0) {
+        const deletedIds = getDeletedFinancialIds();
         records = records
           .filter((r) => {
             const k1 = (r.customId || "").trim().toUpperCase();
             const k2 = (r.id || "").trim().toUpperCase();
-            return k1 !== "BNK-110926-001" && k2 !== "BNK-110926-001";
+            if (k1 === "BNK-110926-001" || k2 === "BNK-110926-001") return false;
+            if ((k1 && deletedIds.has(k1)) || (k2 && deletedIds.has(k2))) return false;
+            if (isDeletedByCloudRegistry("financial", r)) return false;
+            return true;
           })
           .map((r) => {
             const k1 = (r.customId || "").trim().toUpperCase();
@@ -33233,6 +33312,9 @@ export default function App() {
   });
   const [isFinanceLoaded, setIsFinanceLoaded] = useState(false);
   const [hasAutoSeeded, setHasAutoSeeded] = useState(false);
+  const isLiveFinanceFromServerRef = useRef(false);
+  const isLiveDebtFromServerRef = useRef(false);
+  const isLiveProjectsFromServerRef = useRef(false);
   const [debtRecords, setDebtRecords] = useState<DebtRecord[]>(() => {
     try {
       const debtOv = getDebtOverrides();
@@ -33270,7 +33352,9 @@ export default function App() {
           const k2 = (d.id || "").trim().toLowerCase();
           const cUpper = (d.contactName || "").trim().toUpperCase();
           if (cUpper === "INTERNAL TALANGAN" || cUpper.includes("INTERNAL TALANGAN")) return false;
-          return !deletedOrigins.has(k1) && !deletedOrigins.has(k2);
+          if (deletedOrigins.has(k1) || deletedOrigins.has(k2)) return false;
+          if (isDeletedByCloudRegistry("debt", d)) return false;
+          return true;
         })
         .map((d: any) => {
           if (d.customId === "HTG-003" || d.id === "HTG-003") {
@@ -39524,7 +39608,44 @@ export default function App() {
   useEffect(() => {
     if (!currentUser || !auth.currentUser) return;
 
-    // Real-time synchronization across devices (AI Studio & Vercel deployment)
+    // Real-time cloud deletion registry across all devices, browsers, and URLs
+    const unsubscribeDeletedRegistry = dbService.onDocumentSnapshot<any>(
+      "systemBackups",
+      "deleted_registry",
+      (regData) => {
+        if (!regData) return;
+        const newlyDeleted = applyCloudDeletedRegistry(regData);
+        if (newlyDeleted.financial.length > 0) {
+          newlyDeleted.financial.forEach((idKey) => {
+            markFinancialRecordDeleted(idKey);
+            removeActiveUserTransaction(idKey);
+            removeFinancialOverride(idKey);
+            removeLivePostBaselineId(idKey);
+          });
+          autoBackupService.purgeDeletedFromCaches("financial", newlyDeleted.financial);
+          setFinancialRecords((prev) =>
+            prev.filter((r) => !isDeletedByCloudRegistry("financial", r))
+          );
+        }
+        if (newlyDeleted.debt.length > 0) {
+          addDeletedDebtOriginId(...newlyDeleted.debt);
+          newlyDeleted.debt.forEach((idKey) => removeDebtOverride(idKey));
+          autoBackupService.purgeDeletedFromCaches("debt", newlyDeleted.debt);
+          setDebtRecords((prev) =>
+            prev.filter((d) => !isDeletedByCloudRegistry("debt", d))
+          );
+        }
+        if (newlyDeleted.project.length > 0) {
+          newlyDeleted.project.forEach((idKey) => addDeletedCollectionId("projects", idKey));
+          autoBackupService.purgeDeletedFromCaches("project", newlyDeleted.project);
+          setProjects((prev) =>
+            prev.filter((p) => !isDeletedByCloudRegistry("project", p))
+          );
+        }
+      }
+    );
+
+    // Real-time synchronization across devices (fallback only when live collection snapshots aren't active)
     let lastProcessedCloudTs = 0;
     const unsubscribeCloudMaster = dbService.onDocumentSnapshot<any>(
       "systemBackups",
@@ -39538,15 +39659,15 @@ export default function App() {
         if (incomingTs > 0) {
           lastProcessedCloudTs = incomingTs;
         }
-        if (Array.isArray(cloudData.projects) && cloudData.projects.length > 0) {
+        if (!isLiveProjectsFromServerRef.current && Array.isArray(cloudData.projects) && cloudData.projects.length > 0) {
           const deletedProjIds = getDeletedCollectionIds("projects");
           setProjects((prev) => {
             const pMap = new Map<string, Project>();
             prev.forEach((p) => {
-              if (!deletedProjIds.has(p.id.trim().toUpperCase())) pMap.set(p.id, p);
+              if (!deletedProjIds.has(p.id.trim().toUpperCase()) && !isDeletedByCloudRegistry("project", p)) pMap.set(p.id, p);
             });
             cloudData.projects.forEach((cp: Project) => {
-              if (cp && cp.id && !deletedProjIds.has(cp.id.trim().toUpperCase())) {
+              if (cp && cp.id && !deletedProjIds.has(cp.id.trim().toUpperCase()) && !isDeletedByCloudRegistry("project", cp)) {
                 const ex = pMap.get(cp.id);
                 pMap.set(cp.id, ex ? { ...ex, ...cp } : cp);
               }
@@ -39554,18 +39675,18 @@ export default function App() {
             return Array.from(pMap.values());
           });
         }
-        if (Array.isArray(cloudData.debtRecords) && cloudData.debtRecords.length > 0) {
+        if (!isLiveDebtFromServerRef.current && Array.isArray(cloudData.debtRecords) && cloudData.debtRecords.length > 0) {
           const deletedDebtIds = getDeletedDebtOriginIds();
           const debtOv = getDebtOverrides();
           setDebtRecords((prev) => {
             const dMap = new Map<string, DebtRecord>();
             prev.forEach((d) => {
               const k = (d.customId || d.id || "").toUpperCase();
-              if (k && !deletedDebtIds.has(k.toLowerCase())) dMap.set(k, d);
+              if (k && !deletedDebtIds.has(k.toLowerCase()) && !isDeletedByCloudRegistry("debt", d)) dMap.set(k, d);
             });
             cloudData.debtRecords.forEach((cd: DebtRecord) => {
               const k = (cd.customId || cd.id || "").toUpperCase();
-              if (k && !deletedDebtIds.has(k.toLowerCase())) {
+              if (k && !deletedDebtIds.has(k.toLowerCase()) && !isDeletedByCloudRegistry("debt", cd)) {
                 const ex = dMap.get(k);
                 const ov = debtOv[k] || (cd.id ? debtOv[cd.id.toUpperCase()] : undefined);
                 const merged = ex ? { ...ex, ...cd, ...(ov || {}) } : { ...cd, ...(ov || {}) };
@@ -39579,7 +39700,7 @@ export default function App() {
             return Array.from(dMap.values());
           });
         }
-        if (Array.isArray(cloudData.financialRecords) && cloudData.financialRecords.length > 0) {
+        if (!isLiveFinanceFromServerRef.current && Array.isArray(cloudData.financialRecords) && cloudData.financialRecords.length > 0) {
           const userOverrides = getFinancialOverrides();
           const deletedIds = getDeletedFinancialIds();
           setFinancialRecords((prev) => {
@@ -39592,7 +39713,7 @@ export default function App() {
             prev.forEach((f) => {
               const fId = (f.id || "").trim().toUpperCase();
               const fCust = (f.customId || "").trim().toUpperCase();
-              if ((fId && deletedIds.has(fId)) || (fCust && deletedIds.has(fCust))) return;
+              if ((fId && deletedIds.has(fId)) || (fCust && deletedIds.has(fCust)) || isDeletedByCloudRegistry("financial", f)) return;
               if ((fId && seenIds.has(fId)) || (fCust && seenCustomIds.has(fCust))) return;
               const idx = deduped.length;
               if (fId) {
@@ -39610,7 +39731,7 @@ export default function App() {
               if (!cf) return;
               const cfId = (cf.id || "").trim().toUpperCase();
               const cfCust = (cf.customId || "").trim().toUpperCase();
-              if ((cfId && deletedIds.has(cfId)) || (cfCust && deletedIds.has(cfCust))) return;
+              if ((cfId && deletedIds.has(cfId)) || (cfCust && deletedIds.has(cfCust)) || isDeletedByCloudRegistry("financial", cf)) return;
 
               let exIdx = -1;
               if (cfId && dedupedIdxById.has(cfId)) {
@@ -39726,8 +39847,14 @@ export default function App() {
 
     const unsubscribeProjects = dbService.onCollectionSnapshot<Project>(
       "projects",
-      (data) => {
-        // Retrieve persistent projects cache from localStorage & backup history
+      (data, meta) => {
+        const isFromServer = meta?.isFromServer !== false;
+        if (isFromServer) {
+          isLiveProjectsFromServerRef.current = true;
+        }
+        const pendingProjKeys = getPendingCollectionIds("projects");
+
+        // Retrieve persistent projects cache only for offline fallback or pending writes
         const localPersistent = autoBackupService.getPersistentData();
         let localProjects: Project[] = Array.isArray(localPersistent?.projects) ? localPersistent.projects : [];
         if (localProjects.length === 0) {
@@ -39741,23 +39868,34 @@ export default function App() {
         }
 
         const deletedProjIds = getDeletedCollectionIds("projects");
+        const isProjDeleted = (p: Project) => {
+          if (!p || !p.id) return true;
+          const uId = p.id.trim().toUpperCase();
+          if (deletedProjIds.has(uId)) return true;
+          if (isDeletedByCloudRegistry("project", p)) return true;
+          return false;
+        };
+
         const mergedMap = new Map<string, Project>();
         // 1. Defaults as baseline
         defaultProjects.forEach((dp) => {
-          if (!deletedProjIds.has(dp.id.trim().toUpperCase())) {
+          if (!isProjDeleted(dp)) {
             mergedMap.set(dp.id, dp);
           }
         });
-        // 2. User local/backup projects (offline cache fallback)
+        // 2. Local/backup projects ONLY when offline OR pending local write (never resurrect projects deleted on another device)
         localProjects.forEach((lp) => {
-          if (lp && lp.id && !deletedProjIds.has(lp.id.trim().toUpperCase())) {
-            const ex = mergedMap.get(lp.id);
-            mergedMap.set(lp.id, ex ? { ...ex, ...lp } : lp);
+          if (lp && lp.id && !isProjDeleted(lp)) {
+            const uId = lp.id.trim().toUpperCase();
+            if (!isFromServer || pendingProjKeys.has(uId)) {
+              const ex = mergedMap.get(lp.id);
+              mergedMap.set(lp.id, ex ? { ...ex, ...lp } : lp);
+            }
           }
         });
-        // 3. Firestore live projects (highest priority: website edits & additions immediately reflect)
+        // 3. Firestore live projects (authoritative across all devices)
         (data || []).forEach((dp) => {
-          if (dp && dp.id && !deletedProjIds.has(dp.id.trim().toUpperCase())) {
+          if (dp && dp.id && !isDeletedByCloudRegistry("project", dp)) {
             const ex = mergedMap.get(dp.id);
             mergedMap.set(dp.id, ex ? { ...ex, ...dp } : dp);
           }
@@ -39862,14 +40000,35 @@ export default function App() {
 
     const unsubscribeFinance = dbService.onCollectionSnapshot<FinancialRecord>(
       "financialRecords",
-      (data) => {
+      (data, meta) => {
+        const isFromServer = meta?.isFromServer !== false;
+        if (isFromServer) {
+          isLiveFinanceFromServerRef.current = true;
+        }
+        const pendingFinKeys = getPendingCollectionIds("financialRecords");
         const userOverrides = getFinancialOverrides();
         const deletedIds = getDeletedFinancialIds();
         const seenIds = new Set<string>();
         const seenCustomIds = new Set<string>();
         const deduped: FinancialRecord[] = [];
 
-        // Check persistent local backup cache for any edits made by user
+        const isPendingLocal = (k1?: string, k2?: string, k3?: string) =>
+          Boolean(
+            (k1 && pendingFinKeys.has(k1)) ||
+            (k2 && pendingFinKeys.has(k2)) ||
+            (k3 && pendingFinKeys.has(k3))
+          );
+
+        const isFinDeleted = (rec: any, k1?: string, k2?: string, k3?: string, hasServerDoc = false) => {
+          if (isDeletedByCloudRegistry("financial", rec)) return true;
+          // For live server documents that are NOT in pending local delete, trust Firestore unless in cloud deleted_registry
+          if (!hasServerDoc && ((k1 && deletedIds.has(k1)) || (k2 && deletedIds.has(k2)) || (k3 && deletedIds.has(k3)))) {
+            return true;
+          }
+          return false;
+        };
+
+        // Check persistent local backup cache for offline fallback or pending writes
         const localPersistent = autoBackupService.getPersistentData();
         const localFinMap = new Map<string, any>();
         if (localPersistent && Array.isArray(localPersistent.financialRecords)) {
@@ -39881,7 +40040,7 @@ export default function App() {
           });
         }
 
-        // Index Firestore data in O(N) Map so matching seed records runs in O(1) instead of O(N^2)
+        // Index Firestore data in O(N) Map so matching seed records runs in O(1)
         const dbByKeyMap = new Map<string, FinancialRecord>();
         (data || []).forEach((item) => {
           if (!item) return;
@@ -39898,8 +40057,10 @@ export default function App() {
           const fallbackKey = rawCustomId || rawId;
           if (!fallbackKey) return;
 
-          // Never resurrect items deleted by user
-          if ((rawId && deletedIds.has(rawId)) || (rawCustomId && deletedIds.has(rawCustomId)) || (fallbackKey && deletedIds.has(fallbackKey))) {
+          const fromDb = dbByKeyMap.get(rawCustomId) || dbByKeyMap.get(rawId) || dbByKeyMap.get(fallbackKey);
+
+          // Never resurrect items deleted by user (locally OR on any other device via cloud deleted_registry)
+          if (isFinDeleted(fromDb || seed, rawId, rawCustomId, fallbackKey, Boolean(fromDb))) {
             return;
           }
 
@@ -39907,9 +40068,19 @@ export default function App() {
             return;
           }
 
-          const fromDb = dbByKeyMap.get(rawCustomId) || dbByKeyMap.get(rawId) || dbByKeyMap.get(fallbackKey);
-          const fromLocal = localFinMap.get(rawCustomId) || localFinMap.get(rawId) || localFinMap.get(fallbackKey);
-          const userEdit = userOverrides[rawCustomId] || userOverrides[rawId] || userOverrides[fallbackKey];
+          const pending = isPendingLocal(rawId, rawCustomId, fallbackKey);
+          const fromLocalRaw = localFinMap.get(rawCustomId) || localFinMap.get(rawId) || localFinMap.get(fallbackKey);
+          const fromLocal = (!isFromServer || pending) ? fromLocalRaw : undefined;
+          const rawUserEdit = userOverrides[rawCustomId] || userOverrides[rawId] || userOverrides[fallbackKey];
+          // If Firestore already has the record and THIS device has no pending offline write, Firestore wins over stale local overrides
+          let userEdit = rawUserEdit;
+          if (isFromServer && fromDb && !pending) {
+            userEdit = undefined;
+            if (rawUserEdit) {
+              if (rawId) removeFinancialOverride(rawId);
+              if (rawCustomId) removeFinancialOverride(rawCustomId);
+            }
+          }
 
           const isPersonalFund =
             userEdit?.sumberDana === "REKENING PRIBADI" ||
@@ -39919,8 +40090,8 @@ export default function App() {
             fromLocal?.flowType === "PERSONAL_TALANGAN_REIMBURSE" ||
             fromDb?.flowType === "PERSONAL_TALANGAN_REIMBURSE";
 
-          const finalId = userEdit?.id || fromLocal?.id || fromDb?.id || seed.id || fallbackKey;
-          const finalCustomId = userEdit?.customId || fromLocal?.customId || fromDb?.customId || seed.customId || fallbackKey;
+          const finalId = userEdit?.id || fromDb?.id || fromLocal?.id || seed.id || fallbackKey;
+          const finalCustomId = userEdit?.customId || fromDb?.customId || fromLocal?.customId || seed.customId || fallbackKey;
 
           // Register all identifier variants in seen sets to completely prevent duplicates
           [rawId, rawCustomId, fallbackKey, finalId, finalCustomId, fromDb?.id, fromDb?.customId, fromLocal?.id, fromLocal?.customId].forEach((k) => {
@@ -39931,7 +40102,6 @@ export default function App() {
             }
           });
 
-          // Precedence: seed < fromLocal < fromDb < userEdit (Firestore server data takes precedence over stale local cache)
           const resolvedCategory =
             userEdit?.category ||
             (fromDb?.category && fromDb.category !== "TERMIN" ? fromDb.category : undefined) ||
@@ -39988,7 +40158,7 @@ export default function App() {
           deduped.push(enriched);
         });
 
-        // 2. Data tambahan dari local cache DAN database (transaksi baru yang dibuat oleh user)
+        // 2. Data tambahan dari Firestore (authoritative) + pending offline writes only
         let allLocalFin: any[] = [];
         if (localPersistent && Array.isArray(localPersistent.financialRecords) && localPersistent.financialRecords.length > 0) {
           allLocalFin = localPersistent.financialRecords;
@@ -40002,11 +40172,34 @@ export default function App() {
           }
         }
 
-        // Server real-time data from Firestore takes precedence so newly created transactions from deployed website or other instances immediately show in preview!
         const localColStore = getLocalCollectionStore<FinancialRecord>("financialRecords");
         const fromLocalColStore = Array.from(localColStore.values());
         const activeUserRecords = getActiveUserRecords();
-        const combinedFin = [...(data || []), ...fromLocalColStore, ...activeUserRecords, ...allLocalFin];
+
+        // Clean up any stale local activeUserRecords that are no longer in Firestore live data (deleted on another device)
+        if (isFromServer) {
+          activeUserRecords.forEach((ar) => {
+            const ak1 = (ar.id || "").trim().toUpperCase();
+            const ak2 = (ar.customId || "").trim().toUpperCase();
+            const inServer = (ak1 && dbByKeyMap.has(ak1)) || (ak2 && dbByKeyMap.has(ak2));
+            if (!inServer && !isPendingLocal(ak1, ak2)) {
+              if (ak1) removeActiveUserTransaction(ak1);
+              if (ak2) removeActiveUserTransaction(ak2);
+              if (ak1) removeFinancialOverride(ak1);
+              if (ak2) removeFinancialOverride(ak2);
+            }
+          });
+        }
+
+        const localAdditions = [...fromLocalColStore, ...activeUserRecords, ...allLocalFin].filter((item) => {
+          if (!item) return false;
+          if (!isFromServer) return true;
+          const k1 = (item.id || "").trim().toUpperCase();
+          const k2 = (item.customId || "").trim().toUpperCase();
+          return isPendingLocal(k1, k2);
+        });
+
+        const combinedFin = [...(data || []), ...localAdditions];
         combinedFin.forEach((item) => {
           if (!item) return;
           if (isSeedFinancialRecord(item)) return;
@@ -40017,7 +40210,8 @@ export default function App() {
           const fallbackKey = rawCustomId || rawId;
           if (!fallbackKey) return;
 
-          if ((rawId && deletedIds.has(rawId)) || (rawCustomId && deletedIds.has(rawCustomId)) || (fallbackKey && deletedIds.has(fallbackKey))) {
+          const inDb = dbByKeyMap.has(rawId) || dbByKeyMap.has(rawCustomId) || dbByKeyMap.has(fallbackKey);
+          if (isFinDeleted(item, rawId, rawCustomId, fallbackKey, inDb)) {
             return;
           }
 
@@ -40025,7 +40219,17 @@ export default function App() {
             return;
           }
 
-          const userEdit = userOverrides[rawCustomId] || userOverrides[rawId] || userOverrides[fallbackKey];
+          const pending = isPendingLocal(rawId, rawCustomId, fallbackKey);
+          const rawUserEdit = userOverrides[rawCustomId] || userOverrides[rawId] || userOverrides[fallbackKey];
+          let userEdit = rawUserEdit;
+          if (isFromServer && inDb && !pending) {
+            userEdit = undefined;
+            if (rawUserEdit) {
+              if (rawId) removeFinancialOverride(rawId);
+              if (rawCustomId) removeFinancialOverride(rawCustomId);
+            }
+          }
+
           let finalItem: FinancialRecord = userEdit
             ? { ...item, ...userEdit, category: userEdit.category || item.category, isUserEdited: true }
             : item;
@@ -40054,7 +40258,7 @@ export default function App() {
           finalDeduped.push(item);
         }
 
-        // Functional state update that preserves any in-memory user-edited categories from prev
+        // Functional state update: live server snapshot is authoritative; preserve prev ONLY when offline or pending local write
         setFinancialRecords((prev) => {
           const prevMap = new Map<string, FinancialRecord>();
           (prev || []).forEach((r) => {
@@ -40067,8 +40271,9 @@ export default function App() {
           const dedupedResult = finalDeduped.map((item) => {
             const k1 = (item.customId || "").trim().toUpperCase();
             const k2 = (item.id || "").trim().toUpperCase();
-            const ov = userOverrides[k1] || userOverrides[k2];
-            const p = prevMap.get(k1) || prevMap.get(k2);
+            const pending = isPendingLocal(k1, k2);
+            const ov = (!isFromServer || pending) ? (userOverrides[k1] || userOverrides[k2]) : undefined;
+            const p = (!isFromServer || pending) ? (prevMap.get(k1) || prevMap.get(k2)) : undefined;
             const targetDate = ov?.date || item.date || p?.date;
             const isLocked = isSeedFinancialRecord(item) || (p && isSeedFinancialRecord(p)) || (targetDate && targetDate <= BASELINE_LOCK_DATE);
             const isLive = isLocked ? false : Boolean(isLivePostBaselineTransaction(item) || (p && isLivePostBaselineTransaction(p)));
@@ -40086,19 +40291,20 @@ export default function App() {
             };
           });
 
-          // Ensure any post-baseline or user-created records in prev that aren't yet in finalDeduped are safely preserved!
           const resultKeys = new Set<string>();
           dedupedResult.forEach((item) => {
             if (item.id) resultKeys.add(item.id.trim().toUpperCase());
             if (item.customId) resultKeys.add(item.customId.trim().toUpperCase());
           });
 
+          // ONLY preserve items missing from Firestore if offline OR actively pending local write (so remote deletes vanish immediately)
           const missingFromPrev = (prev || []).filter((p) => {
             if (!p) return false;
             const pk1 = (p.customId || "").trim().toUpperCase();
             const pk2 = (p.id || "").trim().toUpperCase();
-            if ((pk1 && deletedIds.has(pk1)) || (pk2 && deletedIds.has(pk2))) return false;
-            return (!pk1 || !resultKeys.has(pk1)) && (!pk2 || !resultKeys.has(pk2));
+            if (isFinDeleted(p, pk1, pk2, undefined, false)) return false;
+            if ((pk1 && resultKeys.has(pk1)) || (pk2 && resultKeys.has(pk2))) return false;
+            return !isFromServer || isPendingLocal(pk1, pk2);
           });
 
           const finalRecordsSnapshot = [...dedupedResult, ...missingFromPrev].map((r) => {
@@ -40118,13 +40324,25 @@ export default function App() {
 
     const unsubscribeDebt = dbService.onCollectionSnapshot<DebtRecord>(
       "debtRecords",
-      (data) => {
+      (data, meta) => {
+        const isFromServer = meta?.isFromServer !== false;
+        if (isFromServer) {
+          isLiveDebtFromServerRef.current = true;
+        }
+        const pendingDebtKeys = getPendingCollectionIds("debtRecords");
+        const isPendingDebt = (k1?: string, k2?: string, k3?: string) =>
+          Boolean(
+            (k1 && pendingDebtKeys.has(k1)) ||
+            (k2 && pendingDebtKeys.has(k2)) ||
+            (k3 && pendingDebtKeys.has(k3))
+          );
+
         const seenIds = new Set<string>();
         const seenCustomIds = new Set<string>();
         const deduped: DebtRecord[] = [];
         const deletedOrigins = getDeletedDebtOriginIds();
 
-        // Check persistent local backup cache for debt records
+        // Check persistent local backup cache for offline fallback or pending writes
         const localPersistent = autoBackupService.getPersistentData();
         const localDebtMap = new Map<string, any>();
         if (localPersistent && Array.isArray(localPersistent.debtRecords)) {
@@ -40145,8 +40363,15 @@ export default function App() {
           const fallbackKey = rawCustomId || rawId;
           if (!fallbackKey) return;
 
-          // Never resurrect debts deleted by user
+          const fromDb = (data || []).find((item) => {
+            const iId = (item.id || "").trim().toUpperCase();
+            const iCustom = (item.customId || "").trim().toUpperCase();
+            return (rawId && iId === rawId) || (rawCustomId && iCustom === rawCustomId) || (fallbackKey && (iId === fallbackKey || iCustom === fallbackKey));
+          });
+
+          // Never resurrect debts deleted locally or on another device
           if (
+            isDeletedByCloudRegistry("debt", fromDb || seed) ||
             (rawId && deletedOrigins.has(rawId.toLowerCase())) ||
             (rawCustomId && deletedOrigins.has(rawCustomId.toLowerCase())) ||
             (fallbackKey && deletedOrigins.has(fallbackKey.toLowerCase()))
@@ -40164,15 +40389,20 @@ export default function App() {
             seenCustomIds.add(fallbackKey);
           }
 
-          const fromDb = (data || []).find((item) => {
-            const iId = (item.id || "").trim().toUpperCase();
-            const iCustom = (item.customId || "").trim().toUpperCase();
-            return (rawId && iId === rawId) || (rawCustomId && iCustom === rawCustomId) || (fallbackKey && (iId === fallbackKey || iCustom === fallbackKey));
-          });
-          const fromLocal = localDebtMap.get(rawCustomId) || localDebtMap.get(rawId) || localDebtMap.get(fallbackKey);
-          const userEdit = debtOverrides[rawCustomId] || debtOverrides[rawId] || debtOverrides[fallbackKey];
+          const pending = isPendingDebt(rawId, rawCustomId, fallbackKey);
+          const fromLocalRaw = localDebtMap.get(rawCustomId) || localDebtMap.get(rawId) || localDebtMap.get(fallbackKey);
+          const fromLocal = (!isFromServer || pending) ? fromLocalRaw : undefined;
+          const rawUserEdit = debtOverrides[rawCustomId] || debtOverrides[rawId] || debtOverrides[fallbackKey];
+          let userEdit = rawUserEdit;
+          if (isFromServer && fromDb && !pending) {
+            userEdit = undefined;
+            if (rawUserEdit) {
+              if (rawId) removeDebtOverride(rawId);
+              if (rawCustomId) removeDebtOverride(rawCustomId);
+            }
+          }
+
           const source = fromDb || fromLocal;
-          // User explicit edits have absolute precedence, server data takes priority over local cache
           const baseRecord = (source ? { ...seed, ...(fromLocal || {}), ...(fromDb || {}), ...(userEdit || {}) } : { ...seed, ...(userEdit || {}) }) as DebtRecord;
           if (userEdit) {
             baseRecord.isUserEdited = true;
@@ -40184,9 +40414,6 @@ export default function App() {
             if (userEdit.type) baseRecord.type = userEdit.type;
           }
           if (baseRecord.type === "HUTANG") {
-            // Jika data belum pernah diedit user, data hutang & pembayaran awal mentok di 1 Juli 2026.
-            // Khusus Pak Dodo (HTG-003), pembayaran yang terekam tetap dipertahankan.
-            // Jika user sudah mengedit/menambahkan pembayaran di local atau db, pertahankan hasil editan user.
             if (!fromLocal?.payments && !fromDb?.payments && !userEdit?.payments) {
               if (rawCustomId === "HTG-003" || rawId === "HTG-003") {
                 // Pertahankan pembayaran yang terekam untuk Pak Dodo
@@ -40205,7 +40432,7 @@ export default function App() {
           deduped.push(baseRecord);
         });
 
-        // 2. Data tambahan hutang/piutang baru dari database DAN local cache
+        // 2. Data tambahan hutang/piutang baru dari Firestore + offline/pending local fallback only
         let allLocalDebts: DebtRecord[] = [];
         if (localPersistent && Array.isArray(localPersistent.debtRecords) && localPersistent.debtRecords.length > 0) {
           allLocalDebts = localPersistent.debtRecords;
@@ -40227,7 +40454,6 @@ export default function App() {
           if (k2) localDebtMapByKey.set(k2, ld);
         });
 
-        // 2. Data tambahan hutang/piutang baru dari database DAN local cache
         (data || []).forEach((item) => {
           if (!item) return;
           const cUpper = (item.contactName || "").trim().toUpperCase();
@@ -40237,11 +40463,7 @@ export default function App() {
           const fallbackKey = rawCustomId || rawId;
           if (!fallbackKey) return;
 
-          if (
-            (rawId && deletedOrigins.has(rawId.toLowerCase())) ||
-            (rawCustomId && deletedOrigins.has(rawCustomId.toLowerCase())) ||
-            (fallbackKey && deletedOrigins.has(fallbackKey.toLowerCase()))
-          ) {
+          if (isDeletedByCloudRegistry("debt", item)) {
             return;
           }
 
@@ -40255,8 +40477,18 @@ export default function App() {
             seenCustomIds.add(fallbackKey);
           }
 
-          const localMatch = localDebtMapByKey.get(rawCustomId) || localDebtMapByKey.get(rawId) || localDebtMapByKey.get(fallbackKey);
-          const userEdit = debtOverrides[rawCustomId] || debtOverrides[rawId] || debtOverrides[fallbackKey];
+          const pending = isPendingDebt(rawId, rawCustomId, fallbackKey);
+          const localMatchRaw = localDebtMapByKey.get(rawCustomId) || localDebtMapByKey.get(rawId) || localDebtMapByKey.get(fallbackKey);
+          const localMatch = (!isFromServer || pending) ? localMatchRaw : undefined;
+          const rawUserEdit = debtOverrides[rawCustomId] || debtOverrides[rawId] || debtOverrides[fallbackKey];
+          let userEdit = rawUserEdit;
+          if (isFromServer && !pending) {
+            userEdit = undefined;
+            if (rawUserEdit) {
+              if (rawId) removeDebtOverride(rawId);
+              if (rawCustomId) removeDebtOverride(rawCustomId);
+            }
+          }
           const mergedDebt: DebtRecord = {
             ...(localMatch || {}),
             ...item,
@@ -40280,7 +40512,12 @@ export default function App() {
           const fallbackKey = rawCustomId || rawId;
           if (!fallbackKey) return;
 
+          if (isFromServer && !isPendingDebt(rawId, rawCustomId, fallbackKey)) {
+            return;
+          }
+
           if (
+            isDeletedByCloudRegistry("debt", ld) ||
             (rawId && deletedOrigins.has(rawId.toLowerCase())) ||
             (rawCustomId && deletedOrigins.has(rawCustomId.toLowerCase())) ||
             (fallbackKey && deletedOrigins.has(fallbackKey.toLowerCase()))
@@ -40316,27 +40553,33 @@ export default function App() {
             const k2 = (item.id || "").trim().toUpperCase();
             if (k1) dedupedKeys.add(k1);
             if (k2) dedupedKeys.add(k2);
-            const ov = debtOverrides[k1] || debtOverrides[k2];
-            const p = prevMap.get(k1) || prevMap.get(k2);
-            if (ov || (p && (p as any).isUserEdited)) {
-              return {
-                ...item,
-                ...(p && (p as any).isUserEdited ? p : {}),
-                ...(ov || {}),
-                dueDate: ov?.dueDate || (p && (p as any).isUserEdited ? p.dueDate : undefined) || item.dueDate,
-                amount: ov?.amount !== undefined ? ov.amount : ((p && (p as any).isUserEdited && p.amount) ? p.amount : item.amount),
-                isUserEdited: true,
-              };
+            const pending = isPendingDebt(k1, k2);
+            if (!isFromServer || pending) {
+              const ov = debtOverrides[k1] || debtOverrides[k2];
+              const p = prevMap.get(k1) || prevMap.get(k2);
+              if (ov || (p && (p as any).isUserEdited)) {
+                return {
+                  ...item,
+                  ...(p && (p as any).isUserEdited ? p : {}),
+                  ...(ov || {}),
+                  dueDate: ov?.dueDate || (p && (p as any).isUserEdited ? p.dueDate : undefined) || item.dueDate,
+                  amount: ov?.amount !== undefined ? ov.amount : ((p && (p as any).isUserEdited && p.amount) ? p.amount : item.amount),
+                  isUserEdited: true,
+                };
+              }
             }
             return item;
           });
 
-          // PRESERVE records in prev that are newly created or manual entries
+          // PRESERVE records in prev ONLY when offline or actively pending local write
           (prev || []).forEach((p) => {
             const k1 = (p.customId || "").trim().toUpperCase();
             const k2 = (p.id || "").trim().toUpperCase();
+            if (isDeletedByCloudRegistry("debt", p)) return;
             if ((!k1 || !dedupedKeys.has(k1)) && (!k2 || !dedupedKeys.has(k2))) {
-              result.push(p);
+              if (!isFromServer || isPendingDebt(k1, k2)) {
+                result.push(p);
+              }
             }
           });
 
@@ -40546,6 +40789,7 @@ export default function App() {
     );
 
     return () => {
+      if (unsubscribeDeletedRegistry) unsubscribeDeletedRegistry();
       if (unsubscribeCloudMaster) unsubscribeCloudMaster();
       unsubscribeReports();
       unsubscribeDailyReports();
@@ -47374,6 +47618,13 @@ export default function App() {
                           for (const p of projects) {
                             await dbService.deleteDocument("projects", p.id);
                           }
+                          autoBackupService.purgeDeletedFromCaches("project", projects.map((p) => p.id));
+                          autoBackupService.syncMasterSnapshotOnly(
+                            financialRecords,
+                            debtRecords,
+                            [],
+                            "Hapus Semua Projek"
+                          );
                           setToastMessage("Semua projek telah dihapus");
                           setShowToast(true);
                         }
@@ -47695,17 +47946,21 @@ export default function App() {
                                     "projects",
                                     p.id,
                                   );
-                                  setProjects((prev) => prev.filter((pr) => pr.id !== p.id));
-                                  const curPersistent = autoBackupService.getPersistentData();
-                                  if (curPersistent && curPersistent.projects) {
-                                    const updatedProjList = curPersistent.projects.filter((pr: any) => pr.id !== p.id);
-                                    autoBackupService.saveInstantDataSnapshot(
-                                      financialRecords,
-                                      debtRecords,
-                                      updatedProjList,
-                                      `Hapus projek ${p.name}`
-                                    );
-                                  }
+                                  const nextProjList = projects.filter((pr) => pr.id !== p.id);
+                                  setProjects(nextProjList);
+                                  autoBackupService.purgeDeletedFromCaches("project", [p.id]);
+                                  autoBackupService.saveInstantDataSnapshot(
+                                    financialRecords,
+                                    debtRecords,
+                                    nextProjList,
+                                    `Hapus projek ${p.name}`
+                                  );
+                                  autoBackupService.syncMasterSnapshotOnly(
+                                    financialRecords,
+                                    debtRecords,
+                                    nextProjList,
+                                    `Hapus projek ${p.name}`
+                                  );
                                   setToastMessage(
                                     `Projek "${p.name}" telah dihapus`,
                                   );
