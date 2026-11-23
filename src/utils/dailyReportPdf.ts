@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
-import { DailyReport } from "../types";
+import { DailyReport, FieldReport } from "../types";
 import { extractCleanAddress } from "../lib/utils";
 
 export const formatIndonesianDateUpper = (ts: number | string | Date | undefined): string => {
@@ -484,4 +484,93 @@ export const generateBatchDailyReportsPDF = (
   }
 
   doc.save(filename);
+};
+
+export const generateGeneralReportPDF = (report: FieldReport) => {
+  const doc = new jsPDF("p", "mm", "a4");
+  const companyName =
+    localStorage.getItem("custom_pt_name") || "PT. GARDA INOVASI GLOBALTECH";
+  const contractorLogo =
+    localStorage.getItem("custom_contractor_logo") ||
+    localStorage.getItem("custom_logo_image") ||
+    localStorage.getItem("company_logo") ||
+    "";
+
+  if (contractorLogo) {
+    try {
+      const fmt =
+        contractorLogo.startsWith("data:image/jpeg") ||
+        contractorLogo.startsWith("data:image/jpg")
+          ? "JPEG"
+          : "PNG";
+      doc.addImage(contractorLogo, fmt, 15, 8, 22, 14);
+    } catch {
+      // ignore logo error
+    }
+  }
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(13);
+  doc.text("LAPORAN UMUM & KEBUTUHAN LAPANGAN", 105, 13, { align: "center" });
+  doc.setFontSize(9);
+  doc.text(companyName.toUpperCase(), 105, 19, { align: "center" });
+
+  doc.setDrawColor(203, 213, 225);
+  doc.line(15, 26, 195, 26);
+
+  const dateLabel = formatIndonesianDateUpper(report.createdAt || Date.now());
+  const costText =
+    report.estimatedCost && report.estimatedCost > 0
+      ? `Rp ${Number(report.estimatedCost).toLocaleString("id-ID")}`
+      : "-";
+
+  autoTable(doc, {
+    startY: 31,
+    theme: "grid",
+    styles: { fontSize: 9, cellPadding: 3 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: "bold" },
+    columnStyles: {
+      0: { cellWidth: 48, fontStyle: "bold", fillColor: [248, 250, 252] },
+      1: { cellWidth: 132 },
+    },
+    body: [
+      ["Perihal / Judul", report.title || "-"],
+      ["Kategori", report.category || (report.type === "EXPENSE" ? "Laporan Umum & Kebutuhan" : "Laporan Proyek")],
+      ["Lokasi / Proyek", extractCleanAddress(report.location) || report.location || "-"],
+      ["Pelapor", report.userName || "-"],
+      ["Tanggal / Waktu", `${dateLabel}${report.time ? ` (${report.time})` : ""}`],
+      ["Prioritas", report.priority || "Medium"],
+      ["Estimasi Biaya", costText],
+      ["Status", report.status || "PENDING"],
+      ["Uraian & Keterangan", report.description || "-"],
+    ],
+  });
+
+  let nextY = ((doc as any).lastAutoTable?.finalY || 120) + 10;
+
+  if (report.img && report.img.startsWith("data:image")) {
+    try {
+      if (nextY > 210) {
+        doc.addPage();
+        nextY = 18;
+      }
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.text("DOKUMENTASI FOTO LAPANGAN", 15, nextY);
+      const fmt =
+        report.img.startsWith("data:image/jpeg") ||
+        report.img.startsWith("data:image/jpg")
+          ? "JPEG"
+          : "PNG";
+      doc.addImage(report.img, fmt, 15, nextY + 4, 90, 62);
+    } catch {
+      // ignore embedded image error
+    }
+  }
+
+  const cleanTitle = (report.title || "LAPORAN UMUM")
+    .toUpperCase()
+    .replace(/[/\\?%*:|"<>]/g, " ")
+    .trim();
+  doc.save(`LAPORAN UMUM ${cleanTitle} ${dateLabel}.pdf`);
 };

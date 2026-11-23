@@ -1446,6 +1446,7 @@ export function AdminDailyReportsScreen({
         <EditDailyReportModal
           report={editingReport}
           projects={projects}
+          dailyReports={dailyReports}
           currentUser={currentUser}
           onClose={() => setEditingReport(null)}
           onSaved={(updated) => {

@@ -232,7 +232,18 @@ service cloud.firestore {
     match /dailyReports/{id} {
       allow list, get: if isSignedIn();
       allow create: if isSignedIn() && (incoming().get('submittedBy', '') == request.auth.uid || isAdmin());
-      allow update, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        (
+          existing().get('submittedBy', '') == request.auth.uid ||
+          existing().get('userId', '') == request.auth.uid ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+            existing().get('submittedBy', '') == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('username', ''))
+        ) &&
+        incoming().get('status', 'PENDING') == existing().get('status', 'PENDING') &&
+        incoming().get('submittedBy', '') == existing().get('submittedBy', '')
+      );
+      allow delete: if isAdmin();
     }
 
     match /catalog/{id} {

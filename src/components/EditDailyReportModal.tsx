@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
   X,
   Save,
@@ -22,10 +22,19 @@ import { DailyReport, Project } from "../types";
 import { dbService } from "../services/db";
 import { compressImage, extractCleanAddress } from "../lib/utils";
 import { generateDailyReportPDF } from "../utils/dailyReportPdf";
+import { HistoryAutocompleteInput } from "./HistoryAutocompleteInput";
+import {
+  buildCombinedFieldHistory,
+  saveDailyReportToHistory,
+  saveInputHistoryValue,
+  removeLocalInputHistoryValue,
+  ReportHistoryField,
+} from "../utils/inputHistory";
 
 interface EditDailyReportModalProps {
   report: DailyReport;
   projects: Project[];
+  dailyReports?: DailyReport[];
   currentUser: any;
   onClose: () => void;
   onSaved: (updatedReport: DailyReport) => void;
@@ -95,6 +104,7 @@ const toLocalTimeInput = (ts: number | string | undefined): string => {
 export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
   report,
   projects,
+  dailyReports = [],
   currentUser,
   onClose,
   onSaved,
@@ -104,6 +114,41 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
   const [reportTimeStr, setReportTimeStr] = useState<string>(() => toLocalTimeInput(baseTs));
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState("");
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const isAdminUser =
+    ["admin", "owner", "direktur"].includes(String(currentUser?.role || "").toLowerCase()) ||
+    Boolean(currentUser?.isAdmin);
+
+  const historyByField = useMemo(() => {
+    const fields: ReportHistoryField[] = [
+      "contractor",
+      "clientName",
+      "location",
+      "workType",
+      "staff_jabatan",
+      "tools",
+      "materials",
+      "activities",
+      "obstacles",
+      "nextPlan",
+      "notes",
+    ];
+    const map: Record<string, string[]> = {};
+    fields.forEach((f) => {
+      map[f] = buildCombinedFieldHistory(f, dailyReports, []);
+    });
+    return map;
+  }, [dailyReports, historyVersion]);
+
+  const handleSaveFieldHistory = (field: ReportHistoryField, val: string) => {
+    saveInputHistoryValue(field, val);
+    setHistoryVersion((v) => v + 1);
+  };
+
+  const handleRemoveFieldHistory = (field: ReportHistoryField, val: string) => {
+    removeLocalInputHistoryValue(field, val);
+    setHistoryVersion((v) => v + 1);
+  };
 
   const [draft, setDraft] = useState<{
     projectId: string;
@@ -204,8 +249,12 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
       photos: draft.photos,
       date: nextTimestamp,
       timestamp: nextTimestamp,
-      editedBy: currentUser?.uid || currentUser?.id || "admin",
-      editedByName: currentUser?.name || currentUser?.displayName || "Admin",
+      editedBy: currentUser?.uid || currentUser?.id || (isAdminUser ? "admin" : "karyawan"),
+      editedByName:
+        currentUser?.name ||
+        currentUser?.displayName ||
+        currentUser?.username ||
+        (isAdminUser ? "Admin" : "Karyawan"),
       editedAt: Date.now(),
     };
   };
@@ -225,15 +274,59 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
     setIsSaving(true);
     try {
       const updated = buildReportObject();
+
+      // Guard against Firestore 1MB document limit
+      let payloadBytes = new Blob([JSON.stringify(updated)]).size;
+      if (payloadBytes > 880_000) {
+        if (updated.contractorLogo) {
+          try {
+            updated.contractorLogo = await compressImage(updated.contractorLogo, 280, 280, 0.72);
+          } catch {}
+        }
+        if (updated.clientLogo) {
+          try {
+            updated.clientLogo = await compressImage(updated.clientLogo, 280, 280, 0.72);
+          } catch {}
+        }
+        if (Array.isArray(updated.photos) && updated.photos.length > 0) {
+          updated.photos = await Promise.all(
+            updated.photos.map(async (ph: string) => {
+              try {
+                return await compressImage(ph, 680, 680, 0.6);
+              } catch {
+                return ph;
+              }
+            }),
+          );
+        }
+        payloadBytes = new Blob([JSON.stringify(updated)]).size;
+        if (payloadBytes > 930_000 && Array.isArray(updated.photos) && updated.photos.length > 0) {
+          updated.photos = await Promise.all(
+            updated.photos.map(async (ph: string) => {
+              try {
+                return await compressImage(ph, 520, 520, 0.48);
+              } catch {
+                return ph;
+              }
+            }),
+          );
+        }
+      }
+
       await dbService.updateDocument("dailyReports", report.id, updated);
+      saveDailyReportToHistory(updated);
 
       try {
         await dbService.createDocument("auditLogs", {
-          userId: currentUser?.uid || currentUser?.id || "admin",
-          userName: currentUser?.name || currentUser?.displayName || "Admin",
+          userId: currentUser?.uid || currentUser?.id || (isAdminUser ? "admin" : "karyawan"),
+          userName:
+            currentUser?.name ||
+            currentUser?.displayName ||
+            currentUser?.username ||
+            (isAdminUser ? "Admin" : "Karyawan"),
           action: "UPDATE",
           module: "DAILY_REPORT",
-          details: `Admin mengedit laporan harian projek ${updated.projectName} (Pelapor: ${updated.submittedByName})`,
+          details: `${isAdminUser ? "Admin" : "Karyawan"} mengedit laporan harian projek ${updated.projectName} (Pelapor: ${updated.submittedByName})`,
           timestamp: Date.now(),
         });
       } catch {
@@ -272,8 +365,14 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
                 <h3 className="text-base sm:text-lg font-black text-slate-900 tracking-tight truncate">
                   Edit Laporan Harian Projek
                 </h3>
-                <span className="px-2 py-0.5 bg-indigo-100 text-indigo-700 text-[10px] font-black rounded-full uppercase">
-                  Mode Admin
+                <span
+                  className={`px-2 py-0.5 text-[10px] font-black rounded-full uppercase ${
+                    isAdminUser
+                      ? "bg-indigo-100 text-indigo-700"
+                      : "bg-emerald-100 text-emerald-700"
+                  }`}
+                >
+                  {isAdminUser ? "Mode Admin" : "Edit Karyawan"}
                 </span>
               </div>
               <p className="text-xs text-slate-500 font-medium truncate">
@@ -385,11 +484,13 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
                   Kategori Pekerjaan
                 </label>
-                <input
-                  type="text"
+                <HistoryAutocompleteInput
                   className="input-field text-xs font-bold w-full"
                   value={draft.workType}
-                  onChange={(e) => setDraft({ ...draft, workType: e.target.value })}
+                  onChange={(val) => setDraft({ ...draft, workType: val })}
+                  suggestions={historyByField.workType || []}
+                  onSaveHistory={(val) => handleSaveFieldHistory("workType", val)}
+                  onRemoveSuggestion={(val) => handleRemoveFieldHistory("workType", val)}
                   placeholder="Konstruksi & Sipil"
                 />
               </div>
@@ -400,11 +501,13 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
                   Perusahaan / Kontraktor
                 </label>
-                <input
-                  type="text"
+                <HistoryAutocompleteInput
                   className="input-field text-xs font-bold w-full"
                   value={draft.contractor}
-                  onChange={(e) => setDraft({ ...draft, contractor: e.target.value })}
+                  onChange={(val) => setDraft({ ...draft, contractor: val })}
+                  suggestions={historyByField.contractor || []}
+                  onSaveHistory={(val) => handleSaveFieldHistory("contractor", val)}
+                  onRemoveSuggestion={(val) => handleRemoveFieldHistory("contractor", val)}
                   placeholder="Nama Perusahaan / Kontraktor"
                 />
               </div>
@@ -412,11 +515,13 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
                   Klien / Pemilik Proyek
                 </label>
-                <input
-                  type="text"
+                <HistoryAutocompleteInput
                   className="input-field text-xs font-bold w-full"
                   value={draft.clientName}
-                  onChange={(e) => setDraft({ ...draft, clientName: e.target.value })}
+                  onChange={(val) => setDraft({ ...draft, clientName: val })}
+                  suggestions={historyByField.clientName || []}
+                  onSaveHistory={(val) => handleSaveFieldHistory("clientName", val)}
+                  onRemoveSuggestion={(val) => handleRemoveFieldHistory("clientName", val)}
                   placeholder="Nama Klien"
                 />
               </div>
@@ -424,11 +529,13 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
                   Lokasi Pekerjaan / Alamat <span className="text-rose-500">*</span>
                 </label>
-                <input
-                  type="text"
+                <HistoryAutocompleteInput
                   className="input-field text-xs font-bold w-full"
                   value={draft.location}
-                  onChange={(e) => setDraft({ ...draft, location: e.target.value })}
+                  onChange={(val) => setDraft({ ...draft, location: val })}
+                  suggestions={historyByField.location || []}
+                  onSaveHistory={(val) => handleSaveFieldHistory("location", val)}
+                  onRemoveSuggestion={(val) => handleRemoveFieldHistory("location", val)}
                   placeholder="Alamat / Lokasi Pengerjaan"
                   required
                 />
@@ -588,14 +695,16 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
             <div className="space-y-2">
               {draft.staff.map((s, idx) => (
                 <div key={idx} className="flex gap-2 items-center">
-                  <input
-                    type="text"
+                  <HistoryAutocompleteInput
                     placeholder="Jabatan / Keahlian"
                     className="input-field text-xs flex-1"
                     value={s.jabatan}
-                    onChange={(e) => {
+                    suggestions={historyByField.staff_jabatan || []}
+                    onSaveHistory={(val) => handleSaveFieldHistory("staff_jabatan", val)}
+                    onRemoveSuggestion={(val) => handleRemoveFieldHistory("staff_jabatan", val)}
+                    onChange={(val) => {
                       const next = [...draft.staff];
-                      next[idx] = { ...next[idx], jabatan: e.target.value };
+                      next[idx] = { ...next[idx], jabatan: val };
                       setDraft({ ...draft, staff: next });
                     }}
                   />
@@ -647,14 +756,16 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
               <div className="space-y-2">
                 {draft.tools.map((tool, idx) => (
                   <div key={idx} className="flex gap-2 items-center">
-                    <input
-                      type="text"
+                    <HistoryAutocompleteInput
                       placeholder="Nama Alat Kerja"
                       className="input-field text-xs flex-1"
                       value={tool}
-                      onChange={(e) => {
+                      suggestions={historyByField.tools || []}
+                      onSaveHistory={(val) => handleSaveFieldHistory("tools", val)}
+                      onRemoveSuggestion={(val) => handleRemoveFieldHistory("tools", val)}
+                      onChange={(val) => {
                         const next = [...draft.tools];
-                        next[idx] = e.target.value;
+                        next[idx] = val;
                         setDraft({ ...draft, tools: next });
                       }}
                     />
@@ -697,14 +808,16 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
               <div className="space-y-2">
                 {draft.materials.map((mat, idx) => (
                   <div key={idx} className="flex gap-2 items-center">
-                    <input
-                      type="text"
+                    <HistoryAutocompleteInput
                       placeholder="Nama / Jenis Bahan"
                       className="input-field text-xs flex-1"
                       value={mat.jenis}
-                      onChange={(e) => {
+                      suggestions={historyByField.materials || []}
+                      onSaveHistory={(val) => handleSaveFieldHistory("materials", val)}
+                      onRemoveSuggestion={(val) => handleRemoveFieldHistory("materials", val)}
+                      onChange={(val) => {
                         const next = [...draft.materials];
-                        next[idx] = { ...next[idx], jenis: e.target.value };
+                        next[idx] = { ...next[idx], jenis: val };
                         setDraft({ ...draft, materials: next });
                       }}
                     />
@@ -747,14 +860,16 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
               {draft.activities.map((act, idx) => (
                 <div key={idx} className="flex gap-2 items-center">
                   <span className="text-xs font-bold text-slate-400 w-5 text-center">{idx + 1}.</span>
-                  <input
-                    type="text"
+                  <HistoryAutocompleteInput
                     placeholder="Uraian kegiatan / progres"
                     className="input-field text-xs flex-1"
                     value={act}
-                    onChange={(e) => {
+                    suggestions={historyByField.activities || []}
+                    onSaveHistory={(val) => handleSaveFieldHistory("activities", val)}
+                    onRemoveSuggestion={(val) => handleRemoveFieldHistory("activities", val)}
+                    onChange={(val) => {
                       const next = [...draft.activities];
-                      next[idx] = e.target.value;
+                      next[idx] = val;
                       setDraft({ ...draft, activities: next });
                     }}
                   />
@@ -962,14 +1077,16 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
               {draft.obstacles.map((obs, idx) => (
                 <div key={idx} className="flex gap-2 items-center">
                   <span className="text-xs font-bold text-slate-400 w-5 text-center">{idx + 1}.</span>
-                  <input
-                    type="text"
+                  <HistoryAutocompleteInput
                     className="input-field text-xs flex-1"
                     placeholder="Kendala lapangan..."
                     value={obs}
-                    onChange={(e) => {
+                    suggestions={historyByField.obstacles || []}
+                    onSaveHistory={(val) => handleSaveFieldHistory("obstacles", val)}
+                    onRemoveSuggestion={(val) => handleRemoveFieldHistory("obstacles", val)}
+                    onChange={(val) => {
                       const next = [...draft.obstacles];
-                      next[idx] = e.target.value;
+                      next[idx] = val;
                       setDraft({ ...draft, obstacles: next });
                     }}
                   />
@@ -1009,14 +1126,16 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
               {draft.nextPlan.map((plan, idx) => (
                 <div key={idx} className="flex gap-2 items-center">
                   <span className="text-xs font-bold text-slate-400 w-5 text-center">{idx + 1}.</span>
-                  <input
-                    type="text"
+                  <HistoryAutocompleteInput
                     className="input-field text-xs flex-1"
                     placeholder="Rencana pekerjaan besok..."
                     value={plan}
-                    onChange={(e) => {
+                    suggestions={historyByField.nextPlan || []}
+                    onSaveHistory={(val) => handleSaveFieldHistory("nextPlan", val)}
+                    onRemoveSuggestion={(val) => handleRemoveFieldHistory("nextPlan", val)}
+                    onChange={(val) => {
                       const next = [...draft.nextPlan];
-                      next[idx] = e.target.value;
+                      next[idx] = val;
                       setDraft({ ...draft, nextPlan: next });
                     }}
                   />
@@ -1054,14 +1173,16 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
               {draft.notes.map((note, idx) => (
                 <div key={idx} className="flex gap-2 items-center">
                   <span className="text-xs font-bold text-slate-400 w-5 text-center">{idx + 1}.</span>
-                  <input
-                    type="text"
+                  <HistoryAutocompleteInput
                     className="input-field text-xs flex-1"
                     placeholder="Catatan khusus lapangan..."
                     value={note}
-                    onChange={(e) => {
+                    suggestions={historyByField.notes || []}
+                    onSaveHistory={(val) => handleSaveFieldHistory("notes", val)}
+                    onRemoveSuggestion={(val) => handleRemoveFieldHistory("notes", val)}
+                    onChange={(val) => {
                       const next = [...draft.notes];
-                      next[idx] = e.target.value;
+                      next[idx] = val;
                       setDraft({ ...draft, notes: next });
                     }}
                   />

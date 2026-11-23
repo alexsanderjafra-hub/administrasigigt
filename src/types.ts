@@ -28,6 +28,8 @@ export interface FieldReport {
   userId: string;
   userName: string;
   type: 'PROJECT' | 'EXPENSE';
+  category?: string;
+  estimatedCost?: number;
   title: string;
   location: string;
   status: 'APPROVED' | 'PENDING' | 'PROSES';
@@ -38,6 +40,8 @@ export interface FieldReport {
   syncStatus?: 'synced' | 'pending';
   lat?: number;
   lng?: number;
+  createdAt?: number;
+  updatedAt?: number;
 }
 
 export interface Employee {

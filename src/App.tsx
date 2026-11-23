@@ -151,6 +151,7 @@ import {
   Loader2,
   EyeOff,
   Copy,
+  FileDown,
 } from "lucide-react";
 import {
   BarChart,
@@ -219,7 +220,22 @@ import {
 import { GeotagCameraModal } from "./components/GeotagCameraModal";
 import { AdminDailyReportsScreen } from "./components/AdminDailyReportsScreen";
 import { EditDailyReportModal } from "./components/EditDailyReportModal";
-import { generateDailyReportPDF as generateDailyReportPDFUtil, generateBatchDailyReportsPDF, formatIndonesianDateUpper } from "./utils/dailyReportPdf";
+import { HistoryAutocompleteInput } from "./components/HistoryAutocompleteInput";
+import {
+  generateDailyReportPDF as generateDailyReportPDFUtil,
+  generateBatchDailyReportsPDF,
+  generateGeneralReportPDF as generateGeneralReportPDFUtil,
+  formatIndonesianDateUpper,
+  formatIndonesianDateShort,
+} from "./utils/dailyReportPdf";
+import {
+  buildCombinedFieldHistory,
+  saveDailyReportToHistory,
+  saveGeneralReportToHistory,
+  saveInputHistoryValue,
+  removeLocalInputHistoryValue,
+  ReportHistoryField,
+} from "./utils/inputHistory";
 import { EKatalog } from "./components/EKatalog";
 import { AdminPurchaseOrderScreen } from "./components/AdminPurchaseOrderScreen";
 import { AdminKwitansiScreen } from "./components/AdminKwitansiScreen";
@@ -31232,12 +31248,15 @@ const generateDailyReportPDF = (report: DailyReport) => {
 const DailyReportForm = ({
   currentUser,
   projects,
+  dailyReports = [],
   onBack,
   onSubmit,
 }: any) => {
   const [isGeotagCameraOpen, setIsGeotagCameraOpen] = useState(false);
   const [formError, setFormError] = useState<string>("");
+  const [copySuccessNotice, setCopySuccessNotice] = useState<string>("");
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
   const [draft, setDraft] = useState<any>({
     projectId: "",
     projectName: "",
@@ -31261,6 +31280,126 @@ const DailyReportForm = ({
     obstacles: [""],
     photos: [],
   });
+
+  const historyByField = useMemo(() => {
+    const fields: ReportHistoryField[] = [
+      "contractor",
+      "clientName",
+      "location",
+      "workType",
+      "staff_jabatan",
+      "tools",
+      "materials",
+      "activities",
+      "obstacles",
+      "nextPlan",
+      "notes",
+    ];
+    const map: Record<string, string[]> = {};
+    fields.forEach((f) => {
+      map[f] = buildCombinedFieldHistory(f, dailyReports, []);
+    });
+    return map;
+  }, [dailyReports, historyVersion]);
+
+  const handleSaveFieldHistory = (field: ReportHistoryField, val: string) => {
+    saveInputHistoryValue(field, val);
+    setHistoryVersion((v) => v + 1);
+  };
+
+  const handleRemoveFieldHistory = (field: ReportHistoryField, val: string) => {
+    removeLocalInputHistoryValue(field, val);
+    setHistoryVersion((v) => v + 1);
+  };
+
+  const latestReferenceReport = useMemo(() => {
+    if (!Array.isArray(dailyReports) || dailyReports.length === 0) return null;
+    const sorted = [...dailyReports].sort(
+      (a, b) =>
+        new Date(b.timestamp || b.date || 0).getTime() -
+        new Date(a.timestamp || a.date || 0).getTime(),
+    );
+    if (draft.projectId) {
+      const matched = sorted.find((r) => r.projectId === draft.projectId);
+      if (matched) return matched;
+    }
+    return sorted[0] || null;
+  }, [dailyReports, draft.projectId]);
+
+  const handleCopyFromPrevious = (mode: "header" | "all") => {
+    if (!latestReferenceReport) return;
+    const ref = latestReferenceReport;
+    setFormError("");
+    setDraft((prev: any) => {
+      const next: any = {
+        ...prev,
+        projectId: prev.projectId || ref.projectId || "",
+        projectName: prev.projectName || ref.projectName || "",
+        contractor: ref.contractor || prev.contractor || "",
+        clientName: ref.clientName || prev.clientName || "",
+        location: ref.location || prev.location || "",
+        workType: ref.workType || prev.workType || "",
+        contractorLogo: ref.contractorLogo || prev.contractorLogo || "",
+        clientLogo: ref.clientLogo || prev.clientLogo || "",
+      };
+      if (mode === "all") {
+        next.staff =
+          Array.isArray(ref.staff) && ref.staff.length > 0
+            ? ref.staff.map((s: any) => ({
+                jabatan: s?.jabatan || "",
+                jumlah: Number(s?.jumlah) || 1,
+              }))
+            : [{ jabatan: "", jumlah: 0 }];
+        next.tools =
+          Array.isArray(ref.tools) && ref.tools.length > 0
+            ? ref.tools.map((t: any) => (typeof t === "string" ? t : t?.name || ""))
+            : [""];
+        next.materials =
+          Array.isArray(ref.materials) && ref.materials.length > 0
+            ? ref.materials.map((m: any) =>
+                typeof m === "string"
+                  ? { jenis: m }
+                  : { jenis: m?.jenis || m?.name || "" },
+              )
+            : [{ jenis: "" }];
+        next.activities =
+          Array.isArray(ref.activities) && ref.activities.length > 0
+            ? [...ref.activities]
+            : [""];
+        next.obstacles = Array.isArray(ref.obstacles)
+          ? ref.obstacles.length > 0
+            ? [...ref.obstacles]
+            : [""]
+          : ref.obstacles
+            ? [String(ref.obstacles)]
+            : [""];
+        next.nextPlan = Array.isArray(ref.nextPlan)
+          ? ref.nextPlan.length > 0
+            ? [...ref.nextPlan]
+            : [""]
+          : ref.nextPlan
+            ? [String(ref.nextPlan)]
+            : [""];
+        next.notes = Array.isArray(ref.notes)
+          ? ref.notes.length > 0
+            ? [...ref.notes]
+            : [""]
+          : ref.notes
+            ? [String(ref.notes)]
+            : [""];
+        if (Array.isArray(ref.workHours) && ref.workHours.length >= 2) {
+          next.workHours = [ref.workHours[0], ref.workHours[1]];
+        }
+      }
+      return next;
+    });
+    setCopySuccessNotice(
+      mode === "header"
+        ? "Kop, info proyek & 2 logo berhasil disalin dari laporan sebelumnya."
+        : "Seluruh isian laporan sebelumnya berhasil disalin (tinggal sesuaikan progres & tambah foto hari ini).",
+    );
+    setTimeout(() => setCopySuccessNotice(""), 3500);
+  };
 
   const handleAddField = (field: string) => {
     setDraft((prev: any) => {
@@ -31465,19 +31604,61 @@ const DailyReportForm = ({
               <label className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest pl-1">
                 Perusahaan / Kontraktor <span className="text-rose-500">*</span>
               </label>
-              <input
-                type="text"
+              <HistoryAutocompleteInput
                 className="input-field text-xs font-bold"
                 placeholder="Ketik Nama Perusahaan / Kontraktor"
                 value={draft.contractor}
-                onChange={(e) => {
+                suggestions={historyByField.contractor || []}
+                onSaveHistory={(val) => handleSaveFieldHistory("contractor", val)}
+                onRemoveSuggestion={(val) => handleRemoveFieldHistory("contractor", val)}
+                onChange={(val) => {
                   setFormError("");
-                  setDraft({ ...draft, contractor: e.target.value });
+                  setDraft({ ...draft, contractor: val });
                 }}
                 required
               />
             </div>
           </div>
+
+          {latestReferenceReport && (
+            <div className="p-3.5 rounded-2xl bg-indigo-50/70 border border-indigo-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[11px] font-black text-indigo-900 flex items-center gap-1.5">
+                  <History size={14} className="text-indigo-600 shrink-0" />
+                  <span>Isi Cepat dari Laporan Sebelumnya</span>
+                </p>
+                <p className="text-[10px] text-indigo-700/80 font-semibold truncate mt-0.5">
+                  Referensi: {latestReferenceReport.projectName || "Proyek"} •{" "}
+                  {formatIndonesianDateShort(
+                    latestReferenceReport.timestamp || latestReferenceReport.date,
+                  )}
+                </p>
+                {copySuccessNotice && (
+                  <p className="text-[10px] text-emerald-700 font-bold mt-1">
+                    {copySuccessNotice}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => handleCopyFromPrevious("header")}
+                  className="px-3 py-1.5 bg-white hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-[10px] font-black flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                >
+                  <Copy size={12} />
+                  <span>Salin Kop & 2 Logo</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleCopyFromPrevious("all")}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-[10px] font-black flex items-center gap-1.5 transition-all cursor-pointer active:scale-95 shadow-xs"
+                >
+                  <Copy size={12} />
+                  <span>Salin Semua Data</span>
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Editable Klien, Lokasi, Kategori Pekerjaan */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-slate-100">
@@ -31485,28 +31666,30 @@ const DailyReportForm = ({
               <label className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest pl-1">
                 Klien / Pemilik Proyek
               </label>
-              <input
-                type="text"
+              <HistoryAutocompleteInput
                 className="input-field text-xs font-bold"
                 placeholder="Ketik Nama Klien / Owner Proyek"
                 value={draft.clientName || ""}
-                onChange={(e) =>
-                  setDraft({ ...draft, clientName: e.target.value })
-                }
+                suggestions={historyByField.clientName || []}
+                onSaveHistory={(val) => handleSaveFieldHistory("clientName", val)}
+                onRemoveSuggestion={(val) => handleRemoveFieldHistory("clientName", val)}
+                onChange={(val) => setDraft({ ...draft, clientName: val })}
               />
             </div>
             <div className="flex flex-col">
               <label className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest pl-1">
                 Lokasi Pekerjaan / Alamat <span className="text-rose-500">*</span>
               </label>
-              <input
-                type="text"
+              <HistoryAutocompleteInput
                 className="input-field text-xs font-bold"
                 placeholder="Ketik Alamat / Lokasi Pengerjaan"
                 value={draft.location || ""}
-                onChange={(e) => {
+                suggestions={historyByField.location || []}
+                onSaveHistory={(val) => handleSaveFieldHistory("location", val)}
+                onRemoveSuggestion={(val) => handleRemoveFieldHistory("location", val)}
+                onChange={(val) => {
                   setFormError("");
-                  setDraft({ ...draft, location: e.target.value });
+                  setDraft({ ...draft, location: val });
                 }}
                 onBlur={(e) => {
                   const val = e.target.value;
@@ -31530,14 +31713,14 @@ const DailyReportForm = ({
               <label className="text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest pl-1">
                 Kategori Pekerjaan
               </label>
-              <input
-                type="text"
+              <HistoryAutocompleteInput
                 className="input-field text-xs font-bold"
                 placeholder="Contoh: Konstruksi & Sipil"
                 value={draft.workType || ""}
-                onChange={(e) =>
-                  setDraft({ ...draft, workType: e.target.value })
-                }
+                suggestions={historyByField.workType || []}
+                onSaveHistory={(val) => handleSaveFieldHistory("workType", val)}
+                onRemoveSuggestion={(val) => handleRemoveFieldHistory("workType", val)}
+                onChange={(val) => setDraft({ ...draft, workType: val })}
               />
             </div>
           </div>
@@ -31718,13 +31901,15 @@ const DailyReportForm = ({
           <div className="space-y-3">
             {draft.staff.map((s: any, idx: number) => (
               <div key={idx} className="flex gap-2 items-center w-full min-w-0">
-                <input
-                  type="text"
+                <HistoryAutocompleteInput
                   placeholder="Jabatan / Keahlian (Contoh: Mandor, Tukang Las)"
                   className="input-field text-xs flex-1 min-w-0"
                   value={s.jabatan}
-                  onChange={(e) =>
-                    handleFieldChange("staff", idx, "jabatan", e.target.value)
+                  suggestions={historyByField.staff_jabatan || []}
+                  onSaveHistory={(val) => handleSaveFieldHistory("staff_jabatan", val)}
+                  onRemoveSuggestion={(val) => handleRemoveFieldHistory("staff_jabatan", val)}
+                  onChange={(val) =>
+                    handleFieldChange("staff", idx, "jabatan", val)
                   }
                   required
                 />
@@ -31777,13 +31962,15 @@ const DailyReportForm = ({
           <div className="space-y-3">
             {draft.tools.map((t: string, idx: number) => (
               <div key={idx} className="flex gap-3 items-center">
-                <input
-                  type="text"
+                <HistoryAutocompleteInput
                   placeholder="Nama Alat Kerja (Contoh: Genset 5kVA, Excavator, Mesin Bor)"
                   className="input-field text-xs flex-1"
                   value={t}
-                  onChange={(e) =>
-                    handleFieldChange("tools", idx, null, e.target.value)
+                  suggestions={historyByField.tools || []}
+                  onSaveHistory={(val) => handleSaveFieldHistory("tools", val)}
+                  onRemoveSuggestion={(val) => handleRemoveFieldHistory("tools", val)}
+                  onChange={(val) =>
+                    handleFieldChange("tools", idx, null, val)
                   }
                   required
                 />
@@ -31818,13 +32005,15 @@ const DailyReportForm = ({
           <div className="space-y-3">
             {draft.materials.map((m: any, idx: number) => (
               <div key={idx} className="flex gap-3 items-center">
-                <input
-                  type="text"
+                <HistoryAutocompleteInput
                   placeholder="Nama / Jenis Bahan yang Digunakan (Contoh: Semen Gresik, Pipa PVC 2 Inch, Besi 10mm)"
                   className="input-field text-xs flex-1"
                   value={m.jenis}
-                  onChange={(e) =>
-                    handleFieldChange("materials", idx, "jenis", e.target.value)
+                  suggestions={historyByField.materials || []}
+                  onSaveHistory={(val) => handleSaveFieldHistory("materials", val)}
+                  onRemoveSuggestion={(val) => handleRemoveFieldHistory("materials", val)}
+                  onChange={(val) =>
+                    handleFieldChange("materials", idx, "jenis", val)
                   }
                   required
                 />
@@ -31862,13 +32051,15 @@ const DailyReportForm = ({
                 <span className="text-xs font-bold text-slate-400 w-6 text-center">
                   {idx + 1}.
                 </span>
-                <input
-                  type="text"
+                <HistoryAutocompleteInput
                   placeholder="Uraian kegiatan / progres hari ini"
                   className="input-field text-xs flex-1"
                   value={act}
-                  onChange={(e) =>
-                    handleFieldChange("activities", idx, null, e.target.value)
+                  suggestions={historyByField.activities || []}
+                  onSaveHistory={(val) => handleSaveFieldHistory("activities", val)}
+                  onRemoveSuggestion={(val) => handleRemoveFieldHistory("activities", val)}
+                  onChange={(val) =>
+                    handleFieldChange("activities", idx, null, val)
                   }
                   required
                 />
@@ -32158,16 +32349,18 @@ const DailyReportForm = ({
                   <span className="text-xs font-bold text-slate-400 w-6 text-center">
                     {idx + 1}.
                   </span>
-                  <input
-                    type="text"
+                  <HistoryAutocompleteInput
                     className="input-field text-xs flex-1"
                     placeholder={`Kendala / Masalah Lapangan #${idx + 1}...`}
                     value={obs}
-                    onChange={(e) => {
+                    suggestions={historyByField.obstacles || []}
+                    onSaveHistory={(val) => handleSaveFieldHistory("obstacles", val)}
+                    onRemoveSuggestion={(val) => handleRemoveFieldHistory("obstacles", val)}
+                    onChange={(val) => {
                       const currentList = Array.isArray(draft.obstacles)
                         ? [...draft.obstacles]
                         : [draft.obstacles || ""];
-                      currentList[idx] = e.target.value;
+                      currentList[idx] = val;
                       setDraft({ ...draft, obstacles: currentList });
                     }}
                   />
@@ -32206,16 +32399,18 @@ const DailyReportForm = ({
                   <span className="text-xs font-bold text-slate-400 w-6 text-center">
                     {idx + 1}.
                   </span>
-                  <input
-                    type="text"
+                  <HistoryAutocompleteInput
                     className="input-field text-xs flex-1"
                     placeholder={`Target / Rencana Pekerjaan Besok #${idx + 1}...`}
                     value={plan}
-                    onChange={(e) => {
+                    suggestions={historyByField.nextPlan || []}
+                    onSaveHistory={(val) => handleSaveFieldHistory("nextPlan", val)}
+                    onRemoveSuggestion={(val) => handleRemoveFieldHistory("nextPlan", val)}
+                    onChange={(val) => {
                       const currentList = Array.isArray(draft.nextPlan)
                         ? [...draft.nextPlan]
                         : [draft.nextPlan || ""];
-                      currentList[idx] = e.target.value;
+                      currentList[idx] = val;
                       setDraft({ ...draft, nextPlan: currentList });
                     }}
                   />
@@ -32277,16 +32472,18 @@ const DailyReportForm = ({
                   <span className="text-xs font-bold text-slate-400 w-6 text-center">
                     {idx + 1}.
                   </span>
-                  <input
-                    type="text"
+                  <HistoryAutocompleteInput
                     className="input-field text-xs flex-1"
                     placeholder={`Isi catatan khusus lapangan #${idx + 1}...`}
                     value={note}
-                    onChange={(e) => {
+                    suggestions={historyByField.notes || []}
+                    onSaveHistory={(val) => handleSaveFieldHistory("notes", val)}
+                    onRemoveSuggestion={(val) => handleRemoveFieldHistory("notes", val)}
+                    onChange={(val) => {
                       const currentList = Array.isArray(draft.notes)
                         ? [...draft.notes]
                         : [draft.notes || ""];
-                      currentList[idx] = e.target.value;
+                      currentList[idx] = val;
                       setDraft({ ...draft, notes: currentList });
                     }}
                   />
@@ -33811,6 +34008,15 @@ export default function App() {
   const [generalReportCategory, setGeneralReportCategory] = useState("Kebutuhan Material & Logistik");
   const [generalReportEstCost, setGeneralReportEstCost] = useState("");
   const [generalReportTitle, setGeneralReportTitle] = useState("");
+  const [generalReportDesc, setGeneralReportDesc] = useState("");
+  const [editingGeneralReport, setEditingGeneralReport] = useState<FieldReport | null>(null);
+  const [isSavingGeneralEdit, setIsSavingGeneralEdit] = useState(false);
+  const [previewEmployeeDailyReport, setPreviewEmployeeDailyReport] = useState<DailyReport | null>(null);
+  const [employeeReportTab, setEmployeeReportTab] = useState<"DAILY" | "GENERAL">("DAILY");
+  const [employeeReportSearch, setEmployeeReportSearch] = useState("");
+  const [employeeReportScope, setEmployeeReportScope] = useState<"ALL" | "MINE">("ALL");
+  const [employeeReportProjectFilter, setEmployeeReportProjectFilter] = useState<string>("ALL");
+  const [generalHistoryVersion, setGeneralHistoryVersion] = useState(0);
   const [dailyReportDraft, setDailyReportDraft] = useState<any>({
     staff: [{ jabatan: "", jumlah: 0 }],
     tools: [""],
@@ -39797,6 +40003,9 @@ export default function App() {
       "dailyReports",
       (data) => {
         setDailyReports(data);
+        setPreviewEmployeeDailyReport((prev) =>
+          prev ? data.find((d) => d.id === prev.id) || prev : null,
+        );
 
         // Recover any previously stranded local daily reports whose Firestore write failed earlier
         if (!hasSyncedLocalDailyReports && auth.currentUser?.uid) {
@@ -41720,6 +41929,7 @@ export default function App() {
       }
 
       await dbService.createDocumentStrict("dailyReports", newReport);
+      saveDailyReportToHistory(newReport);
 
       await logActivity(
         "REPORT",
@@ -41753,9 +41963,19 @@ export default function App() {
   const handleReportSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const formData = new FormData(e.target as HTMLFormElement);
+    const submitterUid =
+      auth.currentUser?.uid || currentUser?.uid || currentUser?.id || currentUser?.username || "unknown";
+    let finalPhoto = currentReportPhoto || "";
+    if (finalPhoto && finalPhoto.startsWith("data:image") && finalPhoto.length > 650_000) {
+      try {
+        finalPhoto = await compressImage(finalPhoto, 800, 800, 0.72);
+      } catch {}
+    }
+    const descText =
+      generalReportDesc || (formData.get("description") as string) || "";
     const newReport: any = {
-      userId: currentUser?.id || currentUser?.username || "unknown",
-      userName: currentUser?.name || "User",
+      userId: submitterUid,
+      userName: currentUser?.name || currentUser?.displayName || currentUser?.username || "User",
       type: reportFormType || "PROJECT",
       category: generalReportCategory,
       estimatedCost: generalReportEstCost ? Number(generalReportEstCost.replace(/\D/g, "")) : 0,
@@ -41763,7 +41983,7 @@ export default function App() {
         generalReportTitle ||
         (formData.get("workType") as string) ||
         (reportFormType === "EXPENSE" ? "Laporan Umum & Kebutuhan" : "Laporan Proyek"),
-      location: formData.get("site") as string,
+      location: manualProjectLocation || (formData.get("site") as string) || "",
       status: "PENDING",
       priority: (formData.get("priority") as any) || "Medium",
       time: new Date().toLocaleTimeString([], {
@@ -41771,17 +41991,19 @@ export default function App() {
         minute: "2-digit",
       }),
       img:
-        currentReportPhoto ||
+        finalPhoto ||
         (reportFormType === "EXPENSE"
           ? "https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=600"
           : "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=600"),
-      description: (formData.get("description") as string) || "",
+      description: descText,
       ...(locationTag?.lat !== undefined ? { lat: locationTag.lat } : {}),
       ...(locationTag?.lng !== undefined ? { lng: locationTag.lng } : {}),
       ...(locationTag?.accuracy !== undefined ? { accuracy: locationTag.accuracy } : {}),
       createdAt: Date.now(),
     };
     await dbService.createDocument("reports", newReport);
+    saveGeneralReportToHistory(newReport);
+    setGeneralHistoryVersion((v) => v + 1);
     await dbService.createDocument("notifications", {
       title: `Laporan Lapangan Baru: ${newReport.title}`,
       message: `${newReport.userName} mengirim laporan ${newReport.type === "EXPENSE" ? "umum / kebutuhan proyek" : "proyek"} di lokasi: ${newReport.location || "Umum"}.`,
@@ -41800,10 +42022,54 @@ export default function App() {
     setGeneralReportCategory("Kebutuhan Material & Logistik");
     setGeneralReportEstCost("");
     setGeneralReportTitle("");
+    setGeneralReportDesc("");
+    setEmployeeReportTab("GENERAL");
     setTimeout(() => {
       setShowToast(false);
-      navigate("home");
-    }, 2000);
+    }, 2500);
+  };
+
+  const handleSaveGeneralReportEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingGeneralReport || !editingGeneralReport.id || isSavingGeneralEdit) return;
+    setIsSavingGeneralEdit(true);
+    try {
+      let nextImg = editingGeneralReport.img || "";
+      if (nextImg && nextImg.startsWith("data:image") && nextImg.length > 650_000) {
+        try {
+          nextImg = await compressImage(nextImg, 800, 800, 0.72);
+        } catch {}
+      }
+      const updatedFields: Partial<FieldReport> = {
+        title: (editingGeneralReport.title || "").trim() || "Laporan Umum & Kebutuhan",
+        category: editingGeneralReport.category || "Kebutuhan Material & Logistik",
+        location: (editingGeneralReport.location || "").trim(),
+        priority: editingGeneralReport.priority || "Medium",
+        estimatedCost: Number(editingGeneralReport.estimatedCost) || 0,
+        description: (editingGeneralReport.description || "").trim(),
+        img: nextImg,
+        updatedAt: Date.now(),
+      };
+      await dbService.updateDocument("reports", editingGeneralReport.id, updatedFields);
+      saveGeneralReportToHistory(updatedFields);
+      setGeneralHistoryVersion((v) => v + 1);
+      setReports((prev) =>
+        prev.map((r) => (r.id === editingGeneralReport.id ? { ...r, ...updatedFields } : r)),
+      );
+      if (selectedReport?.id === editingGeneralReport.id) {
+        setSelectedReport({ ...selectedReport, ...updatedFields });
+      }
+      setEditingGeneralReport(null);
+      setToastMessage("Laporan umum berhasil diperbarui!");
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 3000);
+    } catch (err: any) {
+      setToastMessage("Gagal memperbarui laporan: " + (err?.message || "Kesalahan database"));
+      setShowToast(true);
+      setTimeout(() => setShowToast(false), 4000);
+    } finally {
+      setIsSavingGeneralEdit(false);
+    }
   };
   const handleAddReminder = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -54307,8 +54573,8 @@ export default function App() {
               />
               <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-10 safe-top">
                 <button
-                  onClick={() => navigate("home")}
-                  className="w-10 h-10 bg-white/90 backdrop-blur-md text-slate-800 rounded-xl flex items-center justify-center shadow-lg active:scale-90 transition-all"
+                  onClick={() => navigate("laporan-lapangan")}
+                  className="w-10 h-10 bg-white/90 backdrop-blur-md text-slate-800 rounded-xl flex items-center justify-center shadow-lg active:scale-90 transition-all cursor-pointer"
                 >
                   <ChevronLeft size={24} />
                 </button>
@@ -54418,14 +54684,33 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="flex gap-4 pt-2">
-                  <button className="flex-1 btn-primary py-5 text-sm flex items-center justify-center gap-2">
-                    <MessageSquare size={18} />
-                    Tambah Komentar
-                  </button>
-                  <button className="w-14 h-14 border border-slate-200 rounded-2xl flex items-center justify-center text-slate-400 hover:text-primary transition-all">
-                    <Layers size={20} />
-                  </button>
+                <div className="flex flex-wrap gap-3 pt-2">
+                  {selectedReport &&
+                    (["admin", "owner", "direktur"].includes(String(currentUser?.role || "").toLowerCase()) ||
+                      Boolean(currentUser?.isAdmin) ||
+                      selectedReport.userId === auth.currentUser?.uid ||
+                      selectedReport.userId === currentUser?.uid ||
+                      selectedReport.userId === currentUser?.id ||
+                      selectedReport.userId === currentUser?.username) && (
+                      <button
+                        type="button"
+                        onClick={() => setEditingGeneralReport(selectedReport)}
+                        className="flex-1 py-4 px-4 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-2xl text-xs font-black flex items-center justify-center gap-2 transition-all cursor-pointer"
+                      >
+                        <Pencil size={16} />
+                        <span>Edit Laporan</span>
+                      </button>
+                    )}
+                  {selectedReport && (
+                    <button
+                      type="button"
+                      onClick={() => generateGeneralReportPDFUtil(selectedReport)}
+                      className="flex-1 btn-primary py-4 px-4 text-xs font-black flex items-center justify-center gap-2 cursor-pointer"
+                    >
+                      <Download size={16} />
+                      <span>Download PDF</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -54439,12 +54724,49 @@ export default function App() {
           </motion.div>
         );
 
-      case "laporan-lapangan":
+      case "laporan-lapangan": {
+        const myAuthUid = auth.currentUser?.uid || currentUser?.uid || "";
+        const myUserId = currentUser?.id || "";
+        const myUsername = (currentUser?.username || "").trim().toLowerCase();
+        const myName = (currentUser?.name || currentUser?.displayName || "").trim().toLowerCase();
+        const isAdminRole =
+          ["admin", "owner", "direktur"].includes(String(currentUser?.role || "").toLowerCase()) ||
+          Boolean(currentUser?.isAdmin);
+
+        const isMyDailyReport = (dr: DailyReport) => {
+          const sb = String(dr.submittedBy || "").trim();
+          const sbLower = sb.toLowerCase();
+          const sbNameLower = String(dr.submittedByName || "").trim().toLowerCase();
+          return Boolean(
+            (myAuthUid && sb === myAuthUid) ||
+              (myUserId && sb === myUserId) ||
+              (myUsername && sbLower === myUsername) ||
+              (myName && sbNameLower === myName),
+          );
+        };
+
+        const isMyGeneralReport = (gr: FieldReport) => {
+          const uid = String(gr.userId || "").trim();
+          const uidLower = uid.toLowerCase();
+          const uNameLower = String(gr.userName || "").trim().toLowerCase();
+          return Boolean(
+            (myAuthUid && uid === myAuthUid) ||
+              (myUserId && uid === myUserId) ||
+              (myUsername && uidLower === myUsername) ||
+              (myName && uNameLower === myName),
+          );
+        };
+
+        const generalSiteSuggestions = buildCombinedFieldHistory("general_site", dailyReports, reports);
+        const generalTitleSuggestions = buildCombinedFieldHistory("general_title", dailyReports, reports);
+        const generalDescSuggestions = buildCombinedFieldHistory("general_description", dailyReports, reports);
+
         if (reportFormType === "DAILY" || reportFormType === "PROJECT") {
           return (
             <DailyReportForm
               currentUser={currentUser}
               projects={projects}
+              dailyReports={dailyReports}
               onBack={() => setReportFormType(null)}
               onSubmit={handleDailyReportSubmit}
               companyProfile={companyProfile}
@@ -54468,6 +54790,7 @@ export default function App() {
                     setGeneralReportCategory("Kebutuhan Material & Logistik");
                     setGeneralReportEstCost("");
                     setGeneralReportTitle("");
+                    setGeneralReportDesc("");
                   }}
                   className="p-2 hover:bg-slate-50 rounded-xl transition-all active:scale-90"
                 >
@@ -54535,11 +54858,19 @@ export default function App() {
                       </p>
                     </div>
                   )}
-                  <input
+                  <HistoryAutocompleteInput
                     name="site"
-                    type="text"
                     value={manualProjectLocation}
-                    onChange={(e) => setManualProjectLocation(e.target.value)}
+                    onChange={(val) => setManualProjectLocation(val)}
+                    suggestions={generalSiteSuggestions}
+                    onSaveHistory={(val) => {
+                      saveInputHistoryValue("general_site", val);
+                      setGeneralHistoryVersion((v) => v + 1);
+                    }}
+                    onRemoveSuggestion={(val) => {
+                      removeLocalInputHistoryValue("general_site", val);
+                      setGeneralHistoryVersion((v) => v + 1);
+                    }}
                     placeholder="Ketik lokasi atau nama proyek secara manual..."
                     className="input-field w-full"
                     required
@@ -54552,11 +54883,19 @@ export default function App() {
                     <label className="text-xs font-bold text-slate-500 uppercase mb-2 tracking-widest pl-1">
                       Perihal / Item Kebutuhan
                     </label>
-                    <input
+                    <HistoryAutocompleteInput
                       name="workType"
-                      type="text"
                       value={generalReportTitle}
-                      onChange={(e) => setGeneralReportTitle(e.target.value)}
+                      onChange={(val) => setGeneralReportTitle(val)}
+                      suggestions={generalTitleSuggestions}
+                      onSaveHistory={(val) => {
+                        saveInputHistoryValue("general_title", val);
+                        setGeneralHistoryVersion((v) => v + 1);
+                      }}
+                      onRemoveSuggestion={(val) => {
+                        removeLocalInputHistoryValue("general_title", val);
+                        setGeneralHistoryVersion((v) => v + 1);
+                      }}
                       placeholder="misal: Kekurangan Semen 15 Sak, Pipa Conduit 2 Inch, Genset Overheat..."
                       className="input-field"
                       required
@@ -54604,9 +54943,22 @@ export default function App() {
                   <label className="text-xs font-bold text-slate-500 uppercase mb-2 tracking-widest pl-1">
                     Detail Uraian & Keterangan
                   </label>
-                  <textarea
+                  <HistoryAutocompleteInput
                     name="description"
-                    className="input-field min-h-[120px] py-4 resize-none leading-relaxed"
+                    multiline
+                    rows={4}
+                    value={generalReportDesc}
+                    onChange={(val) => setGeneralReportDesc(val)}
+                    suggestions={generalDescSuggestions}
+                    onSaveHistory={(val) => {
+                      saveInputHistoryValue("general_description", val);
+                      setGeneralHistoryVersion((v) => v + 1);
+                    }}
+                    onRemoveSuggestion={(val) => {
+                      removeLocalInputHistoryValue("general_description", val);
+                      setGeneralHistoryVersion((v) => v + 1);
+                    }}
+                    className="input-field min-h-[120px] py-4 resize-none leading-relaxed w-full"
                     placeholder="Berikan rincian kebutuhan, penyebab kekurangan/kendala lapangan, atau spesifikasi item yang dibutuhkan secara mendalam..."
                     required
                   />
@@ -54816,85 +55168,434 @@ export default function App() {
                 </button>
               </div>
 
-              {/* Report Monitoring List */}
-              <div className="space-y-4 pt-2">
-                <div className="flex justify-between items-center px-1">
-                  <h3 className="font-extrabold text-slate-800 text-sm uppercase tracking-widest">
-                    Daftar Pemantauan
-                  </h3>
-                  <span className="text-[10px] font-black text-slate-300 uppercase tracking-widest">
-                    {reports.length} Entri
-                  </span>
-                </div>
+              {/* Report Monitoring List - Daily & General Reports with Download & Edit */}
+              {(() => {
+                const searchLower = employeeReportSearch.trim().toLowerCase();
 
-                <div className="space-y-3">
-                  {reports.length === 0 ? (
-                    <div className="py-20 text-center card bg-slate-50 border-dashed">
-                      <p className="text-xs text-slate-400 font-medium italic">
-                        Belum ada aktivitas laporan hari ini.
-                      </p>
+                const sortedDaily = [...dailyReports]
+                  .sort(
+                    (a, b) =>
+                      new Date(b.timestamp || b.date || 0).getTime() -
+                      new Date(a.timestamp || a.date || 0).getTime(),
+                  )
+                  .filter((dr) => {
+                    if (employeeReportScope === "MINE" && !isMyDailyReport(dr)) return false;
+                    if (
+                      employeeReportProjectFilter !== "ALL" &&
+                      dr.projectId !== employeeReportProjectFilter &&
+                      (dr.projectName || "").trim().toLowerCase() !==
+                        employeeReportProjectFilter.toLowerCase()
+                    ) {
+                      return false;
+                    }
+                    if (!searchLower) return true;
+                    return (
+                      (dr.projectName || "").toLowerCase().includes(searchLower) ||
+                      (dr.location || "").toLowerCase().includes(searchLower) ||
+                      (dr.clientName || "").toLowerCase().includes(searchLower) ||
+                      (dr.submittedByName || "").toLowerCase().includes(searchLower) ||
+                      (dr.contractor || "").toLowerCase().includes(searchLower) ||
+                      (Array.isArray(dr.activities) &&
+                        dr.activities.some((a) => String(a).toLowerCase().includes(searchLower)))
+                    );
+                  });
+
+                const sortedGeneral = [...reports]
+                  .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0))
+                  .filter((gr) => {
+                    if (employeeReportScope === "MINE" && !isMyGeneralReport(gr)) return false;
+                    if (!searchLower) return true;
+                    return (
+                      (gr.title || "").toLowerCase().includes(searchLower) ||
+                      (gr.location || "").toLowerCase().includes(searchLower) ||
+                      (gr.userName || "").toLowerCase().includes(searchLower) ||
+                      (gr.description || "").toLowerCase().includes(searchLower) ||
+                      (gr.category || "").toLowerCase().includes(searchLower)
+                    );
+                  });
+
+                return (
+                  <div className="space-y-4 pt-2">
+                    <div className="flex flex-wrap justify-between items-center gap-2 px-1">
+                      <div>
+                        <h3 className="font-extrabold text-slate-800 text-sm uppercase tracking-widest">
+                          Daftar Laporan Terinput
+                        </h3>
+                        <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                          Lihat, edit kesalahan input, & download PDF laporan Anda kapan saja.
+                        </p>
+                      </div>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest bg-slate-100 px-2.5 py-1 rounded-full">
+                        {sortedDaily.length + sortedGeneral.length} Total
+                      </span>
                     </div>
-                  ) : (
-                    reports.map((report, idx) => (
-                      <motion.div
-                        key={idx}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: idx * 0.05 }}
-                        onClick={() => {
-                          setSelectedReport(report);
-                          navigate("report-detail");
-                        }}
-                        className="card p-4 flex items-center justify-between bg-white hover:border-primary/30 transition-all cursor-pointer active:scale-[0.98] group"
+
+                    {/* Tab Switcher */}
+                    <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-100 rounded-2xl">
+                      <button
+                        type="button"
+                        onClick={() => setEmployeeReportTab("DAILY")}
+                        className={`py-2.5 px-3 rounded-xl text-[11px] font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          employeeReportTab === "DAILY"
+                            ? "bg-white text-slate-900 shadow-sm"
+                            : "text-slate-500 hover:text-slate-800"
+                        }`}
                       >
-                        <div className="flex items-center gap-3">
-                          <div
-                            className={`w-10 h-10 rounded-xl flex items-center justify-center border transition-all ${
-                              report.type === "EXPENSE"
-                                ? "bg-rose-50 text-rose-500 border-rose-100"
-                                : "bg-primary/5 text-primary border-primary/10"
+                        <ClipboardList size={14} className="text-emerald-600 shrink-0" />
+                        <span className="truncate">Harian Projek ({sortedDaily.length})</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setEmployeeReportTab("GENERAL")}
+                        className={`py-2.5 px-3 rounded-xl text-[11px] font-black transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                          employeeReportTab === "GENERAL"
+                            ? "bg-white text-slate-900 shadow-sm"
+                            : "text-slate-500 hover:text-slate-800"
+                        }`}
+                      >
+                        <CreditCard size={14} className="text-primary shrink-0" />
+                        <span className="truncate">Laporan Umum ({sortedGeneral.length})</span>
+                      </button>
+                    </div>
+
+                    {/* Search & Scope Filter Bar */}
+                    <div className="space-y-2.5">
+                      <div className="relative">
+                        <Search
+                          size={15}
+                          className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400"
+                        />
+                        <input
+                          type="text"
+                          value={employeeReportSearch}
+                          onChange={(e) => setEmployeeReportSearch(e.target.value)}
+                          placeholder={
+                            employeeReportTab === "DAILY"
+                              ? "Cari projek, pelapor, lokasi, atau pekerjaan..."
+                              : "Cari judul, lokasi, kategori, atau pelapor..."
+                          }
+                          className="w-full pl-10 pr-8 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-semibold text-slate-800 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
+                        />
+                        {employeeReportSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setEmployeeReportSearch("")}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 cursor-pointer"
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => setEmployeeReportScope("ALL")}
+                            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                              employeeReportScope === "ALL"
+                                ? "bg-slate-900 text-white"
+                                : "bg-slate-100 text-slate-500 hover:text-slate-800"
                             }`}
                           >
-                            {report.type === "EXPENSE" ? (
-                              <CreditCard size={18} />
-                            ) : (
-                              <FileText size={18} />
+                            Semua Laporan
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEmployeeReportScope("MINE")}
+                            className={`px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all cursor-pointer ${
+                              employeeReportScope === "MINE"
+                                ? "bg-emerald-600 text-white"
+                                : "bg-slate-100 text-slate-500 hover:text-slate-800"
+                            }`}
+                          >
+                            Laporan Saya
+                          </button>
+                        </div>
+
+                        {employeeReportTab === "DAILY" && (
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={employeeReportProjectFilter}
+                              onChange={(e) => setEmployeeReportProjectFilter(e.target.value)}
+                              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-bold text-slate-700 max-w-[170px]"
+                            >
+                              <option value="ALL">Semua Projek</option>
+                              {projects.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name}
+                                </option>
+                              ))}
+                            </select>
+
+                            {sortedDaily.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  generateBatchDailyReportsPDF(
+                                    sortedDaily,
+                                    employeeReportProjectFilter !== "ALL"
+                                      ? projects.find((p) => p.id === employeeReportProjectFilter)?.name ||
+                                          sortedDaily[0]?.projectName
+                                      : sortedDaily[0]?.projectName || "PROJEK",
+                                  )
+                                }
+                                title="Download gabungan PDF laporan yang tampil"
+                                className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-xl text-[10px] font-black flex items-center gap-1 cursor-pointer active:scale-95 transition-all"
+                              >
+                                <FileDown size={13} />
+                                <span>Gabung PDF ({sortedDaily.length})</span>
+                              </button>
                             )}
                           </div>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <h5 className="text-sm font-bold text-slate-800 leading-none">
-                                {report.title}
-                              </h5>
-                              {report.type === "EXPENSE" && (
-                                <span className="text-[8px] font-black bg-rose-100 text-rose-600 px-1.5 py-0.5 rounded-md uppercase tracking-tighter">
-                                  UMUM
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase mt-1">
-                              {report.userName ? report.userName.split(" ")[0] : "User"} •{" "}
-                              {report.location}
+                        )}
+                      </div>
+                    </div>
+
+                    {employeeReportTab === "DAILY" ? (
+                      <div className="space-y-3">
+                        {sortedDaily.length === 0 ? (
+                          <div className="py-16 text-center card bg-slate-50 border-dashed">
+                            <ClipboardList size={32} className="mx-auto text-slate-300 mb-2" />
+                            <p className="text-xs text-slate-500 font-bold">
+                              Belum ada laporan harian projek ditemukan.
+                            </p>
+                            <p className="text-[10px] text-slate-400 mt-1">
+                              Buat laporan baru lewat tombol di atas atau ubah filter pencarian.
                             </p>
                           </div>
-                        </div>
+                        ) : (
+                          sortedDaily.map((report, idx) => {
+                            const canEdit = isAdminRole || isMyDailyReport(report);
+                            const totalWorkers =
+                              report.staff?.reduce((sum, s) => sum + (Number(s.jumlah) || 0), 0) || 0;
+                            const dateUpper = formatIndonesianDateUpper(
+                              report.timestamp || report.date,
+                            );
+                            return (
+                              <motion.div
+                                key={report.id || idx}
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: Math.min(idx * 0.03, 0.25) }}
+                                className="card p-4 bg-white border border-slate-100 hover:border-primary/30 transition-all space-y-3"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 space-y-1">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      <span className="font-mono text-[10px] font-black text-blue-700 bg-blue-50 px-2 py-0.5 rounded-lg border border-blue-100">
+                                        {dateUpper}
+                                      </span>
+                                      {isMyDailyReport(report) && (
+                                        <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 uppercase">
+                                          Laporan Saya
+                                        </span>
+                                      )}
+                                      {report.editedAt && (
+                                        <span className="text-[9px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                                          Diedit
+                                        </span>
+                                      )}
+                                    </div>
+                                    <h5 className="text-sm font-black text-slate-900 leading-snug">
+                                      {report.projectName || "PROJEK LAPANGAN"}
+                                    </h5>
+                                    <p className="text-[11px] text-slate-500 font-semibold leading-snug">
+                                      {report.submittedByName || "Karyawan"} •{" "}
+                                      {report.location || "Lokasi Lapangan"}
+                                    </p>
+                                  </div>
 
-                        <div className="text-right">
-                          <span
-                            className={`text-[9px] font-black uppercase px-2 py-1 rounded-md ${
-                              report.status === "APPROVED"
-                                ? "bg-emerald-50 text-emerald-600"
-                                : "bg-amber-50 text-amber-600"
-                            }`}
-                          >
-                            {report.status}
-                          </span>
-                        </div>
-                      </motion.div>
-                    ))
-                  )}
-                </div>
-              </div>
+                                  {report.workType && (
+                                    <span className="text-[9px] font-black uppercase bg-slate-100 text-slate-600 px-2 py-1 rounded-lg shrink-0">
+                                      {report.workType}
+                                    </span>
+                                  )}
+                                </div>
+
+                                <div className="flex flex-wrap items-center gap-2 text-[10px] text-slate-600 font-bold">
+                                  <span className="px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1">
+                                    <HardHat size={12} className="text-slate-400" />
+                                    {totalWorkers} Pekerja
+                                  </span>
+                                  <span className="px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1">
+                                    <Camera size={12} className="text-emerald-500" />
+                                    {report.photos?.length || 0} Foto
+                                  </span>
+                                  <span className="px-2 py-1 rounded-lg bg-slate-50 border border-slate-100 flex items-center gap-1">
+                                    <Clock size={12} className="text-blue-500" />
+                                    Lembur {report.overtime || 0}j
+                                  </span>
+                                </div>
+
+                                {Array.isArray(report.activities) && report.activities.length > 0 && (
+                                  <div className="bg-slate-50 rounded-xl px-3 py-2 border border-slate-100 text-[11px] text-slate-600">
+                                    <span className="font-bold text-slate-800">Aktivitas: </span>
+                                    <span>{report.activities.slice(0, 2).join(" • ")}</span>
+                                    {report.activities.length > 2 && (
+                                      <span className="text-slate-400">
+                                        {" "}
+                                        (+{report.activities.length - 2} lagi)
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+
+                                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
+                                  <button
+                                    type="button"
+                                    onClick={() => setPreviewEmployeeDailyReport(report)}
+                                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                                  >
+                                    <Eye size={14} />
+                                    <span>Rincian</span>
+                                  </button>
+
+                                  {canEdit && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingDailyReport(report)}
+                                      className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                                    >
+                                      <Pencil size={13} />
+                                      <span>Edit</span>
+                                    </button>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => generateDailyReportPDF(report)}
+                                    className="ml-auto px-3.5 py-2 bg-primary hover:bg-primary/90 text-white rounded-xl text-[11px] font-black flex items-center gap-1.5 shadow-sm shadow-primary/20 transition-all cursor-pointer active:scale-95"
+                                  >
+                                    <Download size={14} />
+                                    <span>Download PDF</span>
+                                  </button>
+                                </div>
+                              </motion.div>
+                            );
+                          })
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {sortedGeneral.length === 0 ? (
+                          <div className="py-16 text-center card bg-slate-50 border-dashed">
+                            <CreditCard size={32} className="mx-auto text-slate-300 mb-2" />
+                            <p className="text-xs text-slate-500 font-bold">
+                              Belum ada laporan umum ditemukan.
+                            </p>
+                          </div>
+                        ) : (
+                          sortedGeneral.map((report, idx) => {
+                            const canEditGeneral = isAdminRole || isMyGeneralReport(report);
+                            return (
+                              <motion.div
+                                key={report.id || idx}
+                                initial={{ opacity: 0, y: 8 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: Math.min(idx * 0.03, 0.25) }}
+                                className="card p-4 bg-white border border-slate-100 hover:border-primary/30 transition-all space-y-3"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex items-start gap-3 min-w-0">
+                                    <div
+                                      className={`w-10 h-10 rounded-xl flex items-center justify-center border shrink-0 ${
+                                        report.type === "EXPENSE"
+                                          ? "bg-rose-50 text-rose-500 border-rose-100"
+                                          : "bg-primary/5 text-primary border-primary/10"
+                                      }`}
+                                    >
+                                      {report.type === "EXPENSE" ? (
+                                        <CreditCard size={18} />
+                                      ) : (
+                                        <FileText size={18} />
+                                      )}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-1.5">
+                                        <h5 className="text-sm font-black text-slate-800 leading-snug">
+                                          {report.title}
+                                        </h5>
+                                        {isMyGeneralReport(report) && (
+                                          <span className="text-[9px] font-black text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100 uppercase">
+                                            Milik Saya
+                                          </span>
+                                        )}
+                                      </div>
+                                      <p className="text-[10px] text-slate-400 font-bold tracking-wider uppercase mt-0.5">
+                                        {report.userName ? report.userName.split(" ")[0] : "User"} •{" "}
+                                        {report.location} • {report.time}
+                                      </p>
+                                      {report.category && (
+                                        <p className="text-[10px] font-bold text-slate-500 mt-1">
+                                          {report.category}
+                                          {report.estimatedCost && report.estimatedCost > 0
+                                            ? ` • Est. Rp ${Number(report.estimatedCost).toLocaleString("id-ID")}`
+                                            : ""}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <span
+                                    className={`text-[9px] font-black uppercase px-2 py-1 rounded-md shrink-0 ${
+                                      report.status === "APPROVED"
+                                        ? "bg-emerald-50 text-emerald-600"
+                                        : "bg-amber-50 text-amber-600"
+                                    }`}
+                                  >
+                                    {report.status}
+                                  </span>
+                                </div>
+
+                                {report.description && (
+                                  <p className="text-[11px] text-slate-600 bg-slate-50 rounded-xl px-3 py-2 border border-slate-100 line-clamp-2">
+                                    {report.description}
+                                  </p>
+                                )}
+
+                                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedReport(report);
+                                      navigate("report-detail");
+                                    }}
+                                    className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                                  >
+                                    <Eye size={14} />
+                                    <span>Detail</span>
+                                  </button>
+
+                                  {canEditGeneral && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingGeneralReport(report)}
+                                      className="px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl text-[11px] font-bold flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                                    >
+                                      <Pencil size={13} />
+                                      <span>Edit</span>
+                                    </button>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => generateGeneralReportPDFUtil(report)}
+                                    className="ml-auto px-3.5 py-2 bg-primary hover:bg-primary/90 text-white rounded-xl text-[11px] font-black flex items-center gap-1.5 shadow-sm shadow-primary/20 transition-all cursor-pointer active:scale-95"
+                                  >
+                                    <Download size={14} />
+                                    <span>Download PDF</span>
+                                  </button>
+                                </div>
+                              </motion.div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <Navbar
@@ -54906,6 +55607,7 @@ export default function App() {
             />
           </motion.div>
         );
+      }
 case "izin-cuti":
         return (
           <motion.div
@@ -58443,6 +59145,7 @@ case "izin-cuti":
         <EditDailyReportModal
           report={editingDailyReport}
           projects={projects}
+          dailyReports={dailyReports}
           currentUser={currentUser}
           onClose={() => setEditingDailyReport(null)}
           onSaved={(updated) => {
@@ -58455,6 +59158,414 @@ case "izin-cuti":
             setTimeout(() => setShowToast(false), 3000);
           }}
         />
+      )}
+
+      {/* Employee Daily Report Detail Preview Modal */}
+      {previewEmployeeDailyReport && (
+        <div
+          className="fixed inset-0 z-[115] flex items-center justify-center p-3 sm:p-5 bg-slate-900/65 backdrop-blur-sm animate-in fade-in"
+          onClick={() => setPreviewEmployeeDailyReport(null)}
+        >
+          <div
+            className="bg-white rounded-3xl max-w-2xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+              <div className="min-w-0 pr-2">
+                <span className="text-[10px] font-black text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full border border-blue-100">
+                  Pratinjau Laporan Harian
+                </span>
+                <h3 className="text-base sm:text-lg font-black text-slate-900 mt-1 truncate">
+                  DAILY REPORT {(previewEmployeeDailyReport.projectName || "PROJEK").toUpperCase()}{" "}
+                  {formatIndonesianDateUpper(
+                    previewEmployeeDailyReport.timestamp || previewEmployeeDailyReport.date,
+                  )}
+                </h3>
+                <p className="text-[11px] text-slate-500 font-semibold truncate">
+                  Pelapor: {previewEmployeeDailyReport.submittedByName || "-"} •{" "}
+                  {previewEmployeeDailyReport.location || "-"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPreviewEmployeeDailyReport(null)}
+                className="p-2 hover:bg-slate-200 text-slate-400 hover:text-slate-700 rounded-full transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4 text-xs text-slate-700">
+              {/* Dual Logos & Contractor Info */}
+              <div className="flex items-center justify-between gap-3 p-3.5 bg-slate-50 rounded-2xl border border-slate-100">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-11 h-11 bg-white rounded-xl border border-slate-200 flex items-center justify-center overflow-hidden p-1 shrink-0">
+                    {previewEmployeeDailyReport.contractorLogo ? (
+                      <img
+                        src={previewEmployeeDailyReport.contractorLogo}
+                        alt="Logo Kontraktor"
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    ) : (
+                      <Building2 size={18} className="text-slate-400" />
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase block">
+                      Kontraktor
+                    </span>
+                    <p className="font-bold text-slate-900 truncate">
+                      {previewEmployeeDailyReport.contractor || "-"}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2.5 text-right min-w-0">
+                  <div className="min-w-0">
+                    <span className="text-[9px] font-bold text-slate-400 uppercase block">
+                      Klien
+                    </span>
+                    <p className="font-bold text-slate-900 truncate">
+                      {previewEmployeeDailyReport.clientName || "-"}
+                    </p>
+                  </div>
+                  <div className="w-11 h-11 bg-white rounded-xl border border-slate-200 flex items-center justify-center overflow-hidden p-1 shrink-0">
+                    {previewEmployeeDailyReport.clientLogo ? (
+                      <img
+                        src={previewEmployeeDailyReport.clientLogo}
+                        alt="Logo Client"
+                        className="max-h-full max-w-full object-contain"
+                      />
+                    ) : (
+                      <Building2 size={18} className="text-slate-400" />
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Tenaga Kerja */}
+              <div>
+                <h4 className="font-black text-slate-900 text-[11px] uppercase tracking-wider mb-1.5">
+                  I. Tenaga Kerja ({previewEmployeeDailyReport.staff?.reduce((a, b) => a + (Number(b.jumlah) || 0), 0) || 0} Orang)
+                </h4>
+                <div className="bg-slate-50 rounded-xl border border-slate-200 divide-y divide-slate-200">
+                  {(previewEmployeeDailyReport.staff || []).map((s, idx) => (
+                    <div key={idx} className="flex justify-between px-3 py-2">
+                      <span className="font-semibold text-slate-700">{s.jabatan || "-"}</span>
+                      <span className="font-black text-slate-900">{s.jumlah || 0} Org</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Alat & Bahan */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="font-black text-[10px] text-slate-500 uppercase">Alat Kerja</span>
+                  <ul className="mt-1 space-y-1">
+                    {(previewEmployeeDailyReport.tools || []).map((t, i) => (
+                      <li key={i}>• {typeof t === "string" ? t : (t as any).name || "-"}</li>
+                    ))}
+                  </ul>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="font-black text-[10px] text-slate-500 uppercase">Bahan / Material</span>
+                  <ul className="mt-1 space-y-1">
+                    {(previewEmployeeDailyReport.materials || []).map((m, i) => (
+                      <li key={i}>• {typeof m === "string" ? m : m.jenis || (m as any).name || "-"}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              {/* Aktivitas */}
+              <div>
+                <h4 className="font-black text-slate-900 text-[11px] uppercase tracking-wider mb-1.5">
+                  II. Uraian Pekerjaan
+                </h4>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1">
+                  {(previewEmployeeDailyReport.activities || []).map((act, i) => (
+                    <div key={i} className="flex gap-1.5">
+                      <span className="font-bold text-primary">{i + 1}.</span>
+                      <span>{act}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Kendala & Rencana */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="bg-rose-50/50 p-3 rounded-xl border border-rose-100">
+                  <span className="font-black text-[10px] text-rose-700 uppercase">Kendala</span>
+                  <div className="mt-1 space-y-1">
+                    {Array.isArray(previewEmployeeDailyReport.obstacles) ? (
+                      previewEmployeeDailyReport.obstacles.map((o, i) => (
+                        <div key={i}>
+                          {i + 1}. {o}
+                        </div>
+                      ))
+                    ) : (
+                      <p>{previewEmployeeDailyReport.obstacles || "-"}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="bg-blue-50/50 p-3 rounded-xl border border-blue-100">
+                  <span className="font-black text-[10px] text-blue-700 uppercase">Rencana Besok</span>
+                  <div className="mt-1 space-y-1">
+                    {Array.isArray(previewEmployeeDailyReport.nextPlan) ? (
+                      previewEmployeeDailyReport.nextPlan.map((p, i) => (
+                        <div key={i}>
+                          {i + 1}. {p}
+                        </div>
+                      ))
+                    ) : (
+                      <p>{previewEmployeeDailyReport.nextPlan || "-"}</p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {previewEmployeeDailyReport.photos && previewEmployeeDailyReport.photos.length > 0 && (
+                <div>
+                  <h4 className="font-black text-slate-900 text-[11px] uppercase tracking-wider mb-1.5">
+                    Dokumentasi Foto ({previewEmployeeDailyReport.photos.length})
+                  </h4>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                    {previewEmployeeDailyReport.photos.map((photo, i) => (
+                      <div key={i} className="rounded-xl overflow-hidden border border-slate-200 aspect-video bg-slate-100">
+                        <img src={photo} alt={`Foto #${i + 1}`} className="w-full h-full object-cover" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setPreviewEmployeeDailyReport(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:text-slate-900 cursor-pointer"
+              >
+                Tutup
+              </button>
+              <div className="flex items-center gap-2">
+                {(() => {
+                  const uid = auth.currentUser?.uid || currentUser?.uid || "";
+                  const isAdm =
+                    ["admin", "owner", "direktur"].includes(String(currentUser?.role || "").toLowerCase()) ||
+                    Boolean(currentUser?.isAdmin);
+                  const isMine =
+                    isAdm ||
+                    previewEmployeeDailyReport.submittedBy === uid ||
+                    previewEmployeeDailyReport.submittedBy === currentUser?.id ||
+                    previewEmployeeDailyReport.submittedBy === currentUser?.username ||
+                    (currentUser?.name &&
+                      previewEmployeeDailyReport.submittedByName === currentUser.name);
+                  if (!isMine) return null;
+                  return (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const target = previewEmployeeDailyReport;
+                        setPreviewEmployeeDailyReport(null);
+                        setEditingDailyReport(target);
+                      }}
+                      className="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Pencil size={14} />
+                      <span>Edit Laporan</span>
+                    </button>
+                  );
+                })()}
+                <button
+                  type="button"
+                  onClick={() => generateDailyReportPDF(previewEmployeeDailyReport)}
+                  className="px-4 py-2 bg-primary text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-md shadow-primary/20 cursor-pointer"
+                >
+                  <Download size={14} />
+                  <span>Download PDF</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit General Report Modal (Laporan Umum) */}
+      {editingGeneralReport && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center p-3 sm:p-5 bg-slate-900/70 backdrop-blur-sm animate-in fade-in"
+          onClick={() => setEditingGeneralReport(null)}
+        >
+          <form
+            onSubmit={handleSaveGeneralReportEdit}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl max-w-xl w-full max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-slate-200"
+          >
+            <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
+              <div>
+                <h3 className="text-base font-black text-slate-900">Edit Laporan Umum</h3>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  Perbaiki rincian laporan jika ada kesalahan input
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingGeneralReport(null)}
+                className="p-2 hover:bg-slate-200 text-slate-400 rounded-full cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4">
+              <div>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
+                  Kategori Laporan
+                </label>
+                <select
+                  value={editingGeneralReport.category || "Kebutuhan Material & Logistik"}
+                  onChange={(e) =>
+                    setEditingGeneralReport({ ...editingGeneralReport, category: e.target.value })
+                  }
+                  className="input-field w-full text-xs font-bold"
+                >
+                  <option value="Kebutuhan Material & Logistik">Kebutuhan Material & Logistik</option>
+                  <option value="Kekurangan / Kerusakan Alat">Kekurangan / Kerusakan Alat Kerja</option>
+                  <option value="Kendala Teknis Lapangan">Kendala / Hambatan Lapangan</option>
+                  <option value="Pengajuan Pembelian / Belanja">Pengajuan Pembelian / Belanja Operasional</option>
+                  <option value="Kebutuhan Operasional Lainnya">Kebutuhan Operasional Lainnya</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
+                  Lokasi Proyek <span className="text-rose-500">*</span>
+                </label>
+                <HistoryAutocompleteInput
+                  value={editingGeneralReport.location || ""}
+                  onChange={(val) =>
+                    setEditingGeneralReport({ ...editingGeneralReport, location: val })
+                  }
+                  suggestions={buildCombinedFieldHistory("general_site", dailyReports, reports)}
+                  onSaveHistory={(val) => {
+                    saveInputHistoryValue("general_site", val);
+                    setGeneralHistoryVersion((v) => v + 1);
+                  }}
+                  placeholder="Lokasi proyek..."
+                  className="input-field text-xs font-bold w-full"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
+                    Perihal / Judul <span className="text-rose-500">*</span>
+                  </label>
+                  <HistoryAutocompleteInput
+                    value={editingGeneralReport.title || ""}
+                    onChange={(val) =>
+                      setEditingGeneralReport({ ...editingGeneralReport, title: val })
+                    }
+                    suggestions={buildCombinedFieldHistory("general_title", dailyReports, reports)}
+                    onSaveHistory={(val) => {
+                      saveInputHistoryValue("general_title", val);
+                      setGeneralHistoryVersion((v) => v + 1);
+                    }}
+                    placeholder="Judul / Perihal laporan"
+                    className="input-field text-xs font-bold w-full"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
+                    Prioritas
+                  </label>
+                  <select
+                    value={editingGeneralReport.priority || "Medium"}
+                    onChange={(e) =>
+                      setEditingGeneralReport({
+                        ...editingGeneralReport,
+                        priority: e.target.value as any,
+                      })
+                    }
+                    className="input-field w-full text-xs font-bold"
+                  >
+                    <option value="Low">Rendah / Normal</option>
+                    <option value="Medium">Sedang (Perlu Perhatian)</option>
+                    <option value="High">Tinggi (Mendesak / Urgent)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
+                  Estimasi Biaya (Opsional)
+                </label>
+                <input
+                  type="text"
+                  value={
+                    editingGeneralReport.estimatedCost
+                      ? Number(editingGeneralReport.estimatedCost).toLocaleString("id-ID")
+                      : ""
+                  }
+                  onChange={(e) => {
+                    const num = e.target.value.replace(/\D/g, "");
+                    setEditingGeneralReport({
+                      ...editingGeneralReport,
+                      estimatedCost: num ? Number(num) : 0,
+                    });
+                  }}
+                  placeholder="0"
+                  className="input-field text-xs font-bold w-full"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
+                  Detail Uraian & Keterangan <span className="text-rose-500">*</span>
+                </label>
+                <HistoryAutocompleteInput
+                  multiline
+                  rows={4}
+                  value={editingGeneralReport.description || ""}
+                  onChange={(val) =>
+                    setEditingGeneralReport({ ...editingGeneralReport, description: val })
+                  }
+                  suggestions={buildCombinedFieldHistory("general_description", dailyReports, reports)}
+                  onSaveHistory={(val) => {
+                    saveInputHistoryValue("general_description", val);
+                    setGeneralHistoryVersion((v) => v + 1);
+                  }}
+                  placeholder="Rincian kebutuhan atau kendala..."
+                  className="input-field text-xs w-full resize-none"
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingGeneralReport(null)}
+                disabled={isSavingGeneralEdit}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-200 rounded-xl cursor-pointer"
+              >
+                Batal
+              </button>
+              <button
+                type="submit"
+                disabled={isSavingGeneralEdit}
+                className="px-5 py-2.5 bg-primary text-white rounded-xl text-xs font-black flex items-center gap-1.5 shadow-md shadow-primary/20 cursor-pointer disabled:opacity-60"
+              >
+                <Save size={14} />
+                <span>{isSavingGeneralEdit ? "Menyimpan..." : "Simpan Perubahan"}</span>
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {/* Notification Center */}

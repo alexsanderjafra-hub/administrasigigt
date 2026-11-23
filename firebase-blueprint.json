@@ -460,6 +460,7 @@
     "roles": { "schema": "roles", "description": "System roles and permissions" },
     "debtRecords": { "schema": "debtRecords", "description": "Debt and receivable records" },
     "reports": { "schema": "object", "description": "Field reports" },
+    "dailyReports": { "schema": "object", "description": "Project daily reports" },
     "cashAdvances": { "schema": "object", "description": "Cash advance requests" },
     "catalog": { "schema": "catalog", "description": "E-Katalog collection" },
     "suratJalan": { "schema": "suratJalan", "description": "Delivery shipping letters" },
