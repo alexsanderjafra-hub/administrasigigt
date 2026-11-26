@@ -80,3 +80,109 @@ export const compressImage = (base64Str: string, maxWidth = 400, maxHeight = 400
     img.onerror = (error) => reject(error);
   });
 };
+
+/**
+ * Converts any File into a Data URL and compresses it as JPEG for compact multi-photo storage.
+ */
+export const readAndCompressActivityPhoto = (
+  file: File,
+  maxDim = 760,
+  quality = 0.72
+): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const rawDataUrl = String(reader.result || '');
+      if (!rawDataUrl) {
+        reject(new Error('File kosong'));
+        return;
+      }
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          if (width > height) {
+            if (width > maxDim) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            }
+          } else if (height > maxDim) {
+            width = Math.round((width * maxDim) / height);
+            height = maxDim;
+          }
+          canvas.width = Math.max(1, width);
+          canvas.height = Math.max(1, height);
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            resolve(rawDataUrl);
+            return;
+          }
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        } catch {
+          resolve(rawDataUrl);
+        }
+      };
+      img.onerror = () => resolve(rawDataUrl);
+      img.src = rawDataUrl;
+    };
+    reader.onerror = () => reject(reader.error || new Error('Gagal membaca gambar'));
+    reader.readAsDataURL(file);
+  });
+};
+
+export const readAndCompressActivityPhotos = async (
+  fileList: FileList | File[],
+  maxDim = 760,
+  quality = 0.72
+): Promise<string[]> => {
+  const files = Array.from(fileList || []).filter(
+    (f) => !f.type || f.type.startsWith('image/')
+  );
+  const results: string[] = [];
+  for (const file of files) {
+    try {
+      const compressed = await readAndCompressActivityPhoto(file, maxDim, quality);
+      if (compressed) results.push(compressed);
+    } catch {
+      // skip unreadable file
+    }
+  }
+  return results;
+};
+
+export const getLocalDateInputValue = (offsetDays = 0): string => {
+  const d = new Date();
+  if (offsetDays !== 0) {
+    d.setDate(d.getDate() + offsetDays);
+  }
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+export const buildTimestampForLocalDate = (
+  dateStr: string,
+  fallbackTs: number = Date.now()
+): number => {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return fallbackTs;
+  }
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const ref = new Date(fallbackTs || Date.now());
+  const built = new Date(
+    y,
+    m - 1,
+    d,
+    ref.getHours(),
+    ref.getMinutes(),
+    ref.getSeconds()
+  );
+  return isNaN(built.getTime()) ? fallbackTs : built.getTime();
+};
+

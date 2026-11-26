@@ -548,24 +548,48 @@ export const generateGeneralReportPDF = (report: FieldReport) => {
 
   let nextY = ((doc as any).lastAutoTable?.finalY || 120) + 10;
 
-  if (report.img && report.img.startsWith("data:image")) {
-    try {
-      if (nextY > 210) {
+  const galleryPhotos = Array.isArray(report.photos) && report.photos.length > 0
+    ? report.photos.filter((p) => typeof p === "string" && p.startsWith("data:image"))
+    : report.img && report.img.startsWith("data:image")
+      ? [report.img]
+      : [];
+
+  if (galleryPhotos.length > 0) {
+    if (nextY > 210) {
+      doc.addPage();
+      nextY = 18;
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10);
+    doc.text(`DOKUMENTASI FOTO LAPANGAN (${galleryPhotos.length} FOTO)`, 15, nextY);
+    nextY += 5;
+
+    let colX = 15;
+    galleryPhotos.forEach((photoStr, idx) => {
+      if (colX > 110) {
+        colX = 15;
+        nextY += 66;
+      }
+      if (nextY > 215) {
         doc.addPage();
         nextY = 18;
+        colX = 15;
       }
-      doc.setFont("helvetica", "bold");
-      doc.setFontSize(10);
-      doc.text("DOKUMENTASI FOTO LAPANGAN", 15, nextY);
-      const fmt =
-        report.img.startsWith("data:image/jpeg") ||
-        report.img.startsWith("data:image/jpg")
-          ? "JPEG"
-          : "PNG";
-      doc.addImage(report.img, fmt, 15, nextY + 4, 90, 62);
-    } catch {
-      // ignore embedded image error
-    }
+      try {
+        const fmt =
+          photoStr.startsWith("data:image/jpeg") ||
+          photoStr.startsWith("data:image/jpg")
+            ? "JPEG"
+            : "PNG";
+        doc.addImage(photoStr, fmt, colX, nextY, 85, 58);
+        doc.setFontSize(7.5);
+        doc.setFont("helvetica", "normal");
+        doc.text(`Foto #${idx + 1}`, colX, nextY + 62);
+      } catch {
+        // ignore embedded image error
+      }
+      colX += 92;
+    });
   }
 
   const cleanTitle = (report.title || "LAPORAN UMUM")

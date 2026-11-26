@@ -8,7 +8,13 @@ import React, {
   useDeferredValue,
 } from "react";
 import Webcam from "react-webcam";
-import { compressImage, extractCleanAddress } from "./lib/utils";
+import {
+  compressImage,
+  extractCleanAddress,
+  readAndCompressActivityPhotos,
+  getLocalDateInputValue,
+  buildTimestampForLocalDate,
+} from "./lib/utils";
 
 const WebcamComponent = Webcam as any;
 import html2canvas from "html2canvas";
@@ -236,7 +242,12 @@ import {
   removeLocalInputHistoryValue,
   ReportHistoryField,
 } from "./utils/inputHistory";
-import { EKatalog } from "./components/EKatalog";
+import {
+  EKatalog,
+  inferCatalogCategory,
+  isGenericLegacyCategory,
+  resolveItemDisplayCategory,
+} from "./components/EKatalog";
 import { AdminPurchaseOrderScreen } from "./components/AdminPurchaseOrderScreen";
 import { AdminKwitansiScreen } from "./components/AdminKwitansiScreen";
 import AdminKasbonScreen from "./components/AdminKasbonScreen";
@@ -31256,6 +31267,8 @@ const DailyReportForm = ({
   const [formError, setFormError] = useState<string>("");
   const [copySuccessNotice, setCopySuccessNotice] = useState<string>("");
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+  const [isUploadingPhotos, setIsUploadingPhotos] = useState(false);
+  const [reportDateStr, setReportDateStr] = useState<string>(() => getLocalDateInputValue(0));
   const [historyVersion, setHistoryVersion] = useState(0);
   const [draft, setDraft] = useState<any>({
     projectId: "",
@@ -31480,9 +31493,39 @@ const DailyReportForm = ({
     });
   };
 
+  const buildDraftWithDate = () => {
+    const selectedTs = buildTimestampForLocalDate(reportDateStr, Date.now());
+    return {
+      ...draft,
+      date: selectedTs,
+      timestamp: selectedTs,
+    };
+  };
+
+  const handleBatchPhotoUpload = async (fileList: FileList | File[] | null, inputEl?: HTMLInputElement | null) => {
+    if (!fileList || fileList.length === 0) return;
+    setIsUploadingPhotos(true);
+    try {
+      const processed = await readAndCompressActivityPhotos(fileList, 760, 0.72);
+      if (processed.length > 0) {
+        setDraft((prev: any) => ({
+          ...prev,
+          photos: [...(Array.isArray(prev.photos) ? prev.photos : []), ...processed].slice(0, 16),
+        }));
+      }
+    } finally {
+      setIsUploadingPhotos(false);
+      if (inputEl) inputEl.value = "";
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmittingReport) return;
+    if (!reportDateStr) {
+      setFormError("Tanggal Laporan wajib dipilih.");
+      return;
+    }
     if (!draft.contractor || !draft.contractor.trim()) {
       setFormError("Nama Perusahaan / Kontraktor wajib diisi secara manual.");
       return;
@@ -31502,8 +31545,9 @@ const DailyReportForm = ({
     setFormError("");
     setIsSubmittingReport(true);
     try {
+      const payloadDraft = buildDraftWithDate();
       await onSubmit({
-        ...draft,
+        ...payloadDraft,
         contractor: draft.contractor.trim(),
         location: draft.location.trim(),
         clientName: (draft.clientName || "").trim(),
@@ -31557,7 +31601,7 @@ const DailyReportForm = ({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => generateDailyReportPDF(draft)}
+            onClick={() => generateDailyReportPDF(buildDraftWithDate())}
             className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer"
           >
             <FileText size={14} /> Preview PDF
@@ -31566,6 +31610,71 @@ const DailyReportForm = ({
       </header>
 
       <form onSubmit={handleSubmit} className="max-w-4xl mx-auto p-6 space-y-8">
+        {/* Tanggal Laporan - PALING ATAS */}
+        <div className="card p-5 bg-gradient-to-br from-emerald-50 via-white to-indigo-50/40 border-emerald-200 shadow-xs space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <label className="text-[11px] font-black text-emerald-900 uppercase tracking-widest flex items-center gap-2">
+              <Calendar size={16} className="text-emerald-600 shrink-0" />
+              <span>Tanggal Laporan Harian</span>
+              <span className="text-rose-500">*</span>
+            </label>
+            {reportDateStr !== getLocalDateInputValue(0) ? (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-amber-100 text-amber-800 border border-amber-200">
+                Laporan Susulan • {formatIndonesianDateShort(buildTimestampForLocalDate(reportDateStr))}
+              </span>
+            ) : (
+              <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-700 border border-emerald-200">
+                Hari Ini • {formatIndonesianDateShort(buildTimestampForLocalDate(reportDateStr))}
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
+            <div className="sm:col-span-6">
+              <input
+                type="date"
+                className="input-field text-xs font-black w-full bg-white border-emerald-200"
+                value={reportDateStr}
+                onChange={(e) => {
+                  setFormError("");
+                  setReportDateStr(e.target.value || getLocalDateInputValue(0));
+                }}
+                required
+              />
+            </div>
+            <div className="sm:col-span-6 flex flex-wrap items-center gap-2">
+              {[
+                { label: "Hari Ini", offset: 0 },
+                { label: "Kemarin", offset: -1 },
+                { label: "2 Hari Lalu", offset: -2 },
+              ].map((preset) => {
+                const presetVal = getLocalDateInputValue(preset.offset);
+                const active = reportDateStr === presetVal;
+                return (
+                  <button
+                    key={preset.label}
+                    type="button"
+                    onClick={() => {
+                      setFormError("");
+                      setReportDateStr(presetVal);
+                    }}
+                    className={`px-3 py-2 rounded-xl text-[11px] font-black transition-all cursor-pointer active:scale-95 border ${
+                      active
+                        ? "bg-emerald-600 text-white border-emerald-600 shadow-xs"
+                        : "bg-white text-slate-600 border-slate-200 hover:border-emerald-300 hover:text-emerald-700"
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-500 font-semibold leading-snug">
+            Jika kemarin lupa membuat laporan, pilih tanggal kemarin di sini agar tanggal laporan & PDF tercatat sesuai hari pekerjaan.
+          </p>
+        </div>
+
         {/* Project Selection / Header Info */}
         <div className="card p-6 bg-white border-slate-100 space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -32197,13 +32306,27 @@ const DailyReportForm = ({
         </div>
 
         {/* section 6: Photos */}
-        <div className="card p-6 bg-white border-slate-100">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="font-black text-xs uppercase tracking-widest text-slate-400 flex items-center gap-2">
-              <Camera size={16} className="text-primary" /> VI. DOKUMENTASI FOTO PROGRESS
-            </h3>
-            <span className="text-[10px] font-black text-slate-400 bg-slate-50 px-2.5 py-1 rounded-full">
-              {draft.photos.length}/8 Foto
+        <div
+          className="card p-6 bg-white border-slate-100"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (draft.photos.length < 16 && e.dataTransfer?.files?.length) {
+              handleBatchPhotoUpload(e.dataTransfer.files);
+            }
+          }}
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-black text-xs uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                <Camera size={16} className="text-primary" /> VI. DOKUMENTASI FOTO PROGRESS
+              </h3>
+              <p className="text-[10px] text-slate-400 font-semibold mt-0.5">
+                Bisa pilih & unggah banyak foto kegiatan sekaligus dari galeri
+              </p>
+            </div>
+            <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full shrink-0">
+              {draft.photos.length}/16 Foto
             </span>
           </div>
 
@@ -32218,6 +32341,9 @@ const DailyReportForm = ({
                   alt={`Preview ${idx}`}
                   className="w-full h-full object-cover"
                 />
+                <span className="absolute bottom-2 left-2 px-1.5 py-0.5 rounded-md bg-slate-900/70 text-white text-[9px] font-black">
+                  #{idx + 1}
+                </span>
                 <button
                   type="button"
                   onClick={() => {
@@ -32232,7 +32358,7 @@ const DailyReportForm = ({
               </div>
             ))}
 
-            {draft.photos.length < 8 && (
+            {draft.photos.length < 16 && (
               <div className="col-span-2 sm:col-span-2 flex flex-col sm:flex-row gap-3">
                 {/* Geotag Camera Option */}
                 <button
@@ -32253,17 +32379,21 @@ const DailyReportForm = ({
                   </div>
                 </button>
 
-                {/* Gallery Upload Option */}
-                <label className="flex-1 py-5 px-4 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 text-slate-600 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all active:scale-98 group">
-                  <div className="w-10 h-10 rounded-xl bg-white border border-slate-200 text-slate-500 flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
-                    <CloudUpload size={20} />
+                {/* Multi-Photo Gallery Upload Option */}
+                <label className="flex-1 py-5 px-4 rounded-2xl border-2 border-dashed border-emerald-300 bg-emerald-50/60 hover:bg-emerald-50 hover:border-emerald-400 text-emerald-800 flex flex-col items-center justify-center gap-2 cursor-pointer transition-all active:scale-98 group">
+                  <div className="w-10 h-10 rounded-xl bg-white border border-emerald-200 text-emerald-600 flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                    {isUploadingPhotos ? (
+                      <Loader2 size={20} className="animate-spin text-emerald-600" />
+                    ) : (
+                      <CloudUpload size={20} />
+                    )}
                   </div>
                   <div className="text-center">
                     <span className="text-[10px] font-black uppercase tracking-wider block">
-                      Pilih dari Galeri
+                      {isUploadingPhotos ? "Memproses Foto..." : "Pilih Banyak Foto (Galeri)"}
                     </span>
-                    <span className="text-[8px] opacity-60 font-semibold block">
-                      Unggah File Foto
+                    <span className="text-[8px] text-emerald-700/80 font-bold block">
+                      Bisa langsung pilih banyak sekaligus
                     </span>
                   </div>
                   <input
@@ -32272,24 +32402,8 @@ const DailyReportForm = ({
                     multiple
                     className="hidden"
                     onChange={(e) => {
-                      const files = Array.from(e.target.files || []);
-                      files.forEach((file) => {
-                        const reader = new FileReader();
-                        reader.onloadend = async () => {
-                          let base64 = reader.result as string;
-                          try {
-                            base64 = await compressImage(base64, 800, 800, 0.72);
-                          } catch {
-                            // keep original if compression fails
-                          }
-                          setDraft((prev: any) => ({
-                            ...prev,
-                            photos: [...prev.photos, base64].slice(0, 8),
-                          }));
-                        };
-                        reader.readAsDataURL(file as Blob);
-                      });
-                      e.target.value = "";
+                      const inputEl = e.currentTarget;
+                      handleBatchPhotoUpload(inputEl.files, inputEl);
                     }}
                   />
                 </label>
@@ -32297,7 +32411,7 @@ const DailyReportForm = ({
             )}
           </div>
           <p className="text-[10px] text-slate-400 italic">
-            Maksimal 8 foto per laporan (Format: JPG, PNG - Mendukung Kamera GPS Stamp & Galeri)
+            Maksimal 16 foto per laporan (Format: JPG, PNG - Mendukung pilih banyak gambar sekaligus dari galeri & Kamera GPS Stamp)
           </p>
 
           <GeotagCameraModal
@@ -32312,7 +32426,7 @@ const DailyReportForm = ({
               }
               setDraft((prev: any) => ({
                 ...prev,
-                photos: [...prev.photos, finalPhoto].slice(0, 8),
+                photos: [...prev.photos, finalPhoto].slice(0, 16),
               }));
             }}
             initialData={{
@@ -34004,6 +34118,9 @@ export default function App() {
   const [currentReportPhoto, setCurrentReportPhoto] = useState<string | null>(
     null,
   );
+  const [currentReportPhotos, setCurrentReportPhotos] = useState<string[]>([]);
+  const [isUploadingGeneralPhotos, setIsUploadingGeneralPhotos] = useState(false);
+  const [generalReportDate, setGeneralReportDate] = useState<string>(() => getLocalDateInputValue(0));
   const [isSingleReportCameraOpen, setIsSingleReportCameraOpen] = useState(false);
   const [generalReportCategory, setGeneralReportCategory] = useState("Kebutuhan Material & Logistik");
   const [generalReportEstCost, setGeneralReportEstCost] = useState("");
@@ -37181,58 +37298,166 @@ export default function App() {
     try {
       await dbService.setDocument("quotations", id, newQuotation);
 
-      // Otomatis sinkronkan item-item penawaran ke E-Katalog (Request 4)
-      for (const item of finalItems) {
-        if (!item.description?.trim()) continue;
+      // Otomatis sinkronkan ke E-Katalog:
+      // - Barang -> masuk ke kategori spesifik equipment (Fabrikasi Tangki, Dosing Pump, Pompa, Blower, Piping, dll.) beserta spesifikasinya
+      // - Jasa -> masuk ke kategori jasa spesifik
+      // - Barang dan Jasa -> masuk utuh sebagai 1 Paket SPH (Judul SPH, seluruh item isi penawaran, spesifikasi, dan harganya)
+      if (quoteType === "Barang dan Jasa") {
         try {
-          const itemType = quoteType === "Barang" ? "barang" : quoteType === "Jasa" ? "jasa" : "barang";
-          const catCategory = quoteType === "Barang" ? "Barang" : quoteType === "Jasa" ? "Jasa" : "Barang dan Jasa";
+          const sphTitle = (
+            quoteProjectName?.trim() ||
+            quoteJobDesc?.trim() ||
+            finalItems[0]?.description ||
+            "Penawaran Barang & Jasa"
+          ).slice(0, 200);
 
-          let capacity = "";
-          if (Array.isArray(item.specifications)) {
-            const capSpec = item.specifications.find((s: any) => s.key && s.key.toLowerCase().includes("kapasitas"));
-            if (capSpec) capacity = capSpec.value;
-          }
-          if (!capacity) {
-            const capMatch = (item.description || "").match(/(\d+(?:[.,]\d+)?\s*(?:m3|m³|liter|l|m3\/hari|m3\/jam|m³\/hari|m³\/jam|gpm|watt|hp|pk|bar))/i);
-            if (capMatch) capacity = capMatch[0];
-          }
+          const allSpecsSummary = finalItems
+            .map((it, idx) => {
+              const specsArr = Array.isArray(it.specifications)
+                ? it.specifications
+                    .map((s: any) => `   - ${s.key && s.key !== "-" ? `${s.key}: ` : ""}${s.value}`)
+                    .join("\n")
+                : typeof it.specifications === "string" && it.specifications.trim()
+                ? `   ${it.specifications}`
+                : "";
+              const line = `${idx + 1}. ${it.description} (${it.vol} ${it.unit}) @ Rp ${(it.unitPrice || 0).toLocaleString("id-ID")} = Rp ${(it.total || 0).toLocaleString("id-ID")}`;
+              return specsArr ? `${line}\n${specsArr}` : line;
+            })
+            .join("\n");
 
-          const specString = Array.isArray(item.specifications)
-            ? item.specifications.map((s: any) => `${s.key ? `${s.key}: ` : ""}${s.value}`).join("\n")
-            : (item.specifications || "");
-
-          const existing = (catalogItemsForQuote || []).find(
-            (c: any) => c.name?.toLowerCase().trim() === item.description?.toLowerCase().trim()
+          const inferredPkgCat = inferCatalogCategory(
+            sphTitle,
+            `${quoteJobDesc || ""} ${allSpecsSummary}`,
+            "barang_dan_jasa"
           );
 
-          const catalogId = existing?.id || `cat-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
-          const catalogPayload = {
+          const totalCostPrice = finalItems.reduce(
+            (acc, it) => acc + (Number((it as any).costPrice) || 0) * (Number(it.vol) || 1),
+            0
+          );
+
+          const existingPkg = (catalogItemsForQuote || []).find(
+            (c: any) =>
+              c.type === "barang_dan_jasa" &&
+              (c.quotationId === id ||
+                c.name?.toLowerCase().trim() === sphTitle.toLowerCase().trim())
+          );
+
+          const catalogId = existingPkg?.id || `cat-sph-${id}`;
+          const finalPkgCat =
+            existingPkg?.category && !isGenericLegacyCategory(existingPkg.category)
+              ? resolveItemDisplayCategory(existingPkg)
+              : inferredPkgCat;
+
+          const pkgPayload = {
             id: catalogId,
-            name: item.description,
-            sku: existing?.sku || `CAT-${Math.floor(1000 + Math.random() * 9000)}`,
-            category: existing?.category || catCategory,
-            subCategory: existing?.subCategory || quoteType,
-            type: itemType,
-            brand: existing?.brand || "PT. GIG",
-            priceItem: item.unitPrice || 0,
-            costPrice: (item as any).costPrice !== undefined ? (item as any).costPrice : (existing?.costPrice || 0),
-            unit: item.unit || "Unit",
-            description: item.description,
-            specifications: specString,
-            capacity: capacity || existing?.capacity || "",
+            name: sphTitle,
+            sku: (existingPkg?.sku || newQuotation.number || `SPH-${Math.floor(1000 + Math.random() * 9000)}`).slice(0, 100),
+            category: finalPkgCat.slice(0, 100),
+            subCategory: (quoteJobDesc || "SPH Barang dan Jasa").slice(0, 120),
+            type: "barang_dan_jasa",
+            brand: (newQuotation.recipient || existingPkg?.brand || "PT. GIG").slice(0, 100),
+            priceItem: grandTotal || 0,
+            priceService: newQuotation.serviceFee || 0,
+            priceInstallation: 0,
+            costPrice: totalCostPrice,
+            unit: "Paket",
+            description: quoteJobDesc || sphTitle,
+            specifications: allSpecsSummary,
+            capacity: "",
             status: "aktif",
             createdBy: currentUser?.id || "admin",
             createdByName: currentUser?.name || "ALEXSANDER",
-            createdDate: existing?.createdDate || new Date().toISOString(),
+            createdDate: existingPkg?.createdDate || new Date().toISOString(),
             lastUpdate: new Date().toISOString(),
-            images: existing?.images || [],
-            views: (existing?.views || 0) + 1,
+            images: existingPkg?.images || [],
+            views: (existingPkg?.views || 0) + 1,
+            quotationId: id,
+            quotationNumber: newQuotation.number || "",
+            quotationDate: newQuotation.date || "",
+            recipient: newQuotation.recipient || "",
+            projectName: newQuotation.projectName || "",
+            subTotal,
+            discountAmount: newQuotation.discountAmount || 0,
+            shippingCost: newQuotation.shippingCost || 0,
+            serviceFee: newQuotation.serviceFee || 0,
+            tax,
+            grandTotal,
+            notes: newQuotation.notes || "",
+            paymentTerms: newQuotation.paymentTerms || "",
+            packageItems: finalItems,
           };
 
-          await dbService.setDocument("catalog", catalogId, catalogPayload);
+          await dbService.setDocument("catalog", catalogId, pkgPayload);
         } catch (catErr) {
-          console.warn("Auto save to catalog warning:", catErr);
+          console.warn("Auto save SPH package to catalog warning:", catErr);
+        }
+      } else {
+        for (const item of finalItems) {
+          if (!item.description?.trim()) continue;
+          try {
+            const itemType: "barang" | "jasa" = quoteType === "Jasa" ? "jasa" : "barang";
+
+            let capacity = "";
+            if (Array.isArray(item.specifications)) {
+              const capSpec = item.specifications.find((s: any) => s.key && s.key.toLowerCase().includes("kapasitas"));
+              if (capSpec) capacity = capSpec.value;
+            }
+            if (!capacity) {
+              const capMatch = (item.description || "").match(/(\d+(?:[.,]\d+)?\s*(?:m3|m³|liter|l|m3\/hari|m3\/jam|m³\/hari|m³\/jam|gpm|watt|hp|pk|bar))/i);
+              if (capMatch) capacity = capMatch[0];
+            }
+
+            const specString = Array.isArray(item.specifications)
+              ? item.specifications.map((s: any) => `${s.key ? `${s.key}: ` : ""}${s.value}`).join("\n")
+              : (item.specifications || "");
+
+            const inferredCat = inferCatalogCategory(item.description, specString, itemType);
+
+            const existing = (catalogItemsForQuote || []).find(
+              (c: any) =>
+                c.type !== "barang_dan_jasa" &&
+                c.name?.toLowerCase().trim() === item.description?.toLowerCase().trim()
+            );
+
+            const resolvedCat =
+              existing?.category && !isGenericLegacyCategory(existing.category)
+                ? resolveItemDisplayCategory({ ...existing, type: itemType })
+                : inferredCat;
+
+            const catalogId = existing?.id || `cat-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+            const catalogPayload = {
+              id: catalogId,
+              name: item.description.trim().slice(0, 200),
+              sku: (existing?.sku || `CAT-${Math.floor(1000 + Math.random() * 9000)}`).slice(0, 100),
+              category: resolvedCat.slice(0, 100),
+              subCategory: existing?.subCategory && !isGenericLegacyCategory(existing.subCategory)
+                ? existing.subCategory
+                : (itemType === "jasa" ? "Layanan Jasa" : "Equipment"),
+              type: itemType,
+              brand: (existing?.brand || "PT. GIG").slice(0, 100),
+              priceItem: item.unitPrice || 0,
+              priceService: itemType === "jasa" ? (item.unitPrice || 0) : (existing?.priceService || 0),
+              priceInstallation: existing?.priceInstallation || 0,
+              costPrice: (item as any).costPrice !== undefined ? (item as any).costPrice : (existing?.costPrice || 0),
+              unit: item.unit || (itemType === "jasa" ? "Lot" : "Unit"),
+              description: item.description,
+              specifications: specString,
+              ...(itemType === "jasa" ? { detailWork: specString } : {}),
+              capacity: capacity || existing?.capacity || "",
+              status: "aktif",
+              createdBy: currentUser?.id || "admin",
+              createdByName: currentUser?.name || "ALEXSANDER",
+              createdDate: existing?.createdDate || new Date().toISOString(),
+              lastUpdate: new Date().toISOString(),
+              images: existing?.images || [],
+              views: (existing?.views || 0) + 1,
+            };
+
+            await dbService.setDocument("catalog", catalogId, catalogPayload);
+          } catch (catErr) {
+            console.warn("Auto save to catalog warning:", catErr);
+          }
         }
       }
 
@@ -38187,16 +38412,61 @@ export default function App() {
   const [activeCatalogDropdownIdx, setActiveCatalogDropdownIdx] = useState<number | null>(null);
   const [selectedCatalogGroup, setSelectedCatalogGroup] = useState<string | null>(null);
 
+  const savedSphPackages = useMemo(() => {
+    return (catalogItemsForQuote || []).filter((it: any) => it && it.type === "barang_dan_jasa");
+  }, [catalogItemsForQuote]);
+
+  const handleLoadSphPackageFromCatalog = (pkg: any) => {
+    if (!pkg) return;
+    if (pkg.projectName || pkg.name) setQuoteProjectName(pkg.projectName || pkg.name || "");
+    if (pkg.description) setQuoteJobDesc(pkg.description);
+    if (pkg.notes) setQuoteNotes(pkg.notes);
+    if (pkg.paymentTerms) setQuotePaymentTerms(pkg.paymentTerms);
+
+    const rawItems = Array.isArray(pkg.packageItems) ? pkg.packageItems : [];
+    if (rawItems.length > 0) {
+      const mapped = rawItems.map((it: any, idx: number) => {
+        let specs: { key: string; value: string }[] = [];
+        if (Array.isArray(it.specifications)) {
+          specs = it.specifications;
+        } else if (typeof it.specifications === "string" && it.specifications.trim()) {
+          specs = it.specifications
+            .split("\n")
+            .map((line: string) => {
+              const parts = line.split(":");
+              return {
+                key: parts[0]?.trim() || "",
+                value: parts.slice(1).join(":")?.trim() || parts[0]?.trim() || "",
+              };
+            })
+            .filter((s: any) => s.value);
+        }
+        return {
+          id: `item-${Date.now()}-${idx}`,
+          description: it.description || "",
+          vol: Number(it.vol) || 1,
+          unit: it.unit || "Unit",
+          unitPrice: Number(it.unitPrice) || 0,
+          costPrice: Number(it.costPrice) || 0,
+          total: Number(it.total) || (Number(it.vol) || 1) * (Number(it.unitPrice) || 0),
+          specifications: specs,
+        };
+      });
+      setQuotationItems(mapped);
+    }
+  };
+
   const filteredCatalogList = useMemo(() => {
     return (catalogItemsForQuote || []).filter((it: any) => {
       if (!it || !it.name) return false;
+      if (it.type === "barang_dan_jasa") return false; // Paket SPH utuh dipilih di pemilih paket atas
       if (quoteType === "Barang") {
-        return it.type === "barang" || (it.category || "").toLowerCase().includes("barang");
+        return it.type === "barang";
       }
       if (quoteType === "Jasa") {
-        return it.type === "jasa" || (it.category || "").toLowerCase().includes("jasa");
+        return it.type === "jasa";
       }
-      return true; // "Barang dan Jasa"
+      return true; // "Barang dan Jasa" dapat memilih item satuan barang maupun jasa
     });
   }, [catalogItemsForQuote, quoteType]);
 
@@ -38649,6 +38919,33 @@ export default function App() {
 
             {/* 4. TABEL ITEM PEKERJAAN (NO | DESKRIPSI | QTY | SATUAN | HARGA SATUAN | JUMLAH) */}
             <div className="space-y-3">
+              {quoteType === "Barang dan Jasa" && savedSphPackages.length > 0 && (
+                <div className="bg-violet-50 border border-violet-200 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-violet-800 block">
+                      Ambil Paket SPH Utuh dari E-Katalog ({savedSphPackages.length} Paket Tersimpan)
+                    </span>
+                    <span className="text-[11px] font-semibold text-violet-600">
+                      Pilih paket SPH untuk mengisi otomatis judul, daftar item, spesifikasi, dan harga.
+                    </span>
+                  </div>
+                  <select
+                    defaultValue=""
+                    onChange={(e) => {
+                      const chosen = savedSphPackages.find((p: any) => p.id === e.target.value);
+                      if (chosen) handleLoadSphPackageFromCatalog(chosen);
+                    }}
+                    className="sm:w-80 px-3.5 py-2 bg-white border border-violet-300 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-violet-600"
+                  >
+                    <option value="">-- Pilih Paket SPH Barang &amp; Jasa --</option>
+                    {savedSphPackages.map((pkg: any) => (
+                      <option key={pkg.id} value={pkg.id}>
+                        {pkg.name} (Rp {Number(pkg.grandTotal || pkg.priceItem || 0).toLocaleString("id-ID")})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <div className="overflow-x-auto border-2 border-slate-300 rounded-2xl bg-white shadow-xs">
                 <table className="w-full text-left border-collapse font-sans text-xs">
                   <thead>
@@ -41877,6 +42174,7 @@ export default function App() {
             (draft.projectName || "").replace(/\s+/g, " ").trim().toLowerCase(),
       );
 
+      const chosenReportTs = Number(draft.timestamp || draft.date) || Date.now();
       const newReport: any = {
         ...draft,
         projectId: matchedProj?.id || draft.projectId || "",
@@ -41885,8 +42183,8 @@ export default function App() {
         submittedByName:
           currentUser?.name || currentUser?.displayName || currentUser?.username || "Karyawan",
         submittedByRole: currentUser?.role || "Karyawan",
-        timestamp: Date.now(),
-        date: Date.now(),
+        timestamp: chosenReportTs,
+        date: chosenReportTs,
         status: "PENDING",
       };
 
@@ -41965,14 +42263,40 @@ export default function App() {
     const formData = new FormData(e.target as HTMLFormElement);
     const submitterUid =
       auth.currentUser?.uid || currentUser?.uid || currentUser?.id || currentUser?.username || "unknown";
-    let finalPhoto = currentReportPhoto || "";
-    if (finalPhoto && finalPhoto.startsWith("data:image") && finalPhoto.length > 650_000) {
-      try {
-        finalPhoto = await compressImage(finalPhoto, 800, 800, 0.72);
-      } catch {}
+    let photosList: string[] = [...currentReportPhotos];
+    if (photosList.length === 0 && currentReportPhoto) {
+      photosList = [currentReportPhoto];
     }
+    if (photosList.length > 0) {
+      photosList = await Promise.all(
+        photosList.map(async (ph) => {
+          if (ph && ph.startsWith("data:image") && ph.length > 420_000) {
+            try {
+              return await compressImage(ph, 720, 720, 0.68);
+            } catch {
+              return ph;
+            }
+          }
+          return ph;
+        }),
+      );
+      const totalApproxBytes = photosList.reduce((acc, s) => acc + s.length, 0);
+      if (totalApproxBytes > 780_000) {
+        photosList = await Promise.all(
+          photosList.map(async (ph) => {
+            try {
+              return await compressImage(ph, 520, 520, 0.52);
+            } catch {
+              return ph;
+            }
+          }),
+        );
+      }
+    }
+    const finalPhoto = photosList[0] || "";
     const descText =
       generalReportDesc || (formData.get("description") as string) || "";
+    const chosenCreatedAt = buildTimestampForLocalDate(generalReportDate, Date.now());
     const newReport: any = {
       userId: submitterUid,
       userName: currentUser?.name || currentUser?.displayName || currentUser?.username || "User",
@@ -41986,7 +42310,7 @@ export default function App() {
       location: manualProjectLocation || (formData.get("site") as string) || "",
       status: "PENDING",
       priority: (formData.get("priority") as any) || "Medium",
-      time: new Date().toLocaleTimeString([], {
+      time: new Date(chosenCreatedAt).toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
       }),
@@ -41995,11 +42319,12 @@ export default function App() {
         (reportFormType === "EXPENSE"
           ? "https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=600"
           : "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?w=600"),
+      ...(photosList.length > 0 ? { photos: photosList } : {}),
       description: descText,
       ...(locationTag?.lat !== undefined ? { lat: locationTag.lat } : {}),
       ...(locationTag?.lng !== undefined ? { lng: locationTag.lng } : {}),
       ...(locationTag?.accuracy !== undefined ? { accuracy: locationTag.accuracy } : {}),
-      createdAt: Date.now(),
+      createdAt: chosenCreatedAt,
     };
     await dbService.createDocument("reports", newReport);
     saveGeneralReportToHistory(newReport);
@@ -42017,8 +42342,10 @@ export default function App() {
     setShowToast(true);
     setReportFormType(null);
     setCurrentReportPhoto(null);
+    setCurrentReportPhotos([]);
     setSelectedProjectForReport("");
     setManualProjectLocation("");
+    setGeneralReportDate(getLocalDateInputValue(0));
     setGeneralReportCategory("Kebutuhan Material & Logistik");
     setGeneralReportEstCost("");
     setGeneralReportTitle("");
@@ -42034,12 +42361,27 @@ export default function App() {
     if (!editingGeneralReport || !editingGeneralReport.id || isSavingGeneralEdit) return;
     setIsSavingGeneralEdit(true);
     try {
-      let nextImg = editingGeneralReport.img || "";
-      if (nextImg && nextImg.startsWith("data:image") && nextImg.length > 650_000) {
-        try {
-          nextImg = await compressImage(nextImg, 800, 800, 0.72);
-        } catch {}
+      let editedPhotos: string[] = Array.isArray(editingGeneralReport.photos)
+        ? [...editingGeneralReport.photos]
+        : editingGeneralReport.img && editingGeneralReport.img.startsWith("data:image")
+          ? [editingGeneralReport.img]
+          : [];
+      if (editedPhotos.length > 0) {
+        editedPhotos = await Promise.all(
+          editedPhotos.map(async (ph) => {
+            if (ph && ph.startsWith("data:image") && ph.length > 420_000) {
+              try {
+                return await compressImage(ph, 720, 720, 0.68);
+              } catch {
+                return ph;
+              }
+            }
+            return ph;
+          }),
+        );
       }
+      const nextImg = editedPhotos[0] || editingGeneralReport.img || "";
+      const nextCreatedAt = editingGeneralReport.createdAt || Date.now();
       const updatedFields: Partial<FieldReport> = {
         title: (editingGeneralReport.title || "").trim() || "Laporan Umum & Kebutuhan",
         category: editingGeneralReport.category || "Kebutuhan Material & Logistik",
@@ -42048,6 +42390,8 @@ export default function App() {
         estimatedCost: Number(editingGeneralReport.estimatedCost) || 0,
         description: (editingGeneralReport.description || "").trim(),
         img: nextImg,
+        photos: editedPhotos,
+        createdAt: nextCreatedAt,
         updatedAt: Date.now(),
       };
       await dbService.updateDocument("reports", editingGeneralReport.id, updatedFields);
@@ -54638,10 +54982,10 @@ export default function App() {
                   </div>
                   <div className="text-right">
                     <p className="text-[10px] text-slate-400 uppercase font-bold tracking-widest">
-                      Waktu Laporan
+                      Tanggal & Waktu
                     </p>
                     <p className="text-sm font-bold text-slate-800">
-                      {selectedReport?.time}
+                      {formatIndonesianDateShort(selectedReport?.createdAt)} • {selectedReport?.time}
                     </p>
                   </div>
                 </div>
@@ -54655,6 +54999,29 @@ export default function App() {
                     {selectedReport?.description}
                   </p>
                 </div>
+
+                {Array.isArray(selectedReport?.photos) && selectedReport.photos.length > 1 && (
+                  <div className="space-y-3">
+                    <h4 className="font-extrabold text-slate-900 flex items-center gap-2">
+                      <div className="w-1 h-3 bg-indigo-500 rounded-full" />
+                      Galeri Foto ({selectedReport.photos.length} Foto)
+                    </h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {selectedReport.photos.map((ph, idx) => (
+                        <div
+                          key={idx}
+                          className="aspect-square rounded-2xl overflow-hidden border border-slate-200 bg-slate-100"
+                        >
+                          <img
+                            src={ph}
+                            alt={`Dokumentasi ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <h4 className="font-extrabold text-slate-900 flex items-center gap-2">
@@ -54785,8 +55152,10 @@ export default function App() {
                   onClick={() => {
                     setReportFormType(null);
                     setCurrentReportPhoto(null);
+                    setCurrentReportPhotos([]);
                     setSelectedProjectForReport("");
                     setManualProjectLocation("");
+                    setGeneralReportDate(getLocalDateInputValue(0));
                     setGeneralReportCategory("Kebutuhan Material & Logistik");
                     setGeneralReportEstCost("");
                     setGeneralReportTitle("");
@@ -54807,6 +55176,52 @@ export default function App() {
               </div>
 
               <form onSubmit={handleReportSubmit} className="p-6 space-y-6">
+                {/* Tanggal Laporan - PALING ATAS */}
+                <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-bold text-slate-700 uppercase tracking-widest flex items-center gap-1.5">
+                      <Calendar size={14} className="text-primary" /> Tanggal Laporan
+                    </label>
+                    <span className="text-[10px] font-black text-primary">
+                      {formatIndonesianDateShort(buildTimestampForLocalDate(generalReportDate))}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                    <div className="sm:col-span-6">
+                      <input
+                        type="date"
+                        value={generalReportDate}
+                        onChange={(e) => setGeneralReportDate(e.target.value || getLocalDateInputValue(0))}
+                        className="input-field w-full bg-white text-xs font-bold py-2.5"
+                        required
+                      />
+                    </div>
+                    <div className="sm:col-span-6 flex flex-wrap gap-2">
+                      {[
+                        { label: "Hari Ini", offset: 0 },
+                        { label: "Kemarin", offset: -1 },
+                      ].map((preset) => {
+                        const presetVal = getLocalDateInputValue(preset.offset);
+                        const active = generalReportDate === presetVal;
+                        return (
+                          <button
+                            key={preset.label}
+                            type="button"
+                            onClick={() => setGeneralReportDate(presetVal)}
+                            className={`px-3 py-2 rounded-xl text-[10px] font-black transition-all cursor-pointer border ${
+                              active
+                                ? "bg-primary text-white border-primary"
+                                : "bg-white text-slate-600 border-slate-200 hover:border-primary/40"
+                            }`}
+                          >
+                            {preset.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
                 {/* Kategori Laporan Umum */}
                 <div className="flex flex-col space-y-2">
                   <label className="text-xs font-bold text-slate-500 uppercase tracking-widest pl-1">
@@ -54964,44 +55379,52 @@ export default function App() {
                   />
                 </div>
 
-                {/* Dokumentasi Foto Lapangan */}
+                {/* Dokumentasi Foto Lapangan (Multi-Select Galeri + Kamera Geotag) */}
                 <div className="space-y-3">
-                  <label className="text-xs font-bold text-slate-500 uppercase tracking-widest pl-1">
-                    Dokumentasi Foto Lapangan
-                  </label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-slate-500 uppercase tracking-widest pl-1">
+                      Dokumentasi Foto Lapangan
+                    </label>
+                    <span className="text-[10px] font-black text-slate-500 bg-slate-100 px-2.5 py-0.5 rounded-full">
+                      {currentReportPhotos.length}/12 Foto
+                    </span>
+                  </div>
 
-                  {currentReportPhoto ? (
-                    <div className="relative rounded-3xl overflow-hidden border-2 border-primary shadow-lg group aspect-video sm:aspect-2/1 bg-black">
-                      <img
-                        src={currentReportPhoto}
-                        alt="Foto Terpilih"
-                        className="w-full h-full object-contain"
-                      />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                        <button
-                          type="button"
-                          onClick={() => setIsSingleReportCameraOpen(true)}
-                          className="px-4 py-2.5 bg-primary text-white text-xs font-bold rounded-xl flex items-center gap-2 shadow-lg active:scale-95 transition-all cursor-pointer"
+                  {currentReportPhotos.length > 0 && (
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                      {currentReportPhotos.map((ph, idx) => (
+                        <div
+                          key={idx}
+                          className="relative aspect-square rounded-2xl overflow-hidden border border-slate-200 bg-slate-100 group"
                         >
-                          <Camera size={16} /> Foto Ulang (Geotag)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setCurrentReportPhoto(null)}
-                          className="px-4 py-2.5 bg-rose-500 text-white text-xs font-bold rounded-xl flex items-center gap-2 shadow-lg active:scale-95 transition-all cursor-pointer"
-                        >
-                          <Trash2 size={16} /> Hapus
-                        </button>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setCurrentReportPhoto(null)}
-                        className="absolute top-3 right-3 p-2 bg-rose-500 text-white rounded-xl shadow-md sm:hidden cursor-pointer"
-                      >
-                        <X size={16} />
-                      </button>
+                          <img
+                            src={ph}
+                            alt={`Foto Terpilih ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                          <span className="absolute bottom-1.5 left-1.5 px-1.5 py-0.5 rounded bg-slate-900/70 text-white text-[9px] font-black">
+                            #{idx + 1}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCurrentReportPhotos((prev) => {
+                                const next = prev.filter((_, i) => i !== idx);
+                                setCurrentReportPhoto(next[0] || null);
+                                return next;
+                              });
+                            }}
+                            className="absolute top-1.5 right-1.5 p-1.5 bg-rose-500 text-white rounded-lg shadow-md cursor-pointer"
+                            title="Hapus foto"
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ) : (
+                  )}
+
+                  {currentReportPhotos.length < 12 && (
                     <div className="grid grid-cols-2 gap-4">
                       {/* Tombol Kamera Geotag */}
                       <button
@@ -55022,31 +55445,46 @@ export default function App() {
                         </div>
                       </button>
 
-                      {/* Tombol Unggah Galeri */}
-                      <label className="h-32 border-2 border-dashed border-slate-200 bg-slate-50 hover:bg-slate-100 hover:border-slate-300 rounded-[28px] flex flex-col items-center justify-center gap-2 transition-all active:scale-95 text-slate-600 cursor-pointer group">
-                        <div className="w-10 h-10 rounded-2xl bg-white border border-slate-200 text-slate-500 flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
-                          <CloudUpload size={20} />
+                      {/* Tombol Unggah Galeri Multi-Select */}
+                      <label className="h-32 border-2 border-dashed border-emerald-300 bg-emerald-50/60 hover:bg-emerald-50 hover:border-emerald-400 rounded-[28px] flex flex-col items-center justify-center gap-2 transition-all active:scale-95 text-emerald-800 cursor-pointer group">
+                        <div className="w-10 h-10 rounded-2xl bg-white border border-emerald-200 text-emerald-600 flex items-center justify-center shadow-xs group-hover:scale-105 transition-transform">
+                          {isUploadingGeneralPhotos ? (
+                            <Loader2 size={20} className="animate-spin text-emerald-600" />
+                          ) : (
+                            <CloudUpload size={20} />
+                          )}
                         </div>
-                        <div className="text-center">
+                        <div className="text-center px-2">
                           <span className="text-[10px] font-black uppercase tracking-wider block">
-                            Pilih dari Galeri
+                            {isUploadingGeneralPhotos ? "Memproses..." : "Pilih Banyak Foto (Galeri)"}
                           </span>
-                          <span className="text-[8px] opacity-60 font-semibold block">
-                            Unggah File Foto
+                          <span className="text-[8px] text-emerald-700/80 font-bold block">
+                            Bisa pilih banyak foto sekaligus
                           </span>
                         </div>
                         <input
                           id="report-photo-input"
                           type="file"
                           accept="image/*"
+                          multiple
                           className="hidden"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (file) {
-                              const reader = new FileReader();
-                              reader.onloadend = () =>
-                                setCurrentReportPhoto(reader.result as string);
-                              reader.readAsDataURL(file as Blob);
+                          onChange={async (e) => {
+                            const inputEl = e.currentTarget;
+                            const fileList = inputEl.files;
+                            if (!fileList || fileList.length === 0) return;
+                            setIsUploadingGeneralPhotos(true);
+                            try {
+                              const batch = await readAndCompressActivityPhotos(fileList, 760, 0.72);
+                              if (batch.length > 0) {
+                                setCurrentReportPhotos((prev) => {
+                                  const next = [...prev, ...batch].slice(0, 12);
+                                  setCurrentReportPhoto(next[0] || null);
+                                  return next;
+                                });
+                              }
+                            } finally {
+                              setIsUploadingGeneralPhotos(false);
+                              inputEl.value = "";
                             }
                           }}
                         />
@@ -55066,7 +55504,17 @@ export default function App() {
               <GeotagCameraModal
                 isOpen={isSingleReportCameraOpen}
                 onClose={() => setIsSingleReportCameraOpen(false)}
-                onCapture={(photo) => setCurrentReportPhoto(photo)}
+                onCapture={async (photo) => {
+                  let finalPhoto = photo;
+                  try {
+                    finalPhoto = await compressImage(photo, 760, 760, 0.72);
+                  } catch {}
+                  setCurrentReportPhotos((prev) => {
+                    const next = [...prev, finalPhoto].slice(0, 12);
+                    setCurrentReportPhoto(next[0] || null);
+                    return next;
+                  });
+                }}
                 initialData={{
                   projectName: manualProjectLocation || selectedProjectForReport || "Proyek Lapangan",
                   jobTitle: generalReportTitle || "Laporan Lapangan",
@@ -59421,6 +59869,28 @@ case "izin-cuti":
 
             <div className="p-5 overflow-y-auto space-y-4">
               <div>
+                <label className="text-[10px] font-black text-indigo-700 uppercase tracking-wider block mb-1.5">
+                  Tanggal Laporan
+                </label>
+                <input
+                  type="date"
+                  value={(() => {
+                    const d = new Date(editingGeneralReport.createdAt || Date.now());
+                    if (isNaN(d.getTime())) return getLocalDateInputValue(0);
+                    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                  })()}
+                  onChange={(e) => {
+                    const nextTs = buildTimestampForLocalDate(
+                      e.target.value,
+                      editingGeneralReport.createdAt || Date.now(),
+                    );
+                    setEditingGeneralReport({ ...editingGeneralReport, createdAt: nextTs });
+                  }}
+                  className="input-field w-full text-xs font-bold bg-indigo-50/40"
+                />
+              </div>
+
+              <div>
                 <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
                   Kategori Laporan
                 </label>
@@ -59544,6 +60014,77 @@ case "izin-cuti":
                   required
                 />
               </div>
+
+              {/* Multi-Photo Editor */}
+              {(() => {
+                const modalPhotos = Array.isArray(editingGeneralReport.photos)
+                  ? editingGeneralReport.photos
+                  : editingGeneralReport.img && editingGeneralReport.img.startsWith("data:image")
+                    ? [editingGeneralReport.img]
+                    : [];
+                return (
+                  <div className="space-y-2 pt-2 border-t border-slate-100">
+                    <div className="flex items-center justify-between">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider">
+                        Dokumentasi Foto ({modalPhotos.length}/12)
+                      </label>
+                      {modalPhotos.length < 12 && (
+                        <label className="inline-flex items-center gap-1.5 px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-[10px] font-black cursor-pointer">
+                          <CloudUpload size={12} />
+                          <span>Tambah Banyak Foto</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            multiple
+                            className="hidden"
+                            onChange={async (e) => {
+                              const inputEl = e.currentTarget;
+                              const fileList = inputEl.files;
+                              if (!fileList || fileList.length === 0) return;
+                              try {
+                                const batch = await readAndCompressActivityPhotos(fileList, 760, 0.72);
+                                if (batch.length > 0) {
+                                  const next = [...modalPhotos, ...batch].slice(0, 12);
+                                  setEditingGeneralReport({
+                                    ...editingGeneralReport,
+                                    photos: next,
+                                    img: next[0] || editingGeneralReport.img || "",
+                                  });
+                                }
+                              } finally {
+                                inputEl.value = "";
+                              }
+                            }}
+                          />
+                        </label>
+                      )}
+                    </div>
+                    {modalPhotos.length > 0 && (
+                      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                        {modalPhotos.map((ph, idx) => (
+                          <div key={idx} className="relative aspect-square rounded-xl overflow-hidden border border-slate-200 bg-slate-100">
+                            <img src={ph} alt={`Foto ${idx + 1}`} className="w-full h-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = modalPhotos.filter((_, i) => i !== idx);
+                                setEditingGeneralReport({
+                                  ...editingGeneralReport,
+                                  photos: next,
+                                  img: next[0] || "",
+                                });
+                              }}
+                              className="absolute top-1 right-1 p-1 bg-rose-500 text-white rounded-md shadow cursor-pointer"
+                            >
+                              <X size={11} />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="p-4 border-t border-slate-100 bg-slate-50 flex items-center justify-between gap-2">

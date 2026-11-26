@@ -14,19 +14,30 @@ import autoTable from 'jspdf-autotable';
 import { DocumentPreviewModal } from './DocumentPreviewModal';
 
 // Interfaces for relational design
+export interface CatalogPackageItem {
+  id?: string;
+  description: string;
+  vol: number;
+  unit: string;
+  unitPrice: number;
+  costPrice?: number;
+  total: number;
+  specifications?: any;
+}
+
 export interface CatalogItem {
   id: string;
   name: string;
   sku: string; // Auto-generated code
   category: string;
   subCategory: string;
-  type: 'barang' | 'jasa';
+  type: 'barang' | 'jasa' | 'barang_dan_jasa';
   brand: string;
-  priceItem: number; // Harga barang / jual
+  priceItem: number; // Harga barang / jual (atau Grand Total untuk Barang dan Jasa)
   priceService: number; // Harga jasa
   priceInstallation: number; // Harga instalasi
   costPrice?: number; // Harga modal / HPP
-  unit: string; // Satuan (pcs, set, lot, lot/meter, etc.)
+  unit: string; // Satuan (pcs, set, lot, paket, etc.)
   description: string;
   specifications: string; // Full specifications (newline list or serialized text)
   material: string;
@@ -53,23 +64,38 @@ export interface CatalogItem {
   manpowerQty?: number;
   manpowerRate?: number;
   manpowerDays?: number;
+  // Fields for intact "Barang dan Jasa" SPH entries
+  quotationId?: string;
+  quotationNumber?: string;
+  quotationDate?: string;
+  recipient?: string;
+  projectName?: string;
+  subTotal?: number;
+  discountAmount?: number;
+  shippingCost?: number;
+  serviceFee?: number;
+  tax?: number;
+  grandTotal?: number;
+  notes?: string;
+  paymentTerms?: string;
+  packageItems?: CatalogPackageItem[];
 }
 
 // Preset Categories based on prompt
 export const CATALOG_CATEGORIES = [
   { id: 'all', label: 'Semua Kategori', icon: Layers },
-  { id: 'pompa', label: 'Pompa', icon: HardDrive, desc: 'Centrifugal Pump, Submersible, Dosing, Booster, etc.' },
+  { id: 'fabrikasi-tangki', label: 'Fabrikasi Tangki', icon: Box, desc: 'Septictank, Tangki Air, Roof Tank, Ground Tank, Biofilter FRP, Mild Steel & SS Tank' },
+  { id: 'dosing-pump', label: 'Dosing Pump', icon: Sparkles, desc: 'Metoda dosing presisi bahan kimia STP/WTP' },
+  { id: 'pompa', label: 'Pompa', icon: HardDrive, desc: 'Centrifugal Pump, Submersible, Booster, Transfer, Sludge, etc.' },
   { id: 'blower', label: 'Blower', icon: RefreshCw, desc: 'Root Blower, Ring Blower, Turbo Blower, dll.' },
   { id: 'diffuser', label: 'Diffuser', icon: Compass, desc: 'Fine Bubble & Coarse Bubble Diffuser' },
-  { id: 'dosing pump', label: 'Dosing Pump', icon: Sparkles, desc: 'Metoda dosing presisi bahan kimia STP/WTP' },
-  { id: 'mbbr media', label: 'MBBR Media', icon: Box, desc: 'Media bakteri MBBR K1, K3, K5 Carrier' },
+  { id: 'piping', label: 'Piping', icon: Settings, desc: 'Pipa PVC, HDPE, Stainless Steel, Valve, Fitting & Aksesoris' },
+  { id: 'mbbr-media', label: 'MBBR Media', icon: Box, desc: 'Media bakteri MBBR K1, K3, K5 Carrier & Honeycomb' },
   { id: 'membrane', label: 'Membrane', icon: Layers, desc: 'Membran Sandfilter, Ultrafiltrasi, RO, MBR' },
-  { id: 'panel listrik', label: 'Panel Listrik', icon: Settings, desc: 'Panel SDP, ATS/AMF, Panel Starter Inverter, dll.' },
-  { id: 'fabrikasi tanki', label: 'Fabrikasi Tanki', icon: Box, desc: 'FRP Tank, Mild Steel Epoxy, SS304/SS316 Tank' },
-  { id: 'piping', label: 'Piping', icon: Settings, desc: 'Pemasangan pipa PVC, HDPE, Stainless Steel, Carbon Steel' },
-  { id: 'mechanical', label: 'Mechanical', icon: Settings, desc: 'Skid frame, agitator mixer, belt conveyor pompa' },
+  { id: 'panel-listrik', label: 'Panel Listrik', icon: Settings, desc: 'Panel SDP, ATS/AMF, Panel Starter Inverter, dll.' },
+  { id: 'mechanical', label: 'Mechanical', icon: Settings, desc: 'Skid frame, agitator mixer, screen, filter press' },
   { id: 'electrical', label: 'Electrical', icon: Sparkles, desc: 'Instrumentasi sensor pH, DO, flowmeter water, kabel' },
-  { id: 'service maintenance', label: 'Service Maintenance', icon: PhoneCall, desc: 'Pembersihan STP, overhaul blower, kalibrasi sensor' }
+  { id: 'service-maintenance', label: 'Service Maintenance', icon: PhoneCall, desc: 'Pembersihan STP, overhaul blower, kalibrasi sensor' }
 ];
 
 // Preset Categories for Services / Jasa
@@ -80,12 +106,115 @@ export const SERVICE_CATEGORIES = [
   { id: 'instalasi-wtp', label: 'Instalasi WTP', icon: HardDrive, desc: 'Pekerjaan pemasangan sistem WTP (Water Treatment Plant)' },
   { id: 'instalasi-ipal', label: 'Instalasi IPAL', icon: Compass, desc: 'Instalasi pengolahan air limbah medis / IPAL' },
   { id: 'plumbing-piping', label: 'Plumbing & Piping', icon: Settings, desc: 'Instalasi, penyambungan, leak-test pemipaan air & udara' },
-  { id: 'service-maintenance', label: 'Service & Maintenance', icon: PhoneCall, desc: 'Overhaul unit blower, pompa transfer, kalibrasi sensor' },
+  { id: 'jasa-service-maintenance', label: 'Service & Maintenance', icon: PhoneCall, desc: 'Overhaul unit blower, pompa transfer, kalibrasi sensor' },
   { id: 'electrical-automation', label: 'Electrical & Automation', icon: Sparkles, desc: 'Pemasangan control panel, inverter, sensor, dsb.' }
 ];
 
+// Preset Categories for Intact SPH Packages (Barang dan Jasa)
+export const SPH_PACKAGE_CATEGORIES = [
+  { id: 'all-package', label: 'Semua Paket SPH', icon: Layers },
+  { id: 'paket-stp-ipal', label: 'Paket STP / IPAL', icon: Building, desc: 'Penawaran utuh pengadaan & instalasi STP / IPAL' },
+  { id: 'paket-wwtp', label: 'Paket WWTP', icon: RefreshCw, desc: 'Penawaran utuh sistem WWTP industri' },
+  { id: 'paket-wtp-ro', label: 'Paket WTP / RO', icon: HardDrive, desc: 'Penawaran utuh pengolahan air bersih, UF & RO' },
+  { id: 'paket-fabrikasi-piping', label: 'Paket Fabrikasi & Piping', icon: Box, desc: 'Penawaran utuh tangki fabrikasi beserta pemasangan pipa' },
+  { id: 'paket-me', label: 'Paket Mechanical & Electrical', icon: Settings, desc: 'Penawaran utuh pompa, blower, panel & instalasi' },
+  { id: 'paket-barang-jasa', label: 'Paket Barang & Jasa', icon: Briefcase, desc: 'Penawaran terpadu pengadaan barang dan jasa' }
+];
+
+export function isGenericLegacyCategory(cat?: string): boolean {
+  const norm = (cat || '').toLowerCase().trim();
+  return !norm || norm === 'barang' || norm === 'jasa' || norm === 'barang dan jasa' || norm === 'barang & jasa';
+}
+
+export function normalizeCategoryLabel(cat?: string): string {
+  const trimmed = (cat || '').trim();
+  if (!trimmed) return '';
+  if (trimmed.toLowerCase() === 'fabrikasi tanki') return 'Fabrikasi Tangki';
+  return trimmed;
+}
+
+export function inferCatalogCategory(
+  name: string,
+  specs?: string,
+  targetType: 'barang' | 'jasa' | 'barang_dan_jasa' = 'barang'
+): string {
+  const text = `${name || ''} ${specs || ''}`.toLowerCase();
+
+  if (targetType === 'barang_dan_jasa') {
+    if (/(stp|ipal|sewage|biofilter|bioseptic|septictank|septic tank)/.test(text)) return 'Paket STP / IPAL';
+    if (/(wwtp|waste water|limbah)/.test(text)) return 'Paket WWTP';
+    if (/(wtp|water treatment|reverse osmosis|\bro\b|ultrafiltrasi|\buf\b|sand filter|carbon filter)/.test(text)) return 'Paket WTP / RO';
+    if (/(tangki|tanki|rooftank|roof tank|ground tank|piping|pipa)/.test(text)) return 'Paket Fabrikasi & Piping';
+    if (/(panel|pompa|pump|blower|electrical|mechanical)/.test(text)) return 'Paket Mechanical & Electrical';
+    return 'Paket Barang & Jasa';
+  }
+
+  if (targetType === 'jasa') {
+    if (/\bstp\b|sewage|biofilter/.test(text)) return 'Instalasi STP';
+    if (/\bwwtp\b|waste water|limbah industri/.test(text)) return 'Instalasi WWTP';
+    if (/\bwtp\b|water treatment|reverse osmosis/.test(text)) return 'Instalasi WTP';
+    if (/\bipal\b/.test(text)) return 'Instalasi IPAL';
+    if (/(pipa|piping|plumbing|leak.?test)/.test(text)) return 'Plumbing & Piping';
+    if (/(panel|inverter|sensor|electrical|kabel|wiring|automasi|automation)/.test(text)) return 'Electrical & Automation';
+    return 'Service & Maintenance';
+  }
+
+  // Equipment (barang) specific category matching — order matters!
+  if (/(dosing\s*pump|pompa\s*dosing|chemical\s*dosing|\bseko\b|\blmi\b|\btacmina\b|pulsafeeder)/.test(text)) {
+    return 'Dosing Pump';
+  }
+  if (/(septictank|septic\s*tank|bioseptic|bio\s*septic|tangki|tanki|rooftank|roof\s*tank|groundtank|ground\s*tank|biofilter|bio\s*filter|grease\s*trap|clarifier|equalisasi|bak\s*frp|bak\s*kontrol|frp\s*tank|holding\s*tank|storage\s*tank|water\s*tank|tandon|panel\s*tank)/.test(text)) {
+    return 'Fabrikasi Tangki';
+  }
+  if (/(blower|root\s*blower|ring\s*blower|turbo\s*blower|\bfutsu\b|\banlet\b|\bshowfou\b|\bhiblow\b)/.test(text)) {
+    return 'Blower';
+  }
+  if (/(diffuser|fine\s*bubble|coarse\s*bubble|disc\s*diffuser|tube\s*diffuser)/.test(text)) {
+    return 'Diffuser';
+  }
+  if (/(pompa|pump|\bebara\b|\bgrundfos\b|\bwilo\b|\btsurumi\b|submersible|centrifugal|booster|sump\s*pump|sludge\s*pump)/.test(text)) {
+    return 'Pompa';
+  }
+  if (/(mbbr|sarang\s*tawon|honeycomb|bio\s*ball|bioball|media\s*bakteri|lamella|\bk1\b|\bk3\b|\bk5\b)/.test(text)) {
+    return 'MBBR Media';
+  }
+  if (/(membran|membrane|sand\s*filter|carbon\s*filter|ultrafiltrasi|reverse\s*osmosis|cartridge|housing\s*filter|\bmbr\b|frp\s*vessel)/.test(text)) {
+    return 'Membrane';
+  }
+  if (/(panel|inverter|\bvfd\b|\bats\b|\bamf\b|\bsdp\b|\bmccb\b|kontaktor|\bplc\b|star\s*delta)/.test(text)) {
+    return 'Panel Listrik';
+  }
+  if (/(piping|pipa|\bpvc\b|\bhdpe\b|fitting|\bvalve\b|flange|elbow|check\s*valve|gate\s*valve|ball\s*valve|butterfly\s*valve)/.test(text)) {
+    return 'Piping';
+  }
+  if (/(sensor|flowmeter|flow\s*meter|ph\s*meter|do\s*meter|level\s*switch|float\s*switch|kabel|\bnyy\b|transducer)/.test(text)) {
+    return 'Electrical';
+  }
+  if (/(mixer|agitator|skid|screen|bar\s*screen|rotary\s*screen|filter\s*press|belt\s*conveyor)/.test(text)) {
+    return 'Mechanical';
+  }
+  if (/(service|maintenance|overhaul|kalibrasi|kuras|pembersihan)/.test(text)) {
+    return 'Service Maintenance';
+  }
+  return 'Mechanical';
+}
+
+export function resolveItemDisplayCategory(item: Partial<CatalogItem>): string {
+  const norm = normalizeCategoryLabel(item.category);
+  const itemType = item.type || 'barang';
+  if (!isGenericLegacyCategory(norm)) {
+    return norm;
+  }
+  return inferCatalogCategory(item.name || '', item.specifications || item.description || '', itemType);
+}
+
 // Helper utility to calculate total cost
 export function getItemTotalCost(item: CatalogItem): number {
+  if (item.type === 'barang_dan_jasa') {
+    if (typeof item.grandTotal === 'number' && item.grandTotal > 0) return item.grandTotal;
+    if (typeof item.priceItem === 'number' && item.priceItem > 0) return item.priceItem;
+    return (item.packageItems || []).reduce((acc, curr) => acc + ((curr.vol || 0) * (curr.unitPrice || 0)), 0);
+  }
   if (item.type === 'jasa') {
     const basicServiceFee = item.priceService || 0;
     const materialCost = (item.neededItems || []).reduce((acc, curr) => acc + ((curr.qty || 0) * (curr.price || 0)), 0);
@@ -111,17 +240,22 @@ export const EKatalog: React.FC<{
   // Generate categories based on static list + database items with custom ones
   const dynamicCatalogCategories = useMemo(() => {
     const list = [...CATALOG_CATEGORIES];
-    // Find categories in items that aren't in CATALOG_CATEGORIES
     items.forEach(item => {
-      if (item.type === 'barang' && item.category) {
-        const isExist = list.some(c => c.label.toLowerCase().trim() === item.category.toLowerCase().trim() || c.id === item.category.toLowerCase().replace(/\s+/g, ''));
-        if (!isExist) {
-          list.push({
-            id: item.category.toLowerCase().replace(/\s+/g, '-'),
-            label: item.category,
-            icon: Tag,
-            desc: `Kategori kustom: ${item.category}`
-          });
+      if (item.type === 'barang') {
+        const resolved = resolveItemDisplayCategory(item);
+        if (resolved) {
+          const isExist = list.some(c =>
+            c.label.toLowerCase().trim() === resolved.toLowerCase().trim() ||
+            c.id === resolved.toLowerCase().replace(/\s+/g, '-')
+          );
+          if (!isExist) {
+            list.push({
+              id: resolved.toLowerCase().replace(/\s+/g, '-'),
+              label: resolved,
+              icon: Tag,
+              desc: `Kategori: ${resolved}`
+            });
+          }
         }
       }
     });
@@ -130,22 +264,65 @@ export const EKatalog: React.FC<{
 
   const dynamicServiceCategories = useMemo(() => {
     const list = [...SERVICE_CATEGORIES];
-    // Find categories in items that aren't in SERVICE_CATEGORIES
     items.forEach(item => {
-      if (item.type === 'jasa' && item.category) {
-        const isExist = list.some(c => c.label.toLowerCase().trim() === item.category.toLowerCase().trim() || c.id === item.category.toLowerCase().replace(/\s+/g, ''));
-        if (!isExist) {
-          list.push({
-            id: item.category.toLowerCase().replace(/\s+/g, '-'),
-            label: item.category,
-            icon: Tag,
-            desc: `Kategori jasa kustom: ${item.category}`
-          });
+      if (item.type === 'jasa') {
+        const resolved = resolveItemDisplayCategory(item);
+        if (resolved) {
+          const isExist = list.some(c =>
+            c.label.toLowerCase().trim() === resolved.toLowerCase().trim() ||
+            c.id === resolved.toLowerCase().replace(/\s+/g, '-')
+          );
+          if (!isExist) {
+            list.push({
+              id: resolved.toLowerCase().replace(/\s+/g, '-'),
+              label: resolved,
+              icon: Tag,
+              desc: `Kategori jasa: ${resolved}`
+            });
+          }
         }
       }
     });
     return list;
   }, [items]);
+
+  const dynamicPackageCategories = useMemo(() => {
+    const list = [...SPH_PACKAGE_CATEGORIES];
+    items.forEach(item => {
+      if (item.type === 'barang_dan_jasa') {
+        const resolved = resolveItemDisplayCategory(item);
+        if (resolved) {
+          const isExist = list.some(c =>
+            c.label.toLowerCase().trim() === resolved.toLowerCase().trim() ||
+            c.id === resolved.toLowerCase().replace(/\s+/g, '-')
+          );
+          if (!isExist) {
+            list.push({
+              id: resolved.toLowerCase().replace(/\s+/g, '-'),
+              label: resolved,
+              icon: Briefcase,
+              desc: `Paket SPH: ${resolved}`
+            });
+          }
+        }
+      }
+    });
+    return list;
+  }, [items]);
+
+  const dynamicAllCategories = useMemo(() => {
+    const list = [...dynamicCatalogCategories];
+    [...dynamicServiceCategories, ...dynamicPackageCategories].forEach(c => {
+      if (c.id === 'all-service' || c.id === 'all-package' || c.id === 'all') return;
+      const exists = list.some(
+        x =>
+          x.id === c.id ||
+          x.label.toLowerCase().trim() === c.label.toLowerCase().trim()
+      );
+      if (!exists) list.push(c);
+    });
+    return list;
+  }, [dynamicCatalogCategories, dynamicServiceCategories, dynamicPackageCategories]);
 
   const [loading, setLoading] = useState(true);
 
@@ -154,11 +331,13 @@ export const EKatalog: React.FC<{
   // Search and Advanced Filters State
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
-  const [selectedType, setSelectedType] = useState<'all' | 'barang' | 'jasa'>('all');
+  const [selectedType, setSelectedType] = useState<'all' | 'barang' | 'jasa' | 'barang_dan_jasa'>('all');
 
   useEffect(() => {
     if (selectedType === 'jasa') {
       setSelectedCategory('all-service');
+    } else if (selectedType === 'barang_dan_jasa') {
+      setSelectedCategory('all-package');
     } else {
       setSelectedCategory('all');
     }
@@ -883,26 +1062,83 @@ export const EKatalog: React.FC<{
     }
   };
 
+  // Count legacy items whose stored category is still generic ("Barang", "Jasa", "Barang dan Jasa", "Fabrikasi Tanki")
+  const legacyMiscategorizedItems = useMemo(() => {
+    return items.filter(it =>
+      isGenericLegacyCategory(it.category) ||
+      (it.category || '').trim().toLowerCase() === 'fabrikasi tanki'
+    );
+  }, [items]);
+
+  const handleNormalizeLegacyCategories = async () => {
+    if (legacyMiscategorizedItems.length === 0) return;
+    if (!window.confirm(`Rapikan kategori otomatis untuk ${legacyMiscategorizedItems.length} item katalog ke kategori spesifik masing-masing (mis. Fabrikasi Tangki, Dosing Pump, Pompa, Blower, dll.)?`)) {
+      return;
+    }
+    try {
+      setLoading(true);
+      for (const it of legacyMiscategorizedItems) {
+        const resolved = resolveItemDisplayCategory(it);
+        if (resolved && resolved !== it.category) {
+          await dbService.updateDocument('catalog', it.id, {
+            category: resolved,
+            lastUpdate: new Date().toISOString()
+          });
+        }
+      }
+      alert('Kategori E-Katalog berhasil dirapikan!');
+    } catch (err) {
+      console.error('Gagal merapikan kategori:', err);
+      alert('Gagal merapikan kategori: ' + String(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Helper to check if an item's resolved category matches a category pill/filter id or label
+  const matchesSelectedCategory = (item: CatalogItem, catFilter: string): boolean => {
+    if (catFilter === 'all' || catFilter === 'all-service' || catFilter === 'all-package') return true;
+    const resolved = resolveItemDisplayCategory(item).toLowerCase().trim();
+    const filterNorm = catFilter.toLowerCase().trim();
+    const resolvedSlug = resolved.replace(/\s+/g, '-');
+    const resolvedCompact = resolved.replace(/\s+/g, '');
+    const filterSlug = filterNorm.replace(/\s+/g, '-');
+    const filterCompact = filterNorm.replace(/\s+/g, '');
+    if (resolved === filterNorm || resolvedSlug === filterSlug || resolvedCompact === filterCompact) return true;
+    // Also match via active category definitions so label/id always match
+    const allCatDefs = [...CATALOG_CATEGORIES, ...SERVICE_CATEGORIES, ...SPH_PACKAGE_CATEGORIES];
+    const matchedDef = allCatDefs.find(c => c.id === catFilter || c.label.toLowerCase() === filterNorm);
+    if (matchedDef && resolved === matchedDef.label.toLowerCase().trim()) return true;
+    return false;
+  };
+
   // Filtering Logic (Multi-Filter Support)
   const filteredItems = useMemo(() => {
     return items.filter(item => {
-      // 1. Search Query (Matches Name, Category, Brand, Specs, SKU, Status)
+      const resolvedCat = resolveItemDisplayCategory(item);
+      // 1. Search Query (Matches Name, Category, Brand, Specs, SKU, or SPH Package items)
       const q = searchQuery.toLowerCase().trim();
+      const packageText = (item.packageItems || [])
+        .map(p => `${p.description || ''} ${Array.isArray(p.specifications) ? p.specifications.map((s: any) => `${s.key || ''} ${s.value || ''}`).join(' ') : ''}`)
+        .join(' ')
+        .toLowerCase();
       const matchQuery = !q ? true : (
         (item.name || '').toLowerCase().includes(q) ||
         (item.sku || '').toLowerCase().includes(q) ||
         (item.category || '').toLowerCase().includes(q) ||
+        resolvedCat.toLowerCase().includes(q) ||
         (item.brand || '').toLowerCase().includes(q) ||
         (item.description || '').toLowerCase().includes(q) ||
         (item.specifications || '').toLowerCase().includes(q) ||
-        (item.detailWork || '').toLowerCase().includes(q)
+        (item.detailWork || '').toLowerCase().includes(q) ||
+        (item.quotationNumber || '').toLowerCase().includes(q) ||
+        (item.recipient || '').toLowerCase().includes(q) ||
+        (item.projectName || '').toLowerCase().includes(q) ||
+        packageText.includes(q)
       );
 
       // 2. Sidebar / Top Category
-      const matchCategory = selectedCategory === 'all' || selectedCategory === 'all-service' || 
-        item.category.toLowerCase().replace(/\s+/g, '') === selectedCategory.toLowerCase().replace(/\s+/g, '') ||
-        item.category.toLowerCase().replace(/\s+/g, '-') === selectedCategory.toLowerCase().trim() ||
-        item.category.toLowerCase().trim() === selectedCategory.toLowerCase().trim();
+      const matchCategory = matchesSelectedCategory(item, selectedCategory);
 
       // 3. Type Filter
       const matchType = selectedType === 'all' || item.type === selectedType;
@@ -913,7 +1149,7 @@ export const EKatalog: React.FC<{
       // 5. Active Status Filter
       const matchStatus = statusFilter === 'all' || item.status === statusFilter;
 
-      // 6. Price Range Filter (matches sum of item price or services depending on user focus, checking max price constraints)
+      // 6. Price Range Filter
       const minVal = parseFloat(priceRange.min);
       const maxVal = parseFloat(priceRange.max);
       const totalCost = getItemTotalCost(item);
@@ -949,8 +1185,9 @@ export const EKatalog: React.FC<{
     const totalCount = items.length;
     const totalBarang = items.filter(i => i.type === 'barang').length;
     const totalJasa = items.filter(i => i.type === 'jasa').length;
+    const totalBarangDanJasa = items.filter(i => i.type === 'barang_dan_jasa').length;
     
-    const uniqueCategories = new Set(items.map(i => i.category.toLowerCase().trim())).size;
+    const uniqueCategories = new Set(items.map(i => resolveItemDisplayCategory(i).toLowerCase().trim()).filter(Boolean)).size;
     
     // Newest Product
     let newestName = '-';
@@ -976,6 +1213,7 @@ export const EKatalog: React.FC<{
       totalCount,
       totalBarang,
       totalJasa,
+      totalBarangDanJasa,
       uniqueCategories,
       newestName,
       mostViewedName: maxViews > 0 ? mostViewedName : '-'
@@ -1088,10 +1326,11 @@ export const EKatalog: React.FC<{
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         {[
           { label: 'Total Katalog', val: stats.totalCount, color: 'text-indigo-600 bg-indigo-50 border-indigo-100', icon: Box },
-          { label: 'Total Barang', val: stats.totalBarang, color: 'text-amber-500 bg-amber-50 border-amber-100', icon: ShoppingBag },
-          { label: 'Total Jasa', val: stats.totalJasa, color: 'text-emerald-600 bg-emerald-50 border-emerald-100', icon: Briefcase },
+          { label: 'Barang (Equipment)', val: stats.totalBarang, color: 'text-amber-600 bg-amber-50 border-amber-100', icon: ShoppingBag },
+          { label: 'Jasa', val: stats.totalJasa, color: 'text-emerald-600 bg-emerald-50 border-emerald-100', icon: Briefcase },
+          { label: 'Barang & Jasa (SPH)', val: stats.totalBarangDanJasa, color: 'text-violet-600 bg-violet-50 border-violet-100', icon: FileCheck },
           { label: 'Total Kategori', val: stats.uniqueCategories, color: 'text-rose-600 bg-rose-50 border-rose-100', icon: Layers },
-          { label: 'Produk Teranyar', val: stats.newestName, isString: true, color: 'text-slate-800 bg-slate-50 border-slate-100 lg:col-span-2' },
+          { label: 'Teranyar', val: stats.newestName, isString: true, color: 'text-slate-800 bg-slate-50 border-slate-100' },
         ].map((s, i) => (
           <div key={i} className={`p-5 rounded-3xl border ${s.color} hover:-translate-y-1 transition duration-200 shadow-sm flex flex-col justify-between min-h-[110px]`}>
             <div className="flex justify-between items-center">
@@ -1140,29 +1379,86 @@ export const EKatalog: React.FC<{
       </div>
 
       {activeMode === 'catalog' && (
+        <div className="space-y-4">
+          {/* Kelompok Umum (Barang / Jasa / Barang dan Jasa) Quick Switcher */}
+          <div className="bg-white p-3 rounded-[2rem] border border-slate-100 shadow-sm flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 px-3">Kelompok Umum:</span>
+              {[
+                { id: 'all', label: 'Semua', count: items.length },
+                { id: 'barang', label: 'Barang (Equipment & Spek)', count: stats.totalBarang },
+                { id: 'jasa', label: 'Jasa', count: stats.totalJasa },
+                { id: 'barang_dan_jasa', label: 'Barang & Jasa (SPH Utuh)', count: stats.totalBarangDanJasa },
+              ].map((grp) => (
+                <button
+                  key={grp.id}
+                  type="button"
+                  onClick={() => setSelectedType(grp.id as any)}
+                  className={`px-4 py-2 rounded-2xl text-xs font-black transition flex items-center gap-2 cursor-pointer ${
+                    selectedType === grp.id
+                      ? grp.id === 'barang'
+                        ? 'bg-amber-500 text-white shadow-sm'
+                        : grp.id === 'jasa'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : grp.id === 'barang_dan_jasa'
+                        ? 'bg-violet-600 text-white shadow-sm'
+                        : 'bg-slate-900 text-white shadow-sm'
+                      : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  <span>{grp.label}</span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] ${
+                    selectedType === grp.id ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-600'
+                  }`}>
+                    {grp.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+            {user?.role === 'admin' && legacyMiscategorizedItems.length > 0 && (
+              <button
+                type="button"
+                onClick={handleNormalizeLegacyCategories}
+                className="px-4 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-2xl text-[11px] font-black flex items-center gap-1.5 transition cursor-pointer"
+                title="Pindahkan item lama yang masih berkategori umum ke kategori spesifik (Fabrikasi Tangki, Dosing Pump, Pompa, dll.)"
+              >
+                <Sparkles size={13} /> Rapikan {legacyMiscategorizedItems.length} Kategori Lama
+              </button>
+            )}
+          </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 items-start">
         
         {/* Category Selector Side Menu (Desktop / Scrollable on Mobile) */}
         <div className="bg-white p-6 rounded-[2.5rem] border border-slate-150 shadow-sm space-y-4 lg:sticky lg:top-4">
           <div className="flex items-center justify-between pb-3 border-b border-slate-100">
             <span className="text-xs font-black text-slate-900 uppercase tracking-wider flex items-center gap-2">
-              <Filter size={14} className="text-indigo-500" /> Sidebar Kategori
+              <Filter size={14} className="text-indigo-500" />
+              {selectedType === 'barang_dan_jasa' ? 'Kategori Paket SPH' : selectedType === 'jasa' ? 'Kategori Jasa' : 'Kategori Spesifik'}
             </span>
             <span className="px-2 py-0.5 bg-slate-100 text-slate-500 rounded-lg text-[10px] font-bold">
-              {(selectedType === 'jasa' ? dynamicServiceCategories : dynamicCatalogCategories).length - 1} Seksi
+              {(selectedType === 'jasa'
+                ? dynamicServiceCategories
+                : selectedType === 'barang_dan_jasa'
+                ? dynamicPackageCategories
+                : selectedType === 'barang'
+                ? dynamicCatalogCategories
+                : dynamicAllCategories).length - 1} Seksi
             </span>
           </div>
 
           {/* Catalog Categories listing */}
           <div className="flex flex-row lg:flex-col overflow-x-auto lg:overflow-visible gap-2 lg:gap-1.5 pb-2 lg:pb-0 scrollbar-none">
-            {(selectedType === 'jasa' ? dynamicServiceCategories : dynamicCatalogCategories).map((cat) => {
-              const count = (cat.id === 'all' || cat.id === 'all-service') 
+            {(selectedType === 'jasa'
+              ? dynamicServiceCategories
+              : selectedType === 'barang_dan_jasa'
+              ? dynamicPackageCategories
+              : selectedType === 'barang'
+              ? dynamicCatalogCategories
+              : dynamicAllCategories).map((cat) => {
+              const count = (cat.id === 'all' || cat.id === 'all-service' || cat.id === 'all-package')
                 ? (selectedType === 'all' ? items.length : items.filter(i => i.type === selectedType).length)
-                : items.filter(i => (selectedType === 'all' || i.type === selectedType) && (
-                  i.category.toLowerCase().trim() === cat.label.toLowerCase().trim() || 
-                  i.category.toLowerCase().replace(/\s+/g, '') === cat.id.replace(/\s+/g, '') ||
-                  i.category.toLowerCase().replace(/\s+/g, '-') === cat.id
-                )).length;
+                : items.filter(i => (selectedType === 'all' || i.type === selectedType) && matchesSelectedCategory(i, cat.id)).length;
 
               const isSelected = selectedCategory === cat.id;
 
@@ -1203,7 +1499,7 @@ export const EKatalog: React.FC<{
                 <Search className="absolute left-5 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                 <input
                   type="text"
-                  placeholder="Cari berdasarkan nama, kategori, mrek brand, spesifikasi teknis, SKU..."
+                  placeholder="Cari berdasarkan nama barang, judul SPH, kategori, brand, spesifikasi teknis, SKU..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-13 pr-5 py-4 bg-slate-50/50 border border-slate-200 focus:border-indigo-500 focus:bg-white focus:ring-4 focus:ring-indigo-100 rounded-[2rem] text-sm font-bold transition-all outline-none"
@@ -1256,15 +1552,16 @@ export const EKatalog: React.FC<{
               
               {/* Type Filter */}
               <div className="space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Jenis Pekerjaan</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Kelompok Umum</label>
                 <select
                   value={selectedType}
                   onChange={(e) => setSelectedType(e.target.value as any)}
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-700 outline-none focus:border-indigo-500"
                 >
-                  <option value="all">Semua Jenis</option>
-                  <option value="barang">Barang (Produk)</option>
+                  <option value="all">Semua Kelompok</option>
+                  <option value="barang">Barang (Equipment)</option>
                   <option value="jasa">Jasa / Instalasi</option>
+                  <option value="barang_dan_jasa">Barang &amp; Jasa (SPH Utuh)</option>
                 </select>
               </div>
 
@@ -1401,7 +1698,7 @@ export const EKatalog: React.FC<{
                           {/* Tags block */}
                           <div className="absolute top-4 left-4 flex flex-col gap-1 items-start">
                             <span className="px-3 py-1 bg-white/95 backdrop-blur-md text-slate-900 rounded-full text-[9px] font-black uppercase tracking-wider shadow-sm flex items-center gap-1">
-                              <Tag size={10} className="text-indigo-600 animate-pulse" /> {item.category}
+                              <Tag size={10} className="text-indigo-600 animate-pulse" /> {resolveItemDisplayCategory(item)}
                             </span>
                           </div>
 
@@ -1414,16 +1711,20 @@ export const EKatalog: React.FC<{
                               <Heart size={14} fill={isFaved ? 'currentColor' : 'none'} />
                             </button>
                             <span className={`px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-widest shadow-sm ${
-                              item.type === 'barang' ? 'bg-amber-500 text-white' : 'bg-emerald-650 text-white'
+                              item.type === 'barang'
+                                ? 'bg-amber-500 text-white'
+                                : item.type === 'barang_dan_jasa'
+                                ? 'bg-violet-600 text-white'
+                                : 'bg-emerald-600 text-white'
                             }`}>
-                              {item.type}
+                              {item.type === 'barang_dan_jasa' ? 'Barang & Jasa' : item.type}
                             </span>
                           </div>
 
                           {/* SKU bar at bottom left of image */}
                           <div className="absolute bottom-4 left-4">
                             <span className="bg-slate-900/75 backdrop-blur-md px-3 py-1 text-white rounded-lg text-[9px] font-mono tracking-widest">
-                              {item.sku}
+                              {item.quotationNumber || item.sku}
                             </span>
                           </div>
                         </div>
@@ -1432,7 +1733,9 @@ export const EKatalog: React.FC<{
                         <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
                           <div className="space-y-2">
                             <div className="flex justify-between items-start gap-2">
-                              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">{item.brand}</span>
+                              <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest">
+                                {item.type === 'barang_dan_jasa' ? (item.recipient || item.brand || 'Paket SPH') : item.brand}
+                              </span>
                               <div className="flex items-center gap-1 text-[10px] font-bold text-slate-400">
                                 <Eye size={12} /> {actualViews}
                               </div>
@@ -1442,13 +1745,30 @@ export const EKatalog: React.FC<{
                               {item.name}
                             </h3>
 
-                            <p className="text-slate-400 text-xs font-medium leading-relaxed line-clamp-2">
-                              {item.description}
-                            </p>
+                            {item.type === 'barang_dan_jasa' && Array.isArray(item.packageItems) && item.packageItems.length > 0 ? (
+                              <div className="bg-violet-50/70 border border-violet-100 rounded-2xl p-2.5 space-y-1">
+                                <div className="flex items-center justify-between text-[10px] font-black text-violet-700 uppercase tracking-wider">
+                                  <span>Isi Penawaran ({item.packageItems.length} Item)</span>
+                                  {item.quotationDate && <span className="font-mono text-[9px] text-violet-500">{item.quotationDate}</span>}
+                                </div>
+                                <ul className="space-y-0.5 text-[11px] text-slate-700 font-semibold">
+                                  {item.packageItems.slice(0, 3).map((pkg, pIdx) => (
+                                    <li key={pIdx} className="truncate">• {pkg.description} ({pkg.vol} {pkg.unit})</li>
+                                  ))}
+                                  {item.packageItems.length > 3 && (
+                                    <li className="text-[10px] font-bold text-violet-600">+ {item.packageItems.length - 3} item lainnya...</li>
+                                  )}
+                                </ul>
+                              </div>
+                            ) : (
+                              <p className="text-slate-400 text-xs font-medium leading-relaxed line-clamp-2">
+                                {item.description}
+                              </p>
+                            )}
                           </div>
 
                           {/* Specs overview badging highlights */}
-                          <div className="flex items-center gap-2 pt-1">
+                          <div className="flex items-center gap-2 pt-1 flex-wrap">
                             {item.capacity && (
                               <span className="px-2 py-0.5 bg-slate-50 border border-slate-100 rounded-lg text-[10px] font-bold text-slate-500">
                                 Cap: {item.capacity}
@@ -1459,12 +1779,19 @@ export const EKatalog: React.FC<{
                                 Power: {item.power}
                               </span>
                             )}
+                            {item.type === 'barang' && item.specifications && !item.capacity && (
+                              <span className="px-2 py-0.5 bg-slate-50 border border-slate-100 rounded-lg text-[10px] font-bold text-slate-500 line-clamp-1 max-w-full">
+                                {item.specifications.split('\n')[0]}
+                              </span>
+                            )}
                           </div>
 
                           {/* Footer with price tag & settings delete tools if admin */}
                           <div className="pt-4 border-t border-slate-50 flex items-center justify-between">
                             <div className="flex flex-col">
-                              <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-none">Harga Jual Pokok</span>
+                              <span className="text-[9px] text-slate-400 font-black uppercase tracking-widest leading-none">
+                                {item.type === 'barang_dan_jasa' ? 'Total Harga SPH' : 'Harga Jual Pokok'}
+                              </span>
                               <span className="text-base font-black text-indigo-600 tracking-tight mt-1">
                                 {totalCost > 0 
                                   ? `Rp ${totalCost.toLocaleString('id-ID')}` 
@@ -1541,7 +1868,11 @@ export const EKatalog: React.FC<{
                                   <div className="space-y-0.5">
                                     <h4 className="font-bold text-slate-900 text-xs line-clamp-1">{item.name}</h4>
                                     <div className="flex gap-2">
-                                      <span className="text-[9px] font-black text-indigo-600 uppercase tracking-widest">{item.type}</span>
+                                      <span className={`text-[9px] font-black uppercase tracking-widest ${
+                                        item.type === 'barang_dan_jasa' ? 'text-violet-600' : item.type === 'jasa' ? 'text-emerald-600' : 'text-amber-600'
+                                      }`}>
+                                        {item.type === 'barang_dan_jasa' ? 'Barang & Jasa' : item.type}
+                                      </span>
                                       <span className="text-[9px] font-bold text-slate-400 flex items-center gap-1">
                                         <Eye size={10} /> {actualViews}
                                       </span>
@@ -1551,20 +1882,27 @@ export const EKatalog: React.FC<{
                               </td>
                               <td className="px-6 py-4">
                                 <span className="font-mono text-xs text-slate-600 bg-slate-100 px-2.5 py-1 rounded-lg">
-                                  {item.sku}
+                                  {item.quotationNumber || item.sku}
                                 </span>
                               </td>
                               <td className="px-6 py-4">
-                                <span className="text-xs text-slate-700 font-bold">{item.category}</span>
+                                <span className="text-xs text-slate-700 font-bold">{resolveItemDisplayCategory(item)}</span>
                               </td>
                               <td className="px-6 py-4">
-                                <span className="text-xs text-slate-500 font-bold">{item.brand || 'N/A'}</span>
+                                <span className="text-xs text-slate-500 font-bold">
+                                  {item.type === 'barang_dan_jasa' ? (item.recipient || item.brand || '-') : (item.brand || 'N/A')}
+                                </span>
                               </td>
                               <td className="px-6 py-4">
                                 <span className="text-xs text-slate-900 font-black">
                                   Rp {totalCost.toLocaleString('id-ID')}
                                   {item.type === 'jasa' && (
                                     <span className="ml-1 text-[9px] text-indigo-600 font-black bg-indigo-50 px-1 py-0.5 rounded uppercase">Jasa</span>
+                                  )}
+                                  {item.type === 'barang_dan_jasa' && (
+                                    <span className="ml-1 text-[9px] text-violet-700 font-black bg-violet-50 px-1.5 py-0.5 rounded uppercase">
+                                      {item.packageItems?.length || 0} Item
+                                    </span>
                                   )}
                                 </span>
                               </td>
@@ -1600,9 +1938,9 @@ export const EKatalog: React.FC<{
               )}
 
               {/* Pagination controls */}
-              <div className="flex items-center justify-between bg-white px-6 py-4 rounded-[1.75-rem] border border-slate-100 shadow-sm">
+              <div className="flex items-center justify-between bg-white px-6 py-4 rounded-[1.75rem] border border-slate-100 shadow-sm">
                 <span className="text-xs text-slate-400 font-bold">
-                  Menampilkan <span className="text-slate-800 font-black">{paginatedItems.length}</span> dari <span className="text-slate-800 font-black">{filteredItems.length}</span> produk
+                  Menampilkan <span className="text-slate-800 font-black">{paginatedItems.length}</span> dari <span className="text-slate-800 font-black">{filteredItems.length}</span> item
                 </span>
                 
                 <div className="flex items-center gap-1">
@@ -1638,6 +1976,7 @@ export const EKatalog: React.FC<{
             </>
           )}
         </div>
+      </div>
       </div>
       )}
 
@@ -2696,7 +3035,16 @@ export const EKatalog: React.FC<{
                   
                   {/* General Header Data */}
                   <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100 flex flex-wrap gap-4 justify-between items-center">
-                    {selectedItem.type === 'jasa' ? (
+                    {selectedItem.type === 'barang_dan_jasa' ? (
+                      <div>
+                        <span className="text-[9px] text-violet-600 font-black uppercase tracking-widest block leading-none">
+                          Total Harga Penawaran SPH ({selectedItem.packageItems?.length || 0} Item)
+                        </span>
+                        <span className="text-2xl font-black text-violet-700 tracking-tight mt-1.5 block">
+                          Rp {getItemTotalCost(selectedItem).toLocaleString('id-ID')}
+                        </span>
+                      </div>
+                    ) : selectedItem.type === 'jasa' ? (
                       <div>
                         <span className="text-[9px] text-indigo-600 font-black uppercase tracking-widest block leading-none">Total Nilai Integrasi Jasa</span>
                         <span className="text-2xl font-black text-indigo-700 tracking-tight mt-1.5 block">
@@ -2742,6 +3090,141 @@ export const EKatalog: React.FC<{
                       )}
                     </div>
                   </div>
+
+                  {/* INTACT SPH PACKAGE DETAILS FOR BARANG DAN JASA */}
+                  {selectedItem.type === 'barang_dan_jasa' && (
+                    <div className="bg-violet-50/60 border border-violet-200 p-6 rounded-3xl space-y-5">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-violet-200/70 pb-3">
+                        <h4 className="text-xs font-black text-violet-900 uppercase tracking-widest flex items-center gap-1.5">
+                          <FileCheck size={15} className="text-violet-600" /> Isi Lengkap Surat Penawaran Harga (SPH)
+                        </h4>
+                        <span className="px-3 py-1 bg-violet-600 text-white font-black text-[10px] rounded-lg uppercase">
+                          Paket Barang &amp; Jasa Utuh
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                        <div className="bg-white p-3 rounded-xl border border-violet-100">
+                          <span className="text-[9px] font-black text-slate-400 uppercase block">No. SPH</span>
+                          <span className="font-mono font-bold text-slate-800">{selectedItem.quotationNumber || selectedItem.sku || '-'}</span>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-violet-100">
+                          <span className="text-[9px] font-black text-slate-400 uppercase block">Kepada / Klien</span>
+                          <span className="font-bold text-slate-800">{selectedItem.recipient || selectedItem.brand || '-'}</span>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-violet-100">
+                          <span className="text-[9px] font-black text-slate-400 uppercase block">Tanggal SPH</span>
+                          <span className="font-bold text-slate-800">{selectedItem.quotationDate || '-'}</span>
+                        </div>
+                        <div className="bg-white p-3 rounded-xl border border-violet-100">
+                          <span className="text-[9px] font-black text-slate-400 uppercase block">Proyek</span>
+                          <span className="font-bold text-slate-800">{selectedItem.projectName || selectedItem.name || '-'}</span>
+                        </div>
+                      </div>
+
+                      {(selectedItem.packageItems || []).length > 0 && (
+                        <div className="border border-violet-200 rounded-2xl overflow-hidden bg-white">
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-xs text-left">
+                              <thead>
+                                <tr className="bg-violet-50 border-b border-violet-100 text-[10px] font-black text-violet-900 uppercase tracking-wider">
+                                  <th className="px-3 py-2.5 w-10 text-center">No</th>
+                                  <th className="px-3 py-2.5">Deskripsi &amp; Spesifikasi</th>
+                                  <th className="px-3 py-2.5 text-center">Vol</th>
+                                  <th className="px-3 py-2.5 text-right">Harga Satuan</th>
+                                  <th className="px-3 py-2.5 text-right">Jumlah</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {selectedItem.packageItems?.map((pkg, pIdx) => (
+                                  <tr key={pIdx} className="align-top hover:bg-slate-50/60">
+                                    <td className="px-3 py-2.5 text-center font-bold text-slate-500">{pIdx + 1}</td>
+                                    <td className="px-3 py-2.5 space-y-1">
+                                      <div className="font-bold text-slate-900">{pkg.description}</div>
+                                      {Array.isArray(pkg.specifications) && pkg.specifications.length > 0 && (
+                                        <ul className="text-[11px] text-slate-500 space-y-0.5 pl-3 list-disc">
+                                          {pkg.specifications.map((sp: any, sIdx: number) => (
+                                            <li key={sIdx}>
+                                              {sp.key && sp.key !== '-' ? <span className="font-semibold text-slate-700">{sp.key}: </span> : null}
+                                              {sp.value}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                      )}
+                                      {typeof pkg.specifications === 'string' && pkg.specifications.trim() && (
+                                        <p className="text-[11px] text-slate-500 whitespace-pre-line">{pkg.specifications}</p>
+                                      )}
+                                    </td>
+                                    <td className="px-3 py-2.5 text-center font-bold text-slate-700 whitespace-nowrap">
+                                      {pkg.vol} {pkg.unit}
+                                    </td>
+                                    <td className="px-3 py-2.5 text-right text-slate-600 whitespace-nowrap">
+                                      Rp {(pkg.unitPrice || 0).toLocaleString('id-ID')}
+                                    </td>
+                                    <td className="px-3 py-2.5 text-right font-black text-violet-700 whitespace-nowrap">
+                                      Rp {(pkg.total || (pkg.vol || 0) * (pkg.unitPrice || 0)).toLocaleString('id-ID')}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="bg-slate-900 text-white p-4 rounded-2xl space-y-1.5 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-slate-300">Subtotal Item</span>
+                          <span className="font-bold">Rp {(selectedItem.subTotal || 0).toLocaleString('id-ID')}</span>
+                        </div>
+                        {(selectedItem.discountAmount || 0) > 0 && (
+                          <div className="flex justify-between text-rose-300">
+                            <span>Diskon</span>
+                            <span className="font-bold">- Rp {(selectedItem.discountAmount || 0).toLocaleString('id-ID')}</span>
+                          </div>
+                        )}
+                        {(selectedItem.shippingCost || 0) > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-300">Ongkir / Pengiriman</span>
+                            <span className="font-bold">Rp {(selectedItem.shippingCost || 0).toLocaleString('id-ID')}</span>
+                          </div>
+                        )}
+                        {(selectedItem.serviceFee || 0) > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-300">Biaya Jasa</span>
+                            <span className="font-bold">Rp {(selectedItem.serviceFee || 0).toLocaleString('id-ID')}</span>
+                          </div>
+                        )}
+                        {(selectedItem.tax || 0) > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-slate-300">PPN</span>
+                            <span className="font-bold">Rp {(selectedItem.tax || 0).toLocaleString('id-ID')}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between border-t border-slate-700 pt-2 text-amber-300 text-sm font-black">
+                          <span>Grand Total SPH</span>
+                          <span className="font-mono">Rp {getItemTotalCost(selectedItem).toLocaleString('id-ID')}</span>
+                        </div>
+                      </div>
+
+                      {(selectedItem.notes || selectedItem.paymentTerms) && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+                          {selectedItem.notes && (
+                            <div className="bg-white p-3.5 rounded-xl border border-violet-100">
+                              <span className="text-[9px] font-black text-slate-400 uppercase block mb-1">Catatan Penawaran</span>
+                              <p className="text-slate-600 whitespace-pre-line font-medium">{selectedItem.notes}</p>
+                            </div>
+                          )}
+                          {selectedItem.paymentTerms && (
+                            <div className="bg-white p-3.5 rounded-xl border border-violet-100">
+                              <span className="text-[9px] font-black text-slate-400 uppercase block mb-1">Syarat Pembayaran</span>
+                              <p className="text-slate-600 whitespace-pre-line font-medium">{selectedItem.paymentTerms}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Description segment */}
                   <div className="space-y-2">
@@ -3360,7 +3843,7 @@ const CatalogFormModal: React.FC<{
   const [sku, setSku] = useState('');
   const [category, setCategory] = useState('Pompa');
   const [subCategory, setSubCategory] = useState('');
-  const [type, setType] = useState<'barang' | 'jasa'>('barang');
+  const [type, setType] = useState<'barang' | 'jasa' | 'barang_dan_jasa'>('barang');
   const [brand, setBrand] = useState('');
   const [priceItem, setPriceItem] = useState('');
   const [costPrice, setCostPrice] = useState('');
@@ -3378,6 +3861,20 @@ const CatalogFormModal: React.FC<{
   const [warranty, setWarranty] = useState('1 Tahun');
   const [stockLocation, setStockLocation] = useState('Gudang Utama Jakarta');
   const [status, setStatus] = useState<'aktif' | 'nonaktif'>('aktif');
+
+  // Package SPH states (for type === 'barang_dan_jasa')
+  const [packageItems, setPackageItems] = useState<CatalogPackageItem[]>([]);
+  const [quotationNumber, setQuotationNumber] = useState('');
+  const [quotationDate, setQuotationDate] = useState('');
+  const [recipient, setRecipient] = useState('');
+  const [pkgNotes, setPkgNotes] = useState('');
+  const [pkgPaymentTerms, setPkgPaymentTerms] = useState('');
+  const [pkgDescInput, setPkgDescInput] = useState('');
+  const [pkgVolInput, setPkgVolInput] = useState('1');
+  const [pkgUnitInput, setPkgUnitInput] = useState('Unit');
+  const [pkgPriceInput, setPkgPriceInput] = useState('');
+  const [pkgCostInput, setPkgCostInput] = useState('');
+  const [pkgSpecInput, setPkgSpecInput] = useState('');
   
   // Custom category states
   const [isCustomCategory, setIsCustomCategory] = useState(false);
@@ -3397,15 +3894,18 @@ const CatalogFormModal: React.FC<{
   const dynamicCatalogCategories = useMemo(() => {
     const list = [...CATALOG_CATEGORIES];
     items.forEach(item => {
-      if (item.type === 'barang' && item.category) {
-        const isExist = list.some(c => c.label.toLowerCase().trim() === item.category.toLowerCase().trim() || c.id === item.category.toLowerCase().replace(/\s+/g, ''));
-        if (!isExist) {
-          list.push({
-            id: item.category.toLowerCase().replace(/\s+/g, '-'),
-            label: item.category,
-            icon: Tag,
-            desc: `Kategori kustom: ${item.category}`
-          });
+      if (item.type === 'barang') {
+        const resolved = resolveItemDisplayCategory(item);
+        if (resolved) {
+          const isExist = list.some(c => c.label.toLowerCase().trim() === resolved.toLowerCase().trim() || c.id === resolved.toLowerCase().replace(/\s+/g, '-'));
+          if (!isExist) {
+            list.push({
+              id: resolved.toLowerCase().replace(/\s+/g, '-'),
+              label: resolved,
+              icon: Tag,
+              desc: `Kategori: ${resolved}`
+            });
+          }
         }
       }
     });
@@ -3415,20 +3915,45 @@ const CatalogFormModal: React.FC<{
   const dynamicServiceCategories = useMemo(() => {
     const list = [...SERVICE_CATEGORIES];
     items.forEach(item => {
-      if (item.type === 'jasa' && item.category) {
-        const isExist = list.some(c => c.label.toLowerCase().trim() === item.category.toLowerCase().trim() || c.id === item.category.toLowerCase().replace(/\s+/g, ''));
-        if (!isExist) {
-          list.push({
-            id: item.category.toLowerCase().replace(/\s+/g, '-'),
-            label: item.category,
-            icon: Tag,
-            desc: `Kategori jasa kustom: ${item.category}`
-          });
+      if (item.type === 'jasa') {
+        const resolved = resolveItemDisplayCategory(item);
+        if (resolved) {
+          const isExist = list.some(c => c.label.toLowerCase().trim() === resolved.toLowerCase().trim() || c.id === resolved.toLowerCase().replace(/\s+/g, '-'));
+          if (!isExist) {
+            list.push({
+              id: resolved.toLowerCase().replace(/\s+/g, '-'),
+              label: resolved,
+              icon: Tag,
+              desc: `Kategori jasa: ${resolved}`
+            });
+          }
         }
       }
     });
     return list;
   }, [items]);
+
+  const dynamicPackageCategories = useMemo(() => {
+    const list = [...SPH_PACKAGE_CATEGORIES];
+    items.forEach(item => {
+      if (item.type === 'barang_dan_jasa') {
+        const resolved = resolveItemDisplayCategory(item);
+        if (resolved) {
+          const isExist = list.some(c => c.label.toLowerCase().trim() === resolved.toLowerCase().trim() || c.id === resolved.toLowerCase().replace(/\s+/g, '-'));
+          if (!isExist) {
+            list.push({
+              id: resolved.toLowerCase().replace(/\s+/g, '-'),
+              label: resolved,
+              icon: Briefcase,
+              desc: `Paket SPH: ${resolved}`
+            });
+          }
+        }
+      }
+    });
+    return list;
+  }, [items]);
+
   const [neededItems, setNeededItems] = useState<{ id?: string; name: string; qty: number; price: number }[]>([]);
   const [manpowerQty, setManpowerQty] = useState('');
   const [manpowerRate, setManpowerRate] = useState('');
@@ -3467,11 +3992,12 @@ const CatalogFormModal: React.FC<{
       setName(editingItem.name || '');
       setSku(editingItem.sku || '');
       
-      const catVal = editingItem.category || 'Pompa';
+      const catVal = resolveItemDisplayCategory(editingItem) || 'Pompa';
       setCategory(catVal);
       const isProductPreset = CATALOG_CATEGORIES.some(c => c.label.toLowerCase().trim() === catVal.toLowerCase().trim());
       const isServicePreset = SERVICE_CATEGORIES.some(c => c.label.toLowerCase().trim() === catVal.toLowerCase().trim());
-      const isPreset = editingItem.type === 'jasa' ? isServicePreset : isProductPreset;
+      const isPackagePreset = SPH_PACKAGE_CATEGORIES.some(c => c.label.toLowerCase().trim() === catVal.toLowerCase().trim());
+      const isPreset = editingItem.type === 'jasa' ? isServicePreset : editingItem.type === 'barang_dan_jasa' ? isPackagePreset : isProductPreset;
       if (!isPreset && catVal) {
         setIsCustomCategory(true);
         setCustomCategory(catVal);
@@ -3487,7 +4013,7 @@ const CatalogFormModal: React.FC<{
       setCostPrice(String(editingItem.costPrice || '0'));
       setPriceService(String(editingItem.priceService || '0'));
       setPriceInstallation(String(editingItem.priceInstallation || '0'));
-      setUnit(editingItem.unit || 'Unit');
+      setUnit(editingItem.unit || (editingItem.type === 'barang_dan_jasa' ? 'Paket' : 'Unit'));
       setDescription(editingItem.description || '');
       setSpecifications(editingItem.specifications || '');
       setMaterial(editingItem.material || '');
@@ -3511,6 +4037,14 @@ const CatalogFormModal: React.FC<{
       setManpowerQty(editingItem.manpowerQty ? String(editingItem.manpowerQty) : '');
       setManpowerRate(editingItem.manpowerRate ? String(editingItem.manpowerRate) : '');
       setManpowerDays(editingItem.manpowerDays ? String(editingItem.manpowerDays) : '');
+
+      // Package SPH states mapping
+      setPackageItems(editingItem.packageItems || []);
+      setQuotationNumber(editingItem.quotationNumber || '');
+      setQuotationDate(editingItem.quotationDate || '');
+      setRecipient(editingItem.recipient || '');
+      setPkgNotes(editingItem.notes || '');
+      setPkgPaymentTerms(editingItem.paymentTerms || '');
     } else {
       // Create - auto generate SKU pattern based on date & random suffix
       generateSku('Pompa');
@@ -3536,11 +4070,11 @@ const CatalogFormModal: React.FC<{
   const handleFormSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) {
-      setErrorMsg('Harap lengkapi nama item katalog.');
+      setErrorMsg('Harap lengkapi nama item katalog / judul SPH.');
       return;
     }
     if (!sku.trim()) {
-      setErrorMsg('Harap masukan kode SKU / SKU manual.');
+      setErrorMsg('Harap masukan kode SKU / Nomor SPH.');
       return;
     }
     if (isCustomCategory && !customCategory.trim()) {
@@ -3559,18 +4093,25 @@ const CatalogFormModal: React.FC<{
       imagesArr = imagesText.split(',').map(s => s.trim()).filter(Boolean);
     }
 
+    const pkgSubTotal = packageItems.reduce((acc, p) => acc + ((p.vol || 0) * (p.unitPrice || 0)), 0);
+    const pkgCostTotal = packageItems.reduce((acc, p) => acc + ((p.vol || 0) * (p.costPrice || 0)), 0);
+    const parsedPriceItem = parseFloat(priceItem) || 0;
+    const finalPriceItem = type === 'barang_dan_jasa'
+      ? (parsedPriceItem > 0 ? parsedPriceItem : pkgSubTotal)
+      : parsedPriceItem;
+
     const payload: Omit<CatalogItem, 'id'> & { id?: string } = {
-      name: name.trim(),
-      sku: sku.trim(),
-      category: finalCategory,
+      name: name.trim().slice(0, 200),
+      sku: sku.trim().slice(0, 100),
+      category: finalCategory.slice(0, 100),
       subCategory: subCategory.trim(),
       type,
-      brand: brand.trim() || 'WorkflowPro',
-      priceItem: parseFloat(priceItem) || 0,
-      costPrice: parseFloat(costPrice) || 0,
+      brand: (type === 'barang_dan_jasa' ? (recipient.trim() || brand.trim() || 'PT. GIG') : (brand.trim() || 'WorkflowPro')).slice(0, 100),
+      priceItem: finalPriceItem,
+      costPrice: type === 'barang_dan_jasa' && !(parseFloat(costPrice) > 0) ? pkgCostTotal : (parseFloat(costPrice) || 0),
       priceService: parseFloat(priceService) || 0,
       priceInstallation: parseFloat(priceInstallation) || 0,
-      unit: unit.trim() || 'Unit',
+      unit: type === 'barang_dan_jasa' ? (unit.trim() || 'Paket') : (unit.trim() || 'Unit'),
       description: description.trim(),
       specifications: specifications.trim(),
       material: material.trim(),
@@ -3592,11 +4133,22 @@ const CatalogFormModal: React.FC<{
       detailWork: detailWork.trim() || undefined,
       includeWork: includeWork.trim() || undefined,
       estimationTime: estimationTime.trim() || undefined,
-      views: editingItem?.views || Math.floor(Math.random() * 15), // small random views for demo feel
+      views: editingItem?.views || Math.floor(Math.random() * 15),
       neededItems: type === 'jasa' ? neededItems : undefined,
       manpowerQty: type === 'jasa' ? (parseInt(manpowerQty) || undefined) : undefined,
       manpowerRate: type === 'jasa' ? (parseFloat(manpowerRate) || undefined) : undefined,
       manpowerDays: type === 'jasa' ? (parseInt(manpowerDays) || undefined) : undefined,
+      ...(type === 'barang_dan_jasa' ? {
+        packageItems,
+        quotationNumber: quotationNumber.trim() || sku.trim(),
+        quotationDate: quotationDate.trim(),
+        recipient: recipient.trim(),
+        projectName: name.trim(),
+        subTotal: pkgSubTotal || finalPriceItem,
+        grandTotal: finalPriceItem,
+        notes: pkgNotes.trim(),
+        paymentTerms: pkgPaymentTerms.trim(),
+      } : {})
     };
 
     try {
@@ -3655,18 +4207,18 @@ const CatalogFormModal: React.FC<{
           {/* Section 1: Core parameters */}
           <div className="space-y-4">
             <h4 className="text-xs font-black text-indigo-700 uppercase tracking-widest border-b border-slate-100 pb-1.5 flex items-center gap-1.5">
-              <Compass size={14} /> 1. Parameter Utama {type === 'barang' ? 'Barang & Produk' : 'Jasa / Paket Pekerjaan'}
+              <Compass size={14} /> 1. Parameter Utama {type === 'barang' ? 'Barang & Equipment' : type === 'barang_dan_jasa' ? 'Paket SPH Barang & Jasa' : 'Jasa / Paket Pekerjaan'}
             </h4>
 
             <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
               <div className="md:col-span-6 space-y-1.5">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                  {type === 'barang' ? 'Nama Item Katalog / Produk' : 'Nama Jasa / Paket Pekerjaan'} <span className="text-rose-500">*</span>
+                  {type === 'barang' ? 'Nama Item Equipment / Produk' : type === 'barang_dan_jasa' ? 'Judul SPH / Paket Penawaran Utuh' : 'Nama Jasa / Paket Pekerjaan'} <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder={type === 'barang' ? "E.g. Pompa Submersible Ebara 50 DS" : "E.g. Jasa Pemasangan & Alignment Pompa"}
+                  placeholder={type === 'barang' ? "E.g. Septictank Biofilter FRP 10 m3" : type === 'barang_dan_jasa' ? "E.g. Pengadaan & Pemasangan STP Biofilter 25 m3/hari" : "E.g. Jasa Pemasangan & Alignment Pompa"}
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-2xl font-bold outline-none font-sans"
@@ -3675,7 +4227,7 @@ const CatalogFormModal: React.FC<{
 
               <div className="md:col-span-3 space-y-1.5">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
-                  Kode Item / SKU <span className="text-rose-500">*</span>
+                  {type === 'barang_dan_jasa' ? 'Kode / No. SPH' : 'Kode Item / SKU'} <span className="text-rose-500">*</span>
                 </label>
                 <div className="relative">
                   <input
@@ -3698,29 +4250,35 @@ const CatalogFormModal: React.FC<{
               </div>
 
               <div className="md:col-span-3 space-y-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Jenis Layanan <span className="text-rose-500">*</span></label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Kelompok Umum <span className="text-rose-500">*</span></label>
                 <select
                   value={type}
                   onChange={(e) => {
-                    const newType = e.target.value as any;
+                    const newType = e.target.value as 'barang' | 'jasa' | 'barang_dan_jasa';
                     setType(newType);
+                    setIsCustomCategory(false);
                     if (newType === 'jasa') {
                       setCategory('Instalasi STP');
+                    } else if (newType === 'barang_dan_jasa') {
+                      setCategory('Paket Barang & Jasa');
+                      setUnit('Paket');
                     } else {
-                      setCategory('Pompa');
+                      setCategory('Fabrikasi Tangki');
+                      setUnit('Unit');
                     }
                   }}
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-indigo-700 bg-indigo-50/30 border-indigo-200/50 outline-none focus:border-indigo-500 font-sans"
                 >
-                  <option value="barang">Barang (Produk)</option>
-                  <option value="jasa">Jasa Pekerjaan / Paket</option>
+                  <option value="barang">Barang (Equipment)</option>
+                  <option value="jasa">Jasa Pekerjaan</option>
+                  <option value="barang_dan_jasa">Barang &amp; Jasa (Paket SPH Utuh)</option>
                 </select>
               </div>
 
               {type === 'barang' ? (
                 <>
                   <div className="md:col-span-4 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Kategori Utama</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Kategori Equipment</label>
                     {isCustomCategory ? (
                       <div className="flex gap-2">
                         <input
@@ -3734,7 +4292,7 @@ const CatalogFormModal: React.FC<{
                           type="button"
                           onClick={() => {
                             setIsCustomCategory(false);
-                            setCategory('Pompa');
+                            setCategory('Fabrikasi Tangki');
                           }}
                           className="px-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl text-xs font-bold transition whitespace-nowrap"
                         >
@@ -3758,7 +4316,7 @@ const CatalogFormModal: React.FC<{
                         {dynamicCatalogCategories.filter(c => c.id !== 'all').map((cat) => (
                           <option key={cat.id} value={cat.label}>{cat.label}</option>
                         ))}
-                        <option value="__NEW__" className="text-indigo-650 font-black font-sans">+ Tambah Kategori Baru...</option>
+                        <option value="__NEW__" className="text-indigo-600 font-black font-sans">+ Tambah Kategori Baru...</option>
                       </select>
                     )}
                   </div>
@@ -3767,7 +4325,7 @@ const CatalogFormModal: React.FC<{
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Sub Kategori</label>
                     <input
                       type="text"
-                      placeholder="E.g. Root Blower Aerator"
+                      placeholder="E.g. Root Blower Aerator / Tangki Biofilter"
                       value={subCategory}
                       onChange={(e) => setSubCategory(e.target.value)}
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-2xl font-bold outline-none font-sans"
@@ -3775,7 +4333,7 @@ const CatalogFormModal: React.FC<{
                   </div>
 
                   <div className="md:col-span-4 space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Mrek / Brand</label>
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Merek / Brand</label>
                     <input
                       type="text"
                       placeholder="E.g. Ebara, Futsu, Seko, Custom"
@@ -3783,6 +4341,49 @@ const CatalogFormModal: React.FC<{
                       onChange={(e) => setBrand(e.target.value)}
                       className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-2xl font-bold outline-none font-sans"
                     />
+                  </div>
+                </>
+              ) : type === 'barang_dan_jasa' ? (
+                <>
+                  <div className="md:col-span-4 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Kategori Paket SPH</label>
+                    <select
+                      value={category}
+                      onChange={(e) => handleCategoryChange(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-bold text-slate-700 outline-none focus:border-indigo-500 font-sans"
+                    >
+                      {dynamicPackageCategories.filter(c => c.id !== 'all-package').map((cat) => (
+                        <option key={cat.id} value={cat.label}>{cat.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="md:col-span-4 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Kepada / Klien SPH</label>
+                    <input
+                      type="text"
+                      placeholder="E.g. PT Indo Perkasa"
+                      value={recipient}
+                      onChange={(e) => setRecipient(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-2xl font-bold outline-none font-sans"
+                    />
+                  </div>
+                  <div className="md:col-span-4 space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">No. Surat SPH &amp; Tanggal</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        placeholder="185/SPH/GIGT/..."
+                        value={quotationNumber}
+                        onChange={(e) => setQuotationNumber(e.target.value)}
+                        className="flex-1 px-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl font-mono text-xs font-bold outline-none"
+                      />
+                      <input
+                        type="date"
+                        value={quotationDate}
+                        onChange={(e) => setQuotationDate(e.target.value)}
+                        className="px-3 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-xs font-bold outline-none"
+                      />
+                    </div>
                   </div>
                 </>
               ) : (
@@ -3826,7 +4427,7 @@ const CatalogFormModal: React.FC<{
                         {dynamicServiceCategories.filter(c => c.id !== 'all-service').map((cat) => (
                           <option key={cat.id} value={cat.label}>{cat.label}</option>
                         ))}
-                        <option value="__NEW__" className="text-indigo-650 font-black font-sans">+ Tambah Kategori Baru...</option>
+                        <option value="__NEW__" className="text-indigo-600 font-black font-sans">+ Tambah Kategori Baru...</option>
                       </select>
                     )}
                   </div>
@@ -3849,13 +4450,15 @@ const CatalogFormModal: React.FC<{
           {/* Section 2: Pricing Matrix */}
           <div className="space-y-4">
             <h4 className="text-xs font-black text-indigo-700 uppercase tracking-widest border-b border-slate-100 pb-1.5 flex items-center gap-1.5">
-              <DollarSign size={14} /> 2. Matriks Estimasi Anggaran {type === 'barang' ? 'Produk' : 'Jasa & Pekerjaan'} (Rp)
+              <DollarSign size={14} /> 2. Matriks Estimasi Anggaran {type === 'barang' ? 'Produk' : type === 'barang_dan_jasa' ? 'Paket SPH Utuh' : 'Jasa & Pekerjaan'} (Rp)
             </h4>
 
-            {type === 'barang' ? (
+            {type === 'barang' || type === 'barang_dan_jasa' ? (
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Harga Jual Pokok (Rp)</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">
+                    {type === 'barang_dan_jasa' ? 'Grand Total Penawaran SPH (Rp)' : 'Harga Jual Pokok (Rp)'}
+                  </label>
                   <input
                     type="number"
                     placeholder="0"
@@ -3888,10 +4491,10 @@ const CatalogFormModal: React.FC<{
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Satuan Produk</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Satuan</label>
                   <input
                     type="text"
-                    placeholder="E.g. Unit, Pcs, Set, Meter"
+                    placeholder="E.g. Unit, Paket, Set"
                     value={unit}
                     onChange={(e) => setUnit(e.target.value)}
                     className="w-full px-4 py-3 bg-slate-50 border border-slate-200 focus:border-indigo-500 focus:bg-white rounded-2xl font-bold outline-none"
@@ -3947,8 +4550,170 @@ const CatalogFormModal: React.FC<{
             )}
           </div>
 
-          {/* Section 3: Conditional based on Goods / Services */}
-          {type === 'barang' ? (
+          {/* Section 3: Conditional based on Goods / Package SPH / Services */}
+          {type === 'barang_dan_jasa' ? (
+            <div className="space-y-4">
+              <h4 className="text-xs font-black text-violet-700 uppercase tracking-widest border-b border-slate-100 pb-1.5 flex items-center gap-1.5">
+                <FileCheck size={14} /> 3. Daftar Isi Penawaran SPH (Barang &amp; Jasa)
+              </h4>
+
+              <div className="bg-violet-50/50 border border-violet-200 p-4 rounded-2xl space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-end">
+                  <div className="md:col-span-5 space-y-1">
+                    <label className="text-[9px] font-black text-slate-500 uppercase">Deskripsi Item Penawaran</label>
+                    <input
+                      type="text"
+                      placeholder="E.g. Unit Septictank Biofilter 25 m3"
+                      value={pkgDescInput}
+                      onChange={(e) => setPkgDescInput(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none"
+                    />
+                  </div>
+                  <div className="md:col-span-1 space-y-1">
+                    <label className="text-[9px] font-black text-slate-500 uppercase">Vol</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={pkgVolInput}
+                      onChange={(e) => setPkgVolInput(e.target.value)}
+                      className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none"
+                    />
+                  </div>
+                  <div className="md:col-span-2 space-y-1">
+                    <label className="text-[9px] font-black text-slate-500 uppercase">Satuan</label>
+                    <input
+                      type="text"
+                      value={pkgUnitInput}
+                      onChange={(e) => setPkgUnitInput(e.target.value)}
+                      className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none"
+                    />
+                  </div>
+                  <div className="md:col-span-2 space-y-1">
+                    <label className="text-[9px] font-black text-slate-500 uppercase">Harga Satuan</label>
+                    <input
+                      type="number"
+                      placeholder="0"
+                      value={pkgPriceInput}
+                      onChange={(e) => setPkgPriceInput(e.target.value)}
+                      className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded-xl text-xs font-bold outline-none"
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!pkgDescInput.trim()) return;
+                        const volVal = Math.max(1, parseFloat(pkgVolInput) || 1);
+                        const priceVal = parseFloat(pkgPriceInput) || 0;
+                        const costVal = parseFloat(pkgCostInput) || 0;
+                        const nextList = [
+                          ...packageItems,
+                          {
+                            id: `pkg-${Date.now()}`,
+                            description: pkgDescInput.trim(),
+                            vol: volVal,
+                            unit: pkgUnitInput.trim() || 'Unit',
+                            unitPrice: priceVal,
+                            costPrice: costVal,
+                            total: volVal * priceVal,
+                            specifications: pkgSpecInput.trim() || undefined,
+                          }
+                        ];
+                        setPackageItems(nextList);
+                        const nextSum = nextList.reduce((a, b) => a + (b.total || 0), 0);
+                        setPriceItem(String(nextSum));
+                        setPkgDescInput('');
+                        setPkgPriceInput('');
+                        setPkgCostInput('');
+                        setPkgSpecInput('');
+                      }}
+                      className="w-full py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl text-xs font-black uppercase flex items-center justify-center gap-1"
+                    >
+                      <Plus size={13} /> Tambah
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
+                  <div className="md:col-span-9">
+                    <input
+                      type="text"
+                      placeholder="Spesifikasi item (opsional, mis. Material FRP 8mm, Dimensi 4000x2000x2200 mm)"
+                      value={pkgSpecInput}
+                      onChange={(e) => setPkgSpecInput(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium outline-none"
+                    />
+                  </div>
+                  <div className="md:col-span-3">
+                    <input
+                      type="number"
+                      placeholder="Modal/HPP Satuan (opsional)"
+                      value={pkgCostInput}
+                      onChange={(e) => setPkgCostInput(e.target.value)}
+                      className="w-full px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl text-xs font-bold outline-none"
+                    />
+                  </div>
+                </div>
+
+                {packageItems.length > 0 && (
+                  <div className="bg-white border border-violet-200 rounded-xl overflow-hidden">
+                    <table className="w-full text-xs text-left">
+                      <thead>
+                        <tr className="bg-violet-50 border-b border-violet-100 text-[9px] font-black text-violet-900 uppercase">
+                          <th className="px-3 py-2">Deskripsi</th>
+                          <th className="px-3 py-2 text-center">Vol</th>
+                          <th className="px-3 py-2 text-right">Harga</th>
+                          <th className="px-3 py-2 text-right">Total</th>
+                          <th className="px-3 py-2 text-right">Aksi</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {packageItems.map((p, idx) => (
+                          <tr key={idx}>
+                            <td className="px-3 py-2 font-bold text-slate-800">{p.description}</td>
+                            <td className="px-3 py-2 text-center">{p.vol} {p.unit}</td>
+                            <td className="px-3 py-2 text-right">Rp {(p.unitPrice || 0).toLocaleString('id-ID')}</td>
+                            <td className="px-3 py-2 text-right font-black text-violet-700">Rp {(p.total || 0).toLocaleString('id-ID')}</td>
+                            <td className="px-3 py-2 text-right">
+                              <button
+                                type="button"
+                                onClick={() => setPackageItems(prev => prev.filter((_, i) => i !== idx))}
+                                className="p-1 text-rose-600 hover:bg-rose-50 rounded-lg"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-500 uppercase">Catatan SPH</label>
+                    <textarea
+                      rows={2}
+                      value={pkgNotes}
+                      onChange={(e) => setPkgNotes(e.target.value)}
+                      placeholder="Catatan penawaran..."
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium outline-none"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[9px] font-black text-slate-500 uppercase">Syarat Pembayaran</label>
+                    <textarea
+                      rows={2}
+                      value={pkgPaymentTerms}
+                      onChange={(e) => setPkgPaymentTerms(e.target.value)}
+                      placeholder="DP 50%, Pelunasan 50%..."
+                      className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl text-xs font-medium outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : type === 'barang' ? (
             <div className="space-y-4">
               <h4 className="text-xs font-black text-indigo-700 uppercase tracking-widest border-b border-slate-100 pb-1.5 flex items-center gap-1.5">
                 <Box size={14} /> 3. Lembar Spesifikasi & Rincian Teknis Barang

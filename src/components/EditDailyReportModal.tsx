@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { DailyReport, Project } from "../types";
 import { dbService } from "../services/db";
-import { compressImage, extractCleanAddress } from "../lib/utils";
+import { compressImage, extractCleanAddress, readAndCompressActivityPhotos } from "../lib/utils";
 import { generateDailyReportPDF } from "../utils/dailyReportPdf";
 import { HistoryAutocompleteInput } from "./HistoryAutocompleteInput";
 import {
@@ -113,6 +113,7 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
   const [reportDateStr, setReportDateStr] = useState<string>(() => toLocalDateInput(baseTs));
   const [reportTimeStr, setReportTimeStr] = useState<string>(() => toLocalTimeInput(baseTs));
   const [isSaving, setIsSaving] = useState(false);
+  const [isUploadingPhotos, setIsUploadingPhotos] = useState(false);
   const [formError, setFormError] = useState("");
   const [historyVersion, setHistoryVersion] = useState(0);
   const isAdminUser =
@@ -403,11 +404,50 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
 
         {/* Scrollable Body */}
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-5">
-          {/* 0. Identitas Projek, Tanggal, Kontraktor & Logo */}
+          {/* 0. Tanggal Laporan, Identitas Projek, Kontraktor & Logo */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
             <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
-              <Calendar size={15} className="text-indigo-600" /> Informasi Umum & Tanggal Laporan
+              <Calendar size={15} className="text-indigo-600" /> Tanggal & Informasi Umum Laporan
             </h4>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-3.5 rounded-2xl bg-indigo-50/60 border border-indigo-100">
+              <div>
+                <label className="text-[10px] font-black text-indigo-800 uppercase tracking-wider block mb-1.5">
+                  Tanggal Laporan
+                </label>
+                <input
+                  type="date"
+                  className="input-field text-xs font-bold w-full bg-white"
+                  value={reportDateStr}
+                  onChange={(e) => setReportDateStr(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-indigo-800 uppercase tracking-wider block mb-1.5">
+                  Jam Laporan
+                </label>
+                <input
+                  type="time"
+                  className="input-field text-xs font-bold w-full bg-white"
+                  value={reportTimeStr}
+                  onChange={(e) => setReportTimeStr(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
+                  Kategori Pekerjaan
+                </label>
+                <HistoryAutocompleteInput
+                  className="input-field text-xs font-bold w-full bg-white"
+                  value={draft.workType}
+                  onChange={(val) => setDraft({ ...draft, workType: val })}
+                  suggestions={historyByField.workType || []}
+                  onSaveHistory={(val) => handleSaveFieldHistory("workType", val)}
+                  onRemoveSuggestion={(val) => handleRemoveFieldHistory("workType", val)}
+                  placeholder="Konstruksi & Sipil"
+                />
+              </div>
+            </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -453,45 +493,6 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
                   onChange={(e) => setDraft({ ...draft, projectName: e.target.value })}
                   placeholder="Nama Proyek"
                   required
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
-                  Tanggal Laporan
-                </label>
-                <input
-                  type="date"
-                  className="input-field text-xs font-bold w-full"
-                  value={reportDateStr}
-                  onChange={(e) => setReportDateStr(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
-                  Jam Laporan
-                </label>
-                <input
-                  type="time"
-                  className="input-field text-xs font-bold w-full"
-                  value={reportTimeStr}
-                  onChange={(e) => setReportTimeStr(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-black text-slate-500 uppercase tracking-wider block mb-1.5">
-                  Kategori Pekerjaan
-                </label>
-                <HistoryAutocompleteInput
-                  className="input-field text-xs font-bold w-full"
-                  value={draft.workType}
-                  onChange={(val) => setDraft({ ...draft, workType: val })}
-                  suggestions={historyByField.workType || []}
-                  onSaveHistory={(val) => handleSaveFieldHistory("workType", val)}
-                  onRemoveSuggestion={(val) => handleRemoveFieldHistory("workType", val)}
-                  placeholder="Konstruksi & Sipil"
                 />
               </div>
             </div>
@@ -986,38 +987,36 @@ export const EditDailyReportModal: React.FC<EditDailyReportModalProps> = ({
 
           {/* 6. Dokumentasi Foto */}
           <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <h4 className="text-xs font-black uppercase tracking-widest text-slate-400 flex items-center gap-2">
-                <Camera size={15} className="text-indigo-600" /> VI. Dokumentasi Foto ({draft.photos.length}/8)
+                <Camera size={15} className="text-indigo-600" /> VI. Dokumentasi Foto ({draft.photos.length}/16)
               </h4>
-              {draft.photos.length < 8 && (
+              {draft.photos.length < 16 && (
                 <label className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold cursor-pointer">
-                  <CloudUpload size={14} />
-                  <span>Tambah Foto</span>
+                  {isUploadingPhotos ? <Loader2 size={14} className="animate-spin" /> : <CloudUpload size={14} />}
+                  <span>{isUploadingPhotos ? "Memproses Foto..." : "Tambah Banyak Foto (Galeri)"}</span>
                   <input
                     type="file"
                     accept="image/*"
                     multiple
                     className="hidden"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files || []);
-                      files.forEach((file) => {
-                        const reader = new FileReader();
-                        reader.onloadend = async () => {
-                          let base64 = reader.result as string;
-                          try {
-                            base64 = await compressImage(base64, 1024, 1024, 0.78);
-                          } catch {
-                            // fallback
-                          }
+                    onChange={async (e) => {
+                      const inputEl = e.currentTarget;
+                      const fileList = inputEl.files;
+                      if (!fileList || fileList.length === 0) return;
+                      setIsUploadingPhotos(true);
+                      try {
+                        const batch = await readAndCompressActivityPhotos(fileList, 800, 0.72);
+                        if (batch.length > 0) {
                           setDraft((prev) => ({
                             ...prev,
-                            photos: [...prev.photos, base64].slice(0, 8),
+                            photos: [...prev.photos, ...batch].slice(0, 16),
                           }));
-                        };
-                        reader.readAsDataURL(file as Blob);
-                      });
-                      e.target.value = "";
+                        }
+                      } finally {
+                        setIsUploadingPhotos(false);
+                        inputEl.value = "";
+                      }
                     }}
                   />
                 </label>

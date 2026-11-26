@@ -54,7 +54,7 @@ service cloud.firestore {
              data.get('name', '') is string && data.get('name', '').size() > 0 && data.get('name', '').size() <= 200 &&
              data.get('sku', '') is string && data.get('sku', '').size() <= 100 &&
              data.get('category', '') is string && data.get('category', '').size() <= 100 &&
-             (data.get('type', '') == 'barang' || data.get('type', '') == 'jasa') &&
+             (data.get('type', '') == 'barang' || data.get('type', '') == 'jasa' || data.get('type', '') == 'barang_dan_jasa') &&
              data.get('brand', '') is string && data.get('brand', '').size() <= 100 &&
              data.get('priceItem', 0) is number &&
              (data.get('status', '') == 'aktif' || data.get('status', '') == 'nonaktif') &&

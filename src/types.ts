@@ -36,6 +36,7 @@ export interface FieldReport {
   priority: 'High' | 'Medium' | 'Low';
   time: string;
   img: string;
+  photos?: string[];
   description?: string;
   syncStatus?: 'synced' | 'pending';
   lat?: number;
