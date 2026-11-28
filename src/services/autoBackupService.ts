@@ -299,17 +299,26 @@ export const autoBackupService = {
         if (!isQuotaExhausted() && (timestamp - lastCloudSyncTimestamp > CLOUD_SYNC_THROTTLE_MS) && finalFin.length >= 500) {
           try {
             lastCloudSyncTimestamp = timestamp;
-            await dbService.setDocument("systemBackups", "latest_synced_data", {
+            let cloudFin = finalFin;
+            const candidatePayload: any = {
               updatedAt: dateStr,
               timestamp,
               trigger: snapInput.triggerReason,
               financialRecordsCount: finalFin.length,
               debtRecordsCount: finalDebts.length,
               projectsCount: finalProjects.length,
-              financialRecords: finalFin,
+              financialRecords: cloudFin,
               debtRecords: finalDebts,
               projects: finalProjects,
-            });
+            };
+            const payloadBytes = new Blob([JSON.stringify(candidatePayload)]).size;
+            if (payloadBytes > 880_000) {
+              cloudFin = finalFin.filter((r: any) => r?.isUserCreated || r?.isManualUserCreated || r?.isLiveNewTransaction || r?.isUserEdited);
+              candidatePayload.financialRecords = cloudFin;
+            }
+            if (new Blob([JSON.stringify(candidatePayload)]).size <= 950_000) {
+              await dbService.setDocument("systemBackups", "latest_synced_data", candidatePayload);
+            }
           } catch (cloudErr) {
             console.warn("[AutoBackup] Cloud sync Firestore skipped, data tetap aman di LocalStorage:", cloudErr);
           }
@@ -341,7 +350,7 @@ export const autoBackupService = {
         const now = Date.now();
         const dateStr = new Date(now).toISOString();
         lastCloudSyncTimestamp = now;
-        await dbService.setDocument("systemBackups", "latest_synced_data", {
+        const candidatePayload: any = {
           updatedAt: dateStr,
           timestamp: now,
           trigger: triggerReason,
@@ -351,7 +360,15 @@ export const autoBackupService = {
           financialRecords,
           debtRecords: debtRecords || [],
           projects: projects || [],
-        });
+        };
+        if (new Blob([JSON.stringify(candidatePayload)]).size > 880_000) {
+          candidatePayload.financialRecords = financialRecords.filter(
+            (r: any) => r?.isUserCreated || r?.isManualUserCreated || r?.isLiveNewTransaction || r?.isUserEdited
+          );
+        }
+        if (new Blob([JSON.stringify(candidatePayload)]).size <= 950_000) {
+          await dbService.setDocument("systemBackups", "latest_synced_data", candidatePayload);
+        }
       } catch (_) {}
     }, 600);
   },

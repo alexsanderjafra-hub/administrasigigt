@@ -188,6 +188,30 @@ const DELETED_COL_PREFIX = "wf_deleted_col_";
 const PENDING_WRITE_COL_PREFIX = "wf_pending_write_col_";
 const PENDING_DELETE_COL_PREFIX = "wf_pending_del_col_";
 const CLOUD_DELETED_REGISTRY_KEY = "wf_cloud_deleted_registry";
+const CLOUD_CLEARED_GUARD_KEY = "wf_cloud_cleared_guard";
+
+export const FINANCE_SYNC_EVENT = "wf-finance-sync-changed";
+
+export type CloudSyncOutcome =
+  | "synced"
+  | "queued_quota"
+  | "queued_offline"
+  | "error_permission"
+  | "error_unknown";
+
+export interface CloudWriteResult {
+  docId: string;
+  status: CloudSyncOutcome;
+  errorMessage?: string;
+}
+
+export function notifyFinanceSyncChanged(): void {
+  try {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent(FINANCE_SYNC_EVENT));
+    }
+  } catch (_) {}
+}
 
 const inMemoryLocalStores = new Map<string, Map<string, any>>();
 const inMemoryDeletedIds = new Map<string, Set<string>>();
@@ -210,6 +234,7 @@ interface CloudDeletedRegistryState {
   project: Map<string, number>;
 }
 let cloudDeletedState: CloudDeletedRegistryState | null = null;
+let cloudClearedGuardState: CloudDeletedRegistryState | null = null;
 const pendingCloudDeleteQueue: Record<CloudDeletionType, Map<string, number>> = {
   financial: new Map(),
   debt: new Map(),
@@ -286,8 +311,60 @@ function normalizeRegistryId(type: CloudDeletionType, id: string): string {
   return type === "debt" ? trimmed.toLowerCase() : trimmed.toUpperCase();
 }
 
+function ensureCloudClearedGuardState(): CloudDeletedRegistryState {
+  if (cloudClearedGuardState) return cloudClearedGuardState;
+  const state: CloudDeletedRegistryState = {
+    financial: new Map(),
+    debt: new Map(),
+    project: new Map(),
+  };
+  try {
+    if (typeof window !== "undefined") {
+      const raw = localStorage.getItem(CLOUD_CLEARED_GUARD_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.financial && typeof parsed.financial === "object") {
+          Object.entries(parsed.financial).forEach(([k, v]) => {
+            if (typeof v === "number") state.financial.set(k.toUpperCase(), v);
+          });
+        }
+        if (parsed?.debt && typeof parsed.debt === "object") {
+          Object.entries(parsed.debt).forEach(([k, v]) => {
+            if (typeof v === "number") state.debt.set(k.toLowerCase(), v);
+          });
+        }
+        if (parsed?.project && typeof parsed.project === "object") {
+          Object.entries(parsed.project).forEach(([k, v]) => {
+            if (typeof v === "number") state.project.set(k.toUpperCase(), v);
+          });
+        }
+      }
+    }
+  } catch (_) {}
+  cloudClearedGuardState = state;
+  return state;
+}
+
+function persistCloudClearedGuardToDisk(): void {
+  try {
+    if (typeof window === "undefined" || !cloudClearedGuardState) return;
+    const obj = {
+      financial: Object.fromEntries(cloudClearedGuardState.financial.entries()),
+      debt: Object.fromEntries(cloudClearedGuardState.debt.entries()),
+      project: Object.fromEntries(cloudClearedGuardState.project.entries()),
+    };
+    localStorage.setItem(CLOUD_CLEARED_GUARD_KEY, JSON.stringify(obj));
+  } catch (_) {}
+}
+
 export function getCloudDeletedMap(type: CloudDeletionType): Map<string, number> {
   return ensureCloudDeletedState()[type];
+}
+
+export function hasCloudDeletedKey(type: CloudDeletionType, id: string): boolean {
+  const norm = normalizeRegistryId(type, id);
+  if (!norm) return false;
+  return ensureCloudDeletedState()[type].has(norm);
 }
 
 export function getRecordTimestampMs(rec: any): number {
@@ -311,6 +388,7 @@ export function isDeletedByCloudRegistry(type: CloudDeletionType, item: any): bo
   const map = getCloudDeletedMap(type);
   if (map.size === 0) return false;
 
+  const clearedMap = ensureCloudClearedGuardState()[type];
   const keysToCheck: string[] = [];
   if (item.id) keysToCheck.push(normalizeRegistryId(type, item.id));
   if (item.customId) keysToCheck.push(normalizeRegistryId(type, item.customId));
@@ -320,16 +398,20 @@ export function isDeletedByCloudRegistry(type: CloudDeletionType, item: any): bo
   }
 
   let latestDelAt = 0;
+  let latestClearedAt = 0;
   for (const k of keysToCheck) {
     if (!k) continue;
     const ts = map.get(k);
     if (ts && ts > latestDelAt) latestDelAt = ts;
+    const cTs = clearedMap.get(k);
+    if (cTs && cTs > latestClearedAt) latestClearedAt = cTs;
   }
   if (!latestDelAt) return false;
+  if (latestClearedAt >= latestDelAt) return false;
 
-  // If the item is a freshly recreated live document whose createdAt/timestamp is strictly newer than deletion, keep it alive
+  // If the item is a freshly recreated live document whose createdAt/timestamp is newer than deletion, keep it alive
   const itemTs = getRecordTimestampMs(item);
-  if (itemTs > 0 && itemTs > latestDelAt + 1000 && (item.isUserCreated || item.isManualUserCreated || item.isLiveNewTransaction)) {
+  if (itemTs > 0 && itemTs > latestDelAt && (item.isUserCreated || item.isManualUserCreated || item.isLiveNewTransaction)) {
     return false;
   }
   return true;
@@ -390,17 +472,26 @@ function scheduleCloudRegistryFlush(): void {
 
 export function recordCloudDeletion(type: CloudDeletionType, ids: (string | undefined)[]): void {
   const state = ensureCloudDeletedState();
+  const cleared = ensureCloudClearedGuardState();
   const now = Date.now();
   let changed = false;
+  let clearedChanged = false;
   ids.forEach((raw) => {
     if (!raw) return;
     const norm = normalizeRegistryId(type, raw);
     if (!norm) return;
     state[type].set(norm, now);
+    if (cleared[type].has(norm)) {
+      cleared[type].delete(norm);
+      clearedChanged = true;
+    }
     pendingCloudDeleteQueue[type].set(norm, now);
     pendingCloudClearQueue[type].delete(norm);
     changed = true;
   });
+  if (clearedChanged) {
+    persistCloudClearedGuardToDisk();
+  }
   if (changed) {
     persistCloudDeletedStateToDisk();
     scheduleCloudRegistryFlush();
@@ -409,11 +500,16 @@ export function recordCloudDeletion(type: CloudDeletionType, ids: (string | unde
 
 export function clearCloudDeletion(type: CloudDeletionType, ids: (string | undefined)[]): void {
   const state = ensureCloudDeletedState();
+  const cleared = ensureCloudClearedGuardState();
+  const now = Date.now();
   let changed = false;
+  let clearedChanged = false;
   ids.forEach((raw) => {
     if (!raw) return;
     const norm = normalizeRegistryId(type, raw);
     if (!norm) return;
+    cleared[type].set(norm, now);
+    clearedChanged = true;
     if (state[type].has(norm)) {
       state[type].delete(norm);
       pendingCloudDeleteQueue[type].delete(norm);
@@ -421,6 +517,9 @@ export function clearCloudDeletion(type: CloudDeletionType, ids: (string | undef
       changed = true;
     }
   });
+  if (clearedChanged) {
+    persistCloudClearedGuardToDisk();
+  }
   if (changed) {
     persistCloudDeletedStateToDisk();
     scheduleCloudRegistryFlush();
@@ -433,6 +532,7 @@ export function applyCloudDeletedRegistry(docData: any): {
   project: string[];
 } {
   const state = ensureCloudDeletedState();
+  const cleared = ensureCloudClearedGuardState();
   const added = {
     financial: [] as string[],
     debt: [] as string[],
@@ -445,6 +545,10 @@ export function applyCloudDeletedRegistry(docData: any): {
     Object.entries(rawObj).forEach(([encKey, val]) => {
       const decoded = normalizeRegistryId(type, decodeRegistryKey(encKey));
       if (!decoded || typeof val !== "number") return;
+      const clearedAt = cleared[type].get(decoded) || 0;
+      if (clearedAt > 0 && val <= clearedAt) {
+        return;
+      }
       const prevTs = state[type].get(decoded) || 0;
       if (val > prevTs) {
         state[type].set(decoded, val);
@@ -581,9 +685,19 @@ export function getLocalCollectionStore<T>(collectionPath: string): Map<string, 
   return map;
 }
 
-function saveLocalCollectionStore<T>(collectionPath: string, map: Map<string, T>): void {
+function saveLocalCollectionStore<T>(collectionPath: string, map: Map<string, T>, immediate: boolean = false): void {
   inMemoryLocalStores.set(collectionPath, map);
   if (typeof window === "undefined") return;
+  if (immediate) {
+    const existingTimer = pendingStoreSaveTimers.get(collectionPath);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      pendingStoreSaveTimers.delete(collectionPath);
+    }
+    dirtyStoreCollections.delete(collectionPath);
+    flushCollectionStoreToDisk(collectionPath);
+    return;
+  }
   dirtyStoreCollections.add(collectionPath);
   const existingTimer = pendingStoreSaveTimers.get(collectionPath);
   if (existingTimer) {
@@ -634,9 +748,20 @@ function scheduleSetFlush(
   timersMap: Map<string, any>,
   dirtySet: Set<string>,
   prefix: string,
-  collectionPath: string
+  collectionPath: string,
+  immediate: boolean = false
 ): void {
   if (typeof window === "undefined") return;
+  if (immediate) {
+    const existingTimer = timersMap.get(collectionPath);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      timersMap.delete(collectionPath);
+    }
+    dirtySet.delete(collectionPath);
+    flushSetToDisk(cacheMap, prefix, collectionPath);
+    return;
+  }
   dirtySet.add(collectionPath);
   const existingTimer = timersMap.get(collectionPath);
   if (existingTimer) clearTimeout(existingTimer);
@@ -659,7 +784,8 @@ function addPendingWriteId(collectionPath: string, docId: string): void {
       const upper = String(docId).trim().toUpperCase();
       if (upper && !set.has(upper)) {
         set.add(upper);
-        scheduleSetFlush(inMemoryPendingWriteIds, pendingWriteSaveTimers, dirtyPendingWriteCollections, PENDING_WRITE_COL_PREFIX, collectionPath);
+        scheduleSetFlush(inMemoryPendingWriteIds, pendingWriteSaveTimers, dirtyPendingWriteCollections, PENDING_WRITE_COL_PREFIX, collectionPath, true);
+        if (collectionPath === "financialRecords") notifyFinanceSyncChanged();
       }
     }
   } catch (_) {}
@@ -672,7 +798,8 @@ function removePendingWriteId(collectionPath: string, docId: string): void {
       const upper = String(docId).trim().toUpperCase();
       if (upper && set.has(upper)) {
         set.delete(upper);
-        scheduleSetFlush(inMemoryPendingWriteIds, pendingWriteSaveTimers, dirtyPendingWriteCollections, PENDING_WRITE_COL_PREFIX, collectionPath);
+        scheduleSetFlush(inMemoryPendingWriteIds, pendingWriteSaveTimers, dirtyPendingWriteCollections, PENDING_WRITE_COL_PREFIX, collectionPath, true);
+        if (collectionPath === "financialRecords") notifyFinanceSyncChanged();
       }
     }
   } catch (_) {}
@@ -931,6 +1058,155 @@ function clearPendingWriteKeys(collectionPath: string, data: any, docId: string)
   keys.forEach((k) => removePendingWriteId(collectionPath, k));
 }
 
+function classifyFirestoreWriteError(error: unknown): {
+  status: CloudSyncOutcome;
+  message: string;
+} {
+  const errMessage = error instanceof Error ? error.message : String(error);
+  const lower = errMessage.toLowerCase();
+
+  if (
+    lower.includes("quota limit exceeded") ||
+    lower.includes("resource-exhausted") ||
+    lower.includes("quota exceeded") ||
+    lower.includes("free daily write units") ||
+    lower.includes("maximum backoff delay")
+  ) {
+    markQuotaExhausted();
+    return {
+      status: "queued_quota",
+      message: "Kuota tulis cloud harian tercapai sementara",
+    };
+  }
+
+  if (
+    lower.includes("client is offline") ||
+    lower.includes("offline") ||
+    lower.includes("unavailable") ||
+    lower.includes("network") ||
+    lower.includes("failed to fetch") ||
+    lower.includes("internet connection")
+  ) {
+    return {
+      status: "queued_offline",
+      message: "Koneksi jaringan sedang terputus",
+    };
+  }
+
+  if (lower.includes("permission") || lower.includes("insufficient")) {
+    return {
+      status: "error_permission",
+      message: "Izin akun tidak mencukupi atau sesi login perlu diperbarui",
+    };
+  }
+
+  return {
+    status: "error_unknown",
+    message: errMessage || "Gangguan penulisan ke server cloud",
+  };
+}
+
+export async function flushPendingCollectionWrites(collectionPath: string): Promise<{
+  syncedCount: number;
+  failedCount: number;
+  remainingCount: number;
+  lastStatus: CloudSyncOutcome;
+  lastError?: string;
+}> {
+  const pendingIds = Array.from(getPendingCollectionIds(collectionPath));
+  if (pendingIds.length === 0) {
+    return { syncedCount: 0, failedCount: 0, remainingCount: 0, lastStatus: "synced" };
+  }
+  if (!auth.currentUser) {
+    return {
+      syncedCount: 0,
+      failedCount: pendingIds.length,
+      remainingCount: pendingIds.length,
+      lastStatus: "error_permission",
+      lastError: "Sesi login belum aktif",
+    };
+  }
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return {
+      syncedCount: 0,
+      failedCount: pendingIds.length,
+      remainingCount: pendingIds.length,
+      lastStatus: "queued_offline",
+      lastError: "Perangkat sedang offline",
+    };
+  }
+  if (isQuotaExhausted()) {
+    return {
+      syncedCount: 0,
+      failedCount: pendingIds.length,
+      remainingCount: pendingIds.length,
+      lastStatus: "queued_quota",
+      lastError: "Jeda kuota cloud sedang aktif",
+    };
+  }
+
+  const localMap = getLocalCollectionStore<any>(collectionPath);
+  const byUpperKey = new Map<string, any>();
+  localMap.forEach((val, key) => {
+    if (!val) return;
+    const kRaw = String(key).trim().toUpperCase();
+    const k1 = String(val.id || "").trim().toUpperCase();
+    const k2 = String(val.customId || "").trim().toUpperCase();
+    if (kRaw) byUpperKey.set(kRaw, val);
+    if (k1) byUpperKey.set(k1, val);
+    if (k2) byUpperKey.set(k2, val);
+  });
+
+  const processedDocIds = new Set<string>();
+  let syncedCount = 0;
+  let failedCount = 0;
+  let lastStatus: CloudSyncOutcome = "synced";
+  let lastError: string | undefined;
+
+  for (const upperId of pendingIds) {
+    const item = byUpperKey.get(upperId);
+    if (!item) {
+      removePendingWriteId(collectionPath, upperId);
+      continue;
+    }
+    const finalDocId = String(item.customId || item.id || upperId).trim();
+    if (!finalDocId || processedDocIds.has(finalDocId.toUpperCase())) continue;
+    processedDocIds.add(finalDocId.toUpperCase());
+
+    try {
+      clearDeletionMarkersForWrite(collectionPath, item, finalDocId);
+      const sanitized = sanitizeFirestoreData({ ...item, id: finalDocId }) || {};
+      await setDoc(
+        doc(db, collectionPath, finalDocId),
+        {
+          ...sanitized,
+          id: finalDocId,
+          createdAt: sanitized.createdAt || Timestamp.now(),
+          updatedAt: Timestamp.now(),
+        },
+        { merge: true }
+      );
+      clearPendingWriteKeys(collectionPath, item, finalDocId);
+      syncedCount++;
+    } catch (err) {
+      const classified = classifyFirestoreWriteError(err);
+      failedCount++;
+      lastStatus = classified.status;
+      lastError = classified.message;
+      if (classified.status === "queued_quota" || classified.status === "queued_offline") {
+        break;
+      }
+    }
+  }
+
+  if (collectionPath === "financialRecords") {
+    notifyFinanceSyncChanged();
+  }
+
+  const remainingCount = getPendingCollectionIds(collectionPath).size;
+  return { syncedCount, failedCount, remainingCount, lastStatus, lastError };
+}
+
 export const dbService = {
   async getDocument<T>(collectionPath: string, docId: string, retries = 3, delayMs = 300): Promise<T | null> {
     for (let i = 0; i < retries; i++) {
@@ -982,13 +1258,69 @@ export const dbService = {
     return mergeWithLocalCollection<T>(collectionPath, [], false);
   },
 
+  async setDocumentVerified(collectionPath: string, docId: string, data: any): Promise<CloudWriteResult> {
+    const finalDocId = String(docId || data?.id || data?.customId || "").trim();
+    if (!finalDocId) {
+      return { docId: "", status: "error_unknown", errorMessage: "ID dokumen kosong" };
+    }
+    const map = getLocalCollectionStore(collectionPath);
+    const existing = (map.get(finalDocId) || {}) as any;
+    map.set(finalDocId, { ...existing, ...data, id: finalDocId, updatedAt: new Date().toISOString() });
+    saveLocalCollectionStore(collectionPath, map, true);
+    clearDeletionMarkersForWrite(collectionPath, data, finalDocId);
+    markPendingWriteKeys(collectionPath, data, finalDocId);
+
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      return {
+        docId: finalDocId,
+        status: "queued_offline",
+        errorMessage: "Perangkat sedang offline",
+      };
+    }
+    if (isQuotaExhausted()) {
+      return {
+        docId: finalDocId,
+        status: "queued_quota",
+        errorMessage: "Kuota tulis cloud tercapai sementara",
+      };
+    }
+    if (!auth.currentUser) {
+      return {
+        docId: finalDocId,
+        status: "error_permission",
+        errorMessage: "Sesi login cloud belum siap",
+      };
+    }
+    try {
+      const sanitized = sanitizeFirestoreData(data) || {};
+      await setDoc(
+        doc(db, collectionPath, finalDocId),
+        {
+          ...sanitized,
+          updatedAt: Timestamp.now(),
+        },
+        { merge: true }
+      );
+      clearPendingWriteKeys(collectionPath, data, finalDocId);
+      return { docId: finalDocId, status: "synced" };
+    } catch (error) {
+      const classified = classifyFirestoreWriteError(error);
+      console.warn(`[dbService] setDocumentVerified failed on ${collectionPath}/${finalDocId}:`, error);
+      return {
+        docId: finalDocId,
+        status: classified.status,
+        errorMessage: classified.message,
+      };
+    }
+  },
+
   async setDocument(collectionPath: string, docId: string, data: any): Promise<void> {
     const finalDocId = docId || data?.id || data?.customId;
     if (finalDocId) {
       const map = getLocalCollectionStore(collectionPath);
       const existing = (map.get(String(finalDocId)) || {}) as any;
       map.set(String(finalDocId), { ...existing, ...data, id: finalDocId, updatedAt: new Date().toISOString() });
-      saveLocalCollectionStore(collectionPath, map);
+      saveLocalCollectionStore(collectionPath, map, collectionPath === "financialRecords");
       clearDeletionMarkersForWrite(collectionPath, data, String(finalDocId));
       markPendingWriteKeys(collectionPath, data, String(finalDocId));
     }
@@ -1007,7 +1339,59 @@ export const dbService = {
       }, { merge: true });
       clearPendingWriteKeys(collectionPath, data, String(finalDocId));
     } catch (error) {
+      classifyFirestoreWriteError(error);
       console.warn(`[dbService] setDocument warning on ${collectionPath}/${docId}, preserved locally:`, error);
+    }
+  },
+
+  async createDocumentVerified(collectionPath: string, data: any): Promise<CloudWriteResult> {
+    const finalDocId = String(data?.customId || data?.id || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
+    const map = getLocalCollectionStore(collectionPath);
+    map.set(finalDocId, { ...data, id: finalDocId, createdAt: Date.now(), updatedAt: new Date().toISOString() });
+    saveLocalCollectionStore(collectionPath, map, true);
+    clearDeletionMarkersForWrite(collectionPath, data, finalDocId);
+    markPendingWriteKeys(collectionPath, data, finalDocId);
+
+    if (typeof navigator !== "undefined" && navigator.onLine === false) {
+      return {
+        docId: finalDocId,
+        status: "queued_offline",
+        errorMessage: "Perangkat sedang offline",
+      };
+    }
+    if (isQuotaExhausted()) {
+      return {
+        docId: finalDocId,
+        status: "queued_quota",
+        errorMessage: "Kuota tulis cloud tercapai sementara",
+      };
+    }
+    if (!auth.currentUser) {
+      return {
+        docId: finalDocId,
+        status: "error_permission",
+        errorMessage: "Sesi login cloud belum aktif",
+      };
+    }
+    try {
+      const sanitized = sanitizeFirestoreData({ ...data, id: finalDocId }) || {};
+      const docRef = doc(db, collectionPath, finalDocId);
+      await setDoc(docRef, {
+        ...sanitized,
+        id: finalDocId,
+        createdAt: sanitized.createdAt || Timestamp.now(),
+        updatedAt: Timestamp.now()
+      }, { merge: true });
+      clearPendingWriteKeys(collectionPath, data, finalDocId);
+      return { docId: finalDocId, status: "synced" };
+    } catch (error) {
+      const classified = classifyFirestoreWriteError(error);
+      console.warn(`[dbService] createDocumentVerified warning on ${collectionPath}/${finalDocId}:`, error);
+      return {
+        docId: finalDocId,
+        status: classified.status,
+        errorMessage: classified.message,
+      };
     }
   },
 
@@ -1015,7 +1399,7 @@ export const dbService = {
     const finalDocId = String(data?.customId || data?.id || `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
     const map = getLocalCollectionStore(collectionPath);
     map.set(finalDocId, { ...data, id: finalDocId, createdAt: Date.now(), updatedAt: new Date().toISOString() });
-    saveLocalCollectionStore(collectionPath, map);
+    saveLocalCollectionStore(collectionPath, map, collectionPath === "financialRecords");
     clearDeletionMarkersForWrite(collectionPath, data, finalDocId);
     markPendingWriteKeys(collectionPath, data, finalDocId);
 
@@ -1034,6 +1418,7 @@ export const dbService = {
       clearPendingWriteKeys(collectionPath, data, finalDocId);
       return finalDocId;
     } catch (error) {
+      classifyFirestoreWriteError(error);
       console.warn(`[dbService] createDocument warning on ${collectionPath}, preserved locally with ID ${finalDocId}:`, error);
       return finalDocId;
     }
@@ -1055,7 +1440,7 @@ export const dbService = {
     clearPendingWriteKeys(collectionPath, data, finalDocId);
     const map = getLocalCollectionStore(collectionPath);
     map.set(finalDocId, { ...data, id: finalDocId, createdAt: Date.now(), updatedAt: new Date().toISOString() });
-    saveLocalCollectionStore(collectionPath, map);
+    saveLocalCollectionStore(collectionPath, map, true);
     return finalDocId;
   },
 
@@ -1065,7 +1450,7 @@ export const dbService = {
       const map = getLocalCollectionStore(collectionPath);
       const existing = (map.get(String(finalDocId)) || {}) as any;
       map.set(String(finalDocId), { ...existing, ...data, id: finalDocId, updatedAt: new Date().toISOString() });
-      saveLocalCollectionStore(collectionPath, map);
+      saveLocalCollectionStore(collectionPath, map, collectionPath === "financialRecords");
       clearDeletionMarkersForWrite(collectionPath, data, String(finalDocId));
       markPendingWriteKeys(collectionPath, data, String(finalDocId));
     }
@@ -1082,6 +1467,7 @@ export const dbService = {
       }, { merge: true });
       clearPendingWriteKeys(collectionPath, data, String(finalDocId));
     } catch (error) {
+      classifyFirestoreWriteError(error);
       console.warn(`[dbService] updateDocument warning on ${collectionPath}/${docId}, preserved locally:`, error);
     }
   },

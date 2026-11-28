@@ -273,6 +273,10 @@ import {
   isDeletedByCloudRegistry,
   recordCloudDeletion,
   clearCloudDeletion,
+  hasCloudDeletedKey,
+  flushPendingCollectionWrites,
+  FINANCE_SYNC_EVENT,
+  CloudWriteResult,
 } from "./services/db";
 import {
   initFinancialStorage,
@@ -17820,6 +17824,83 @@ const AdminFinanceScreen = ({
   const [showAddModal, setShowAddModal] = useState(false);
   const [isSubmittingTransaction, setIsSubmittingTransaction] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [pendingFinanceIds, setPendingFinanceIds] = useState<Set<string>>(
+    () => new Set(getPendingCollectionIds("financialRecords"))
+  );
+  const [isManualSyncingFinance, setIsManualSyncingFinance] = useState(false);
+  const [financeSyncToast, setFinanceSyncToast] = useState<{
+    id: number;
+    type: "synced" | "queued" | "error";
+    title: string;
+    message: string;
+  } | null>(null);
+  const syncToastTimerRef = useRef<any>(null);
+
+  const showFinanceToast = useCallback(
+    (type: "synced" | "queued" | "error", title: string, message: string) => {
+      if (syncToastTimerRef.current) {
+        clearTimeout(syncToastTimerRef.current);
+      }
+      const nextId = Date.now();
+      setFinanceSyncToast({ id: nextId, type, title, message });
+      syncToastTimerRef.current = setTimeout(
+        () => {
+          setFinanceSyncToast((curr) => (curr && curr.id === nextId ? null : curr));
+        },
+        type === "synced" ? 5000 : 12000
+      );
+    },
+    []
+  );
+
+  useEffect(() => {
+    const refreshPending = () => {
+      setPendingFinanceIds(new Set(getPendingCollectionIds("financialRecords")));
+    };
+    refreshPending();
+    window.addEventListener(FINANCE_SYNC_EVENT, refreshPending);
+    return () => {
+      window.removeEventListener(FINANCE_SYNC_EVENT, refreshPending);
+    };
+  }, [financialRecords]);
+
+  useEffect(() => {
+    return () => {
+      if (syncToastTimerRef.current) clearTimeout(syncToastTimerRef.current);
+    };
+  }, []);
+
+  const handleManualSyncPendingFinance = async () => {
+    if (isManualSyncingFinance) return;
+    setIsManualSyncingFinance(true);
+    try {
+      const res = await flushPendingCollectionWrites("financialRecords");
+      setPendingFinanceIds(new Set(getPendingCollectionIds("financialRecords")));
+      if (res.remainingCount === 0) {
+        showFinanceToast(
+          "synced",
+          "Sinkronisasi Selesai",
+          res.syncedCount > 0
+            ? `${res.syncedCount} transaksi tertunda berhasil dikirim ke cloud.`
+            : "Seluruh transaksi sudah tersinkron dengan cloud."
+        );
+      } else if (res.lastStatus === "queued_quota" || res.lastStatus === "queued_offline") {
+        showFinanceToast(
+          "queued",
+          "Masih Dalam Antrean Auto-Sync",
+          `${res.remainingCount} transaksi belum bisa dikirim (${res.lastError || "kendala koneksi/kuota"}). Sistem akan mencoba ulang otomatis.`
+        );
+      } else {
+        showFinanceToast(
+          "error",
+          "Sinkronisasi Tertahan",
+          `${res.remainingCount} transaksi gagal sinkron (${res.lastError || "periksa koneksi/akun"}).`
+        );
+      }
+    } finally {
+      setIsManualSyncingFinance(false);
+    }
+  };
   const [selectedPattyCashDetail, setSelectedPattyCashDetail] = useState<{
     bankId?: string;
     holder?: string;
@@ -18145,15 +18226,31 @@ const AdminFinanceScreen = ({
       const rId = r.customId || "";
       return rId.startsWith(`${prefix}-${dateFormatted}-`);
     });
-    
+
+    const deletedSet = getDeletedFinancialIds();
+    const pendingSet = getPendingCollectionIds("financialRecords");
     let nextNum = todaysMatches.length + 1;
     let nextNumStr = String(nextNum).padStart(3, "0");
-    
-    while (financialRecords.some((r) => r.customId === `${prefix}-${dateFormatted}-${nextNumStr}`)) {
+
+    const isIdTakenOrDeleted = (candidate: string) => {
+      const upper = candidate.trim().toUpperCase();
+      return (
+        financialRecords.some(
+          (r) =>
+            (r.customId || "").trim().toUpperCase() === upper ||
+            (r.id || "").trim().toUpperCase() === upper
+        ) ||
+        deletedSet.has(upper) ||
+        pendingSet.has(upper) ||
+        hasCloudDeletedKey("financial", upper)
+      );
+    };
+
+    while (isIdTakenOrDeleted(`${prefix}-${dateFormatted}-${nextNumStr}`)) {
       nextNum++;
       nextNumStr = String(nextNum).padStart(3, "0");
     }
-    
+
     return `${prefix}-${dateFormatted}-${nextNumStr}`;
   }, [formData.type, formData.flowType, formData.date, financialRecords]);
 
@@ -20042,6 +20139,7 @@ const AdminFinanceScreen = ({
     }
 
     let currentRecordsList = [...financialRecords];
+    const writeOutcomes: CloudWriteResult[] = [];
 
     try {
       
@@ -20059,10 +20157,25 @@ const AdminFinanceScreen = ({
         const yy = parts[0].substring(2);
         const dateFormatted = `${dd}${mm}${yy}`;
 
-        // Generate unique sequential customId
+        // Generate unique sequential customId (never reuse deleted or pending IDs)
+        const deletedFinSet = getDeletedFinancialIds();
+        const pendingFinSet = getPendingCollectionIds("financialRecords");
         let nextNum = currentRecordsList.filter((r) => r.customId?.startsWith(`${prefix}-${dateFormatted}-`)).length + 1;
         let nextNumStr = String(nextNum).padStart(3, "0");
-        while (currentRecordsList.some((r) => r.customId === `${prefix}-${dateFormatted}-${nextNumStr}`)) {
+        const isCandidateBlocked = (candidate: string) => {
+          const upper = candidate.trim().toUpperCase();
+          return (
+            currentRecordsList.some(
+              (r) =>
+                (r.customId || "").trim().toUpperCase() === upper ||
+                (r.id || "").trim().toUpperCase() === upper
+            ) ||
+            deletedFinSet.has(upper) ||
+            pendingFinSet.has(upper) ||
+            hasCloudDeletedKey("financial", upper)
+          );
+        };
+        while (isCandidateBlocked(`${prefix}-${dateFormatted}-${nextNumStr}`)) {
           nextNum++;
           nextNumStr = String(nextNum).padStart(3, "0");
         }
@@ -20176,37 +20289,40 @@ const AdminFinanceScreen = ({
         let finId = eachCustomId;
         unmarkFinancialRecordDeleted(eachCustomId);
         clearCloudDeletion("financial", [eachCustomId]);
-        try {
-          finId = await dbService.createDocument("financialRecords", {
-            ...eachRecord,
-            id: eachCustomId,
-            customId: eachCustomId,
-            isLiveNewTransaction: true,
-            isManualUserCreated: true,
-            isUserCreated: true,
-          });
-        } catch (dbErr) {
-          console.warn("createDocument fallback:", dbErr);
-          finId = eachCustomId;
-        }
-        if (finId && finId !== eachCustomId) {
-          unmarkFinancialRecordDeleted(finId);
-          clearCloudDeletion("financial", [finId]);
-        }
-        const newRecordFull = { 
-          id: finId || eachCustomId, 
+        const newRecordPayload = {
           ...eachRecord,
+          id: eachCustomId,
+          customId: eachCustomId,
+          isLiveNewTransaction: true,
           isManualUserCreated: true,
           isUserCreated: true,
-          isLiveNewTransaction: true,
+        };
+        const newRecordFull = {
+          ...newRecordPayload,
+          id: eachCustomId,
         } as FinancialRecord;
-        currentRecordsList.push(newRecordFull);
+
+        // Protect locally & update UI immediately so concurrent snapshots cannot wipe it
         saveFinancialOverride(newRecordFull);
         recordActiveUserTransaction(newRecordFull);
         recordPostLockTransactionId(eachCustomId);
-        if (finId) recordPostLockTransactionId(finId);
         recordLivePostBaselineId(eachCustomId, eachRecord.date);
-        if (finId) recordLivePostBaselineId(finId, eachRecord.date);
+
+        const writeRes = await dbService.createDocumentVerified("financialRecords", newRecordPayload);
+        writeOutcomes.push(writeRes);
+        finId = writeRes.docId || eachCustomId;
+        if (finId && finId !== eachCustomId) {
+          unmarkFinancialRecordDeleted(finId);
+          clearCloudDeletion("financial", [finId]);
+          recordPostLockTransactionId(finId);
+          recordLivePostBaselineId(finId, eachRecord.date);
+        }
+        const finalizedRecordFull = {
+          ...newRecordFull,
+          id: finId || eachCustomId,
+        } as FinancialRecord;
+        currentRecordsList.push(finalizedRecordFull);
+        setPendingFinanceIds(new Set(getPendingCollectionIds("financialRecords")));
 
         logActivity(
           "FINANCE",
@@ -20718,6 +20834,7 @@ const AdminFinanceScreen = ({
       });
       setBankAllocations([{ bankId: "", amount: 0 }]); // Reset split view
       setFinancialRecords(currentRecordsList);
+      setPendingFinanceIds(new Set(getPendingCollectionIds("financialRecords")));
       autoBackupService.saveInstantDataSnapshot(
         currentRecordsList,
         debtRecords,
@@ -20730,8 +20847,34 @@ const AdminFinanceScreen = ({
         projects,
         `Catat Transaksi Baru ${formData.type}`
       );
+
+      const failedOutcome = writeOutcomes.find((o) => o.status !== "synced");
+      if (!failedOutcome) {
+        showFinanceToast(
+          "synced",
+          "Transaksi Tersimpan ke Cloud",
+          "Data transaksi berhasil disimpan dan langsung tersinkron ke server."
+        );
+      } else if (failedOutcome.status === "queued_offline" || failedOutcome.status === "queued_quota") {
+        showFinanceToast(
+          "queued",
+          "Tersimpan Lokal & Antre Auto-Sync",
+          `${failedOutcome.errorMessage || "Koneksi/kuota sedang terkendala"}. Data diamankan di perangkat dan akan otomatis dikirim ke cloud.`
+        );
+      } else {
+        showFinanceToast(
+          "error",
+          "Gagal Sinkron ke Cloud",
+          `${failedOutcome.errorMessage || "Server menolak penulisan"}. Data tetap diamankan sementara di antrean lokal untuk dicoba ulang.`
+        );
+      }
     } catch (err) {
       console.error(err);
+      showFinanceToast(
+        "error",
+        "Gangguan Penyimpanan",
+        "Terjadi kesalahan saat menyimpan transaksi. Data tetap diamankan di penyimpanan lokal."
+      );
       if (currentRecordsList && currentRecordsList.length > 0) {
         setFinancialRecords(currentRecordsList);
         autoBackupService.saveInstantDataSnapshot(
@@ -20970,7 +21113,7 @@ const AdminFinanceScreen = ({
     }
 
     try {
-      await dbService.setDocument("financialRecords", docId, {
+      const editWriteResult = await dbService.setDocumentVerified("financialRecords", docId, {
         ...editingTransaction,
         ...updatedRecord,
         id: docId,
@@ -20985,6 +21128,26 @@ const AdminFinanceScreen = ({
       if (originalCustomId && originalCustomId !== docId && originalCustomId !== finalCustomId) {
         removeActiveUserTransaction(originalCustomId);
         await dbService.deleteDocument("financialRecords", originalCustomId).catch(() => {});
+      }
+      setPendingFinanceIds(new Set(getPendingCollectionIds("financialRecords")));
+      if (editWriteResult.status === "synced") {
+        showFinanceToast(
+          "synced",
+          "Perubahan Tersinkron",
+          `Transaksi ${finalCustomId || docId} berhasil diperbarui di cloud.`
+        );
+      } else if (editWriteResult.status === "queued_offline" || editWriteResult.status === "queued_quota") {
+        showFinanceToast(
+          "queued",
+          "Perubahan Masuk Antrean Auto-Sync",
+          `${editWriteResult.errorMessage || "Koneksi/kuota terkendala"}. Perubahan diamankan lokal dan akan dikirim otomatis.`
+        );
+      } else {
+        showFinanceToast(
+          "error",
+          "Gagal Sinkron Perubahan",
+          `${editWriteResult.errorMessage || "Gangguan server"}. Perubahan tetap disimpan di perangkat untuk dicoba ulang.`
+        );
       }
       setFinancialRecords((prev) =>
         prev.map((r) =>
@@ -23553,6 +23716,33 @@ const AdminFinanceScreen = ({
           </div>
         </div>
 
+        {pendingFinanceIds.size > 0 && (
+          <div className="bg-amber-50 border border-amber-200 rounded-3xl p-4 md:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                <Clock size={18} />
+              </div>
+              <div>
+                <h4 className="text-xs md:text-sm font-black text-amber-950">
+                  {pendingFinanceIds.size} Transaksi Menunggu Sinkronisasi Cloud
+                </h4>
+                <p className="text-[11px] font-semibold text-amber-800 mt-0.5">
+                  Data aman tersimpan di perangkat ini dan tidak akan hilang. Sistem otomatis mengirim ulang saat koneksi &amp; kuota cloud tersedia.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleManualSyncPendingFinance}
+              disabled={isManualSyncingFinance}
+              className="px-4 py-2.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center gap-2 transition-all shadow-sm shrink-0 cursor-pointer"
+            >
+              <RefreshCw size={14} className={isManualSyncingFinance ? "animate-spin" : ""} />
+              <span>{isManualSyncingFinance ? "Menyinkronkan..." : "Sinkronkan Sekarang"}</span>
+            </button>
+          </div>
+        )}
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div className="bg-slate-900 rounded-[40px] p-8 text-white shadow-xl relative overflow-hidden group col-span-1 md:col-span-1">
             <div className="absolute top-0 right-0 w-48 h-48 bg-primary/20 rounded-full -mr-24 -mt-24 blur-3xl group-hover:scale-125 transition-all duration-700" />
@@ -24182,18 +24372,28 @@ const AdminFinanceScreen = ({
                                   <td className="py-3 px-3 text-center text-slate-400 font-mono border-r border-slate-100">{rowNum}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">{record.date}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-mono font-bold text-slate-700">
-                                    {isPattyCashCategory(record.category) || (record.customId && record.customId.startsWith("BNK-") && isTalanganType) ? (
-                                      <button
-                                        onClick={() => openPattyCashModalForRecord(record)}
-                                        className="inline-flex items-center gap-1.5 text-indigo-700 hover:text-white bg-indigo-50 hover:bg-indigo-600 border border-indigo-200 px-2 py-0.5 rounded-lg font-mono font-black text-xs transition-all cursor-pointer shadow-2xs"
-                                        title="Klik untuk melihat rincian pengeluaran Petty Cash yang memakai dana ini"
-                                      >
-                                        <Eye size={11} />
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                      {isPattyCashCategory(record.category) || (record.customId && record.customId.startsWith("BNK-") && isTalanganType) ? (
+                                        <button
+                                          onClick={() => openPattyCashModalForRecord(record)}
+                                          className="inline-flex items-center gap-1.5 text-indigo-700 hover:text-white bg-indigo-50 hover:bg-indigo-600 border border-indigo-200 px-2 py-0.5 rounded-lg font-mono font-black text-xs transition-all cursor-pointer shadow-2xs"
+                                          title="Klik untuk melihat rincian pengeluaran Petty Cash yang memakai dana ini"
+                                        >
+                                          <Eye size={11} />
+                                          <span>{record.customId || "-"}</span>
+                                        </button>
+                                      ) : (
                                         <span>{record.customId || "-"}</span>
-                                      </button>
-                                    ) : (
-                                      record.customId || "-"
-                                    )}
+                                      )}
+                                      {(pendingFinanceIds.has(rId) || (rCustom && pendingFinanceIds.has(rCustom))) && (
+                                        <span
+                                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-sans font-black uppercase tracking-wider"
+                                          title="Transaksi diamankan lokal dan menunggu sinkronisasi otomatis ke cloud"
+                                        >
+                                          <Clock size={9} /> Antre Sync
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">
                                     {record.type === "IN" ? (
@@ -24256,7 +24456,16 @@ const AdminFinanceScreen = ({
                               {/* LEDGER 2: PEMASUKAN DANA PT */}
                               {filterFlowType === "IN" && (
                                 <>
-                                  <td className="py-3 px-3 border-r border-slate-100 font-mono font-bold text-slate-700 whitespace-nowrap">{record.customId || "-"}</td>
+                                  <td className="py-3 px-3 border-r border-slate-100 font-mono font-bold text-slate-700 whitespace-nowrap">
+                                    <div className="flex items-center gap-1.5">
+                                      <span>{record.customId || "-"}</span>
+                                      {(pendingFinanceIds.has(rId) || (rCustom && pendingFinanceIds.has(rCustom))) && (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-sans font-black uppercase">
+                                          <Clock size={9} /> Antre Sync
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">{record.date}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-bold whitespace-nowrap">
                                     {getFinancialRecordDisplayProjectName(record, projects)}
@@ -24297,18 +24506,25 @@ const AdminFinanceScreen = ({
                               {filterFlowType === "OUT_BANK_DIRECT" && (
                                 <>
                                   <td className="py-3 px-3 border-r border-slate-100 font-mono font-bold text-rose-700 whitespace-nowrap">
-                                    {isPattyCashCategory(record.category) || isTalanganType || shouldShowTalangan ? (
-                                      <button
-                                        onClick={() => openPattyCashModalForRecord(record)}
-                                        className="inline-flex items-center gap-1.5 text-rose-700 hover:text-white bg-rose-50 hover:bg-rose-600 border border-rose-200 px-2 py-1 rounded-xl font-mono font-black text-xs transition-all cursor-pointer shadow-2xs"
-                                        title="Klik untuk melihat rincian pengeluaran / belanja yang dipotong dari dana ini"
-                                      >
-                                        <Eye size={12} />
+                                    <div className="flex items-center gap-1.5">
+                                      {isPattyCashCategory(record.category) || isTalanganType || shouldShowTalangan ? (
+                                        <button
+                                          onClick={() => openPattyCashModalForRecord(record)}
+                                          className="inline-flex items-center gap-1.5 text-rose-700 hover:text-white bg-rose-50 hover:bg-rose-600 border border-rose-200 px-2 py-1 rounded-xl font-mono font-black text-xs transition-all cursor-pointer shadow-2xs"
+                                          title="Klik untuk melihat rincian pengeluaran / belanja yang dipotong dari dana ini"
+                                        >
+                                          <Eye size={12} />
+                                          <span>{record.customId || "-"}</span>
+                                        </button>
+                                      ) : (
                                         <span>{record.customId || "-"}</span>
-                                      </button>
-                                    ) : (
-                                      record.customId || "-"
-                                    )}
+                                      )}
+                                      {(pendingFinanceIds.has(rId) || (rCustom && pendingFinanceIds.has(rCustom))) && (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-sans font-black uppercase">
+                                          <Clock size={9} /> Antre Sync
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">{record.date}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-bold whitespace-nowrap">
@@ -24390,7 +24606,16 @@ const AdminFinanceScreen = ({
                               {/* LEDGER 4: LOG PENGELUARAN VIA REKENING PRIBADI / TALANGAN */}
                               {filterFlowType === "PERSONAL" && (
                                 <>
-                                  <td className="py-3 px-3 border-r border-slate-100 font-mono font-bold text-purple-700 whitespace-nowrap">{record.customId || "-"}</td>
+                                  <td className="py-3 px-3 border-r border-slate-100 font-mono font-bold text-purple-700 whitespace-nowrap">
+                                    <div className="flex items-center gap-1.5">
+                                      <span>{record.customId || "-"}</span>
+                                      {(pendingFinanceIds.has(rId) || (rCustom && pendingFinanceIds.has(rCustom))) && (
+                                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800 border border-amber-200 text-[9px] font-sans font-black uppercase">
+                                          <Clock size={9} /> Antre Sync
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
                                   <td className="py-3 px-3 border-r border-slate-100 whitespace-nowrap">{record.date}</td>
                                   <td className="py-3 px-3 border-r border-slate-100 font-bold whitespace-nowrap">
                                     {getFinancialRecordDisplayProjectName(record, projects)}
@@ -28850,6 +29075,67 @@ const AdminFinanceScreen = ({
               </motion.div>
             </motion.div>
           </>
+        )}
+      </AnimatePresence>
+
+      {/* Non-blocking Finance Cloud Sync Toast Notification */}
+      <AnimatePresence>
+        {financeSyncToast && (
+          <motion.div
+            key={financeSyncToast.id}
+            initial={{ opacity: 0, y: 20, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 16, scale: 0.96 }}
+            className={`fixed bottom-6 right-6 z-[260] max-w-md w-[calc(100vw-3rem)] rounded-2xl p-4 shadow-2xl border flex items-start gap-3 ${
+              financeSyncToast.type === "synced"
+                ? "bg-emerald-950 text-white border-emerald-700"
+                : financeSyncToast.type === "queued"
+                ? "bg-amber-50 text-amber-950 border-amber-300"
+                : "bg-rose-50 text-rose-950 border-rose-300"
+            }`}
+          >
+            <div
+              className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                financeSyncToast.type === "synced"
+                  ? "bg-emerald-600 text-white"
+                  : financeSyncToast.type === "queued"
+                  ? "bg-amber-200 text-amber-800"
+                  : "bg-rose-200 text-rose-800"
+              }`}
+            >
+              {financeSyncToast.type === "synced" ? (
+                <CheckCircle2 size={18} />
+              ) : financeSyncToast.type === "queued" ? (
+                <Clock size={18} />
+              ) : (
+                <AlertTriangle size={18} />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <h5 className="text-xs font-black uppercase tracking-wider">
+                {financeSyncToast.title}
+              </h5>
+              <p
+                className={`text-xs font-medium mt-1 leading-relaxed ${
+                  financeSyncToast.type === "synced" ? "text-emerald-100" : "text-slate-700"
+                }`}
+              >
+                {financeSyncToast.message}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setFinanceSyncToast(null)}
+              className={`p-1 rounded-lg transition-colors shrink-0 cursor-pointer ${
+                financeSyncToast.type === "synced"
+                  ? "text-emerald-200 hover:bg-emerald-800"
+                  : "text-slate-500 hover:bg-black/5"
+              }`}
+              title="Tutup notifikasi"
+            >
+              <X size={16} />
+            </button>
+          </motion.div>
         )}
       </AnimatePresence>
     </AdminLayout>
@@ -40504,6 +40790,7 @@ export default function App() {
       [orderBy("createdAt", "desc")],
     );
 
+    let isFlushingStrandedFinance = false;
     const unsubscribeFinance = dbService.onCollectionSnapshot<FinancialRecord>(
       "financialRecords",
       (data, meta) => {
@@ -40512,6 +40799,14 @@ export default function App() {
           isLiveFinanceFromServerRef.current = true;
         }
         const pendingFinKeys = getPendingCollectionIds("financialRecords");
+        if (isFromServer && pendingFinKeys.size > 0 && !isFlushingStrandedFinance && !isQuotaExhausted() && navigator.onLine !== false) {
+          isFlushingStrandedFinance = true;
+          flushPendingCollectionWrites("financialRecords")
+            .catch(() => {})
+            .finally(() => {
+              isFlushingStrandedFinance = false;
+            });
+        }
         const userOverrides = getFinancialOverrides();
         const deletedIds = getDeletedFinancialIds();
         const seenIds = new Set<string>();
@@ -41656,13 +41951,27 @@ export default function App() {
   }, [attendanceHistory, currentUser]);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
+    const tryAutoFlushPendingFinance = () => {
+      if (!auth.currentUser || isQuotaExhausted() || navigator.onLine === false) return;
+      if (getPendingCollectionIds("financialRecords").size > 0) {
+        flushPendingCollectionWrites("financialRecords").catch(() => {});
+      }
+    };
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      tryAutoFlushPendingFinance();
+    };
     const handleOffline = () => setIsOnline(false);
+
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
+    const retryInterval = setInterval(tryAutoFlushPendingFinance, 15000);
+
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+      clearInterval(retryInterval);
     };
   }, []);
 
